@@ -1,5 +1,5 @@
 from fastapi import FastAPI, Response, Depends, WebSocket, HTTPException
-from api.KISOpenApi import get_access_token, get_socket_key
+# from api.KISOpenApi import get_access_token, get_socket_key
 from api.LocalStockApi import get_stock_balance, get_stocks
 from depends.header import session_token
 from model.RequestModel import Account
@@ -16,8 +16,8 @@ connected_clients: Dict[str, WebSocket] = {}
 
 @app.on_event("startup")
 async def startup_event():
-    await get_access_token()
-    await get_socket_key()
+#     await get_access_token()
+#     await get_socket_key()
     app.state.db_pool = DBConnectionPool(max_size=10)
 
 @app.on_event("shutdown")
@@ -57,19 +57,19 @@ async def stock(name: str):
     return {"message": "종목 코드 조회", "stock": stock_info}
 
 # 주식 현재가/호가
-@app.get("/socket")
-async def websocket_endpoint(session_data: dict = Depends(session_token)):
-    await websocket.accept()
-    connected_clients[client_id] = websocket  # 연결된 클라이언트 저장
-
-    try:
-        while True:
-            # 클라이언트 메시지 대기 (필수는 아님)
-            data = await websocket.receive_text()
-            print(f"클라이언트 {client_id} 메시지: {data}")
-    except Exception as e:
-        print(f"클라이언트 {client_id} 연결 종료: {e}")
-        del connected_clients[client_id]  # 연결 종료 시 삭제
+# @app.get("/socket")
+# async def websocket_endpoint(session_data: dict = Depends(session_token)):
+#     await websocket.accept()
+#     connected_clients[client_id] = websocket  # 연결된 클라이언트 저장
+#
+#     try:
+#         while True:
+#             # 클라이언트 메시지 대기 (필수는 아님)
+#             data = await websocket.receive_text()
+#             print(f"클라이언트 {client_id} 메시지: {data}")
+#     except Exception as e:
+#         print(f"클라이언트 {client_id} 연결 종료: {e}")
+#         del connected_clients[client_id]  # 연결 종료 시 삭제
 
 # 보유 주식
 
