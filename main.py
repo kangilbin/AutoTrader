@@ -1,18 +1,23 @@
-from fastapi import FastAPI, Response, Depends
-from api.KISOpenApi import oauth_token
-from api.LocalStockApi import get_stock_balance, get_disparity, get_stocks
+from fastapi import FastAPI, Response, Depends, WebSocket, HTTPException
+from api.KISOpenApi import get_access_token, get_socket_key
+from api.LocalStockApi import get_stock_balance, get_stocks
 from depends.header import session_token
 from model.RequestModel import Account
 from module.DBConnection import DBConnectionPool
 from module.RedisClient import redis_client
 import uuid
 import json
-
+from typing import Dict
 
 app = FastAPI()
 
+# 클라이언트 WebSocket 연결을 관리하는 딕셔너리
+connected_clients: Dict[str, WebSocket] = {}
+
 @app.on_event("startup")
 async def startup_event():
+    await get_access_token()
+    await get_socket_key()
     app.state.db_pool = DBConnectionPool(max_size=10)
 
 @app.on_event("shutdown")
@@ -22,12 +27,6 @@ async def shutdown_event():
     while pool.pool:
         conn = pool.pool.pop()
         await conn.close()
-
-
-@app.get("/")
-async def root():
-    await oauth_token()
-    return {"message": "토큰 발행"}
 
 
 # 로그인
@@ -58,15 +57,21 @@ async def stock(name: str):
     return {"message": "종목 코드 조회", "stock": stock_info}
 
 # 주식 현재가/호가
-async def price(code: str):
-    price_info = get_price_info(code);
-    return {"message": "주식 현재 시세", "price": price_info}
+@app.get("/socket")
+async def websocket_endpoint(session_data: dict = Depends(session_token)):
+    await websocket.accept()
+    connected_clients[client_id] = websocket  # 연결된 클라이언트 저장
+
+    try:
+        while True:
+            # 클라이언트 메시지 대기 (필수는 아님)
+            data = await websocket.receive_text()
+            print(f"클라이언트 {client_id} 메시지: {data}")
+    except Exception as e:
+        print(f"클라이언트 {client_id} 연결 종료: {e}")
+        del connected_clients[client_id]  # 연결 종료 시 삭제
 
 # 보유 주식
-@app.get("/ranking/disparity")
-async def disparity(div_cd:str, sort:str):
-    ranking = await get_disparity(div_cd,sort)
-    return {"message": "이격도 순위 조회", "ranking": ranking}
 
 
 

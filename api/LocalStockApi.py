@@ -43,32 +43,22 @@ async def get_stock_balance(cano: str, acnt_prdt_cd: str):
 
 
 # 주식 현재가 / 호가 실시간
-#
-#
+# FID 입력 종목코드
 async def get_price_info(code: str):
     redis = await redis_client()
-    path = "/uapi/domestic-stock/v1/ranking/disparity"
+    path = "/uapi/domestic-stock/v1/quotations/inquire-asking-price-exp-ccn"
     api_url = f"{get_env('API_URL')}/{path}"
 
     headers = {
         "authorization": f"Bearer {await redis.get('access_token')}",
         "appkey": get_env("API_KEY"),
         "appsecret": get_env("SECRET_KEY"),
-        "tr_id": "FHPST01780000",
-        "custtype": "P",
+        "tr_id": "FHKST01010200"
     }
 
     params = {
-        "fid_input_price_1": "",
-        "fid_input_price_2": "",
-        "fid_cond_mrkt_div_code": "J",
-        "fid_cond_scr_div_code": "20178",
-        "fid_div_cls_code": div_cd,
-        "fid_rank_sort_cls_code": sort,
-        "fid_input_iscd": "0000",
-        "fid_trgt_cls_code": "0",
-        "fid_trgt_exls_cls_code": "0",
-        "fid_vol_cnt": "",
+        "FID_COND_MRKT_DIV_CODE": "J",
+        "FID_INPUT_ISCD": code
     }
     return await fetch("GET", api_url, params=params, headers=headers)
 
