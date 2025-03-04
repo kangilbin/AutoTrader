@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Response, Depends, WebSocket, HTTPException
+from fastapi import FastAPI, Response, Depends, WebSocket
 # from api.KISOpenApi import get_access_token, get_socket_key
 from api.LocalStockApi import get_stock_balance, get_stocks
 from depends.header import session_token
