@@ -8,25 +8,28 @@ from module.RedisClient import redis_client
 import uuid
 import json
 from typing import Dict
+from contextlib import asynccontextmanager
 
-app = FastAPI()
+
 
 # 클라이언트 WebSocket 연결을 관리하는 딕셔너리
 connected_clients: Dict[str, WebSocket] = {}
 
-@app.on_event("startup")
-async def startup_event():
-#     await get_access_token()
-#     await get_socket_key()
-    app.state.db_pool = DBConnectionPool(max_size=10)
 
-@app.on_event("shutdown")
-async def shutdown_event():
-    # 애플리케이션 종료 시 모든 커넥션 닫기
-    pool = app.state.db_pool
-    while pool.pool:
-        conn = pool.pool.pop()
-        await conn.close()
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    app.state.db_pool = DBConnectionPool(max_size=10)
+    try:
+        yield
+    finally:
+        while app.state.db_pool.pool:
+            conn = app.state.db_pool.pool.pop()
+            try:
+                await conn.close()
+            except Exception as e:
+                print(f"Error closing connection: {e}")
+
+app = FastAPI(lifespan=lifespan)
 
 
 # 로그인
