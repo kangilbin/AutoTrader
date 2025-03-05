@@ -52,6 +52,10 @@ async def sql_execute(pool: DBConnectionPool, query: str, params: tuple = ()):
                 await conn.rollback()
             await conn.commit()
             return affected_rows
+    except Exception as e:
+        # 예외 발생 시 롤백
+        await conn.rollback()
+        raise e
 
     finally:
         # 커넥션 반환 (예외 발생 여부와 관계없이)

@@ -5,9 +5,7 @@ from module.RedisClient import redis_client
 
 
 # 종목 코드 조회
-async def get_stocks(pool: DBConnectionPool, name: str):
-    query = "SELECT ST_CODE FROM KIS_LOCAL_STOCKS WHERE NAME = %s"
-    return await sql_execute(pool, query, (name,))
+
 
 
 # 주식 잔고 조회

@@ -6,34 +6,35 @@ from module.RedisClient import redis_client
 import websockets
 import asyncio
 
+
 # 한국 투자 증권 접근 토큰
 # 유효기간 24시 이며 (1일 1회 발급) 갱신발급 주기는 6시간(6시 이내는 기존 발급키 응답)
 # grant_type : 권한
 # appkey : 앱키
 # appsecret : 앱 시크키
-async def oauth_token():
-    redis = await redis_client()
-    access_token = await redis.get("access_token")
-
-    # 값이 있으면 반환
-    if access_token:
-        return {"access_token": access_token}
+async def oauth_token(api_key: str, secret_key: str):
+    # redis = await redis_client()
+    # access_token = await redis.get("access_token")
+    #
+    # # 값이 있으면 반환
+    # if access_token:
+    #     return {"access_token": access_token}
 
     path = "oauth2/tokenP"
     api_url = f"{get_env('API_URL')}/{path}"
 
     body = {
         "grant_type": "client_credentials",
-        "appkey": get_env("API_KEY"),
-        "appsecret": get_env("SECRET_KEY")
+        "appkey": api_key,
+        "appsecret": secret_key
     }
 
-    response_data = await fetch("POST", api_url, json=body)
+    response = await fetch("POST", api_url, json=body)
 
     # Redis에 토큰 저장 만료기간(expires_in) 설정
-    access_token = response_data.get("access_token")
-    await redis.set("access_token", access_token, ex=response_data.get("expires_in"))
-
+    # access_token = response_data.get("access_token")
+    # await redis.set("access_token", access_token, ex=response_data.get("expires_in"))
+    return response
 
 # 실시간 (웹소켓) 접속키 발급
 # 접속키의 유효기간은 24시간이지만, 접속키는 세션 연결 시 초기 1회만 사용하기 때문에 접속키 인증 후에는 세션종료되지 않는 이상
