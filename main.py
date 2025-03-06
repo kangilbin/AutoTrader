@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Response, Depends, WebSocket
+from fastapi import FastAPI, Response, Request, Depends, WebSocket
 
 from api.KISOpenApi import oauth_token
 from api.LocalStockApi import get_stock_balance
@@ -13,7 +13,7 @@ from typing import Dict
 from contextlib import asynccontextmanager
 from queries.KIS_LOCAL_STOCKS import get_stocks
 from queries.ACCOUNT import user_signup
-
+from services.JwtToken import create_access_token, create_refresh_token
 
 # 클라이언트 WebSocket 연결을 관리하는 딕셔너리
 connected_clients: Dict[str, WebSocket] = {}
@@ -50,14 +50,23 @@ async def signup(user: SignupModel):
     except Exception as e:
         return {"message": sql, "error": str(e)}
 
-    return {"message": "회원 가입 성공", "token": token}
+    redis = await redis_client()
+    redis.set(user.ID, {"token": token}, ex=3600)
+    return {"message": "회원 가입 성공"}
 
 # 로그인
 @app.post("/login")
-async def login(request: Account, response:Response):
+async def login(request: Request, response:Response):
+    data = await request.json()
+    id = data.get("ID")
+    pw = data.get("PASSWORD")
+
+    access_token = create_access_token({"ID": id})
+    refresh_token = create_refresh_token({"ID": id})
+
     redis = await redis_client()
 
-    account_info = {"CANO": request.CANO, "ACNT_PRDT_CD": request.ACNT_PRDT_CD}
+    account_info = {"CANO": id, "ACNT_PRDT_CD": pw}
     # 세션 ID 발급
     session_id = str(uuid.uuid4())
 
