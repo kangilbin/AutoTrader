@@ -4,14 +4,15 @@ from fastapi import FastAPI, Response, Request, Depends, WebSocket, HTTPExceptio
 from api.KISOpenApi import oauth_token
 from api.LocalStockApi import get_stock_balance
 from depends.Header import session_token
-from model import SignupModel
+from model import SignupModel, AccountModel
 from module.DBConnection import DBConnectionPool
 from module.RedisConnection import redis_pool, redis
 import json
 from typing import Dict
 from contextlib import asynccontextmanager
+from queries.ACCOUNT import account_register, get_account_info
 from queries.KIS_LOCAL_STOCKS import get_stocks
-from queries.ACCOUNT import user_signup, user_login
+from queries.USER import user_signup, get_user_info
 from services.middleware import JWTAuthMiddleware
 from fastapi_jwt_auth import AuthJWT
 from model.JwtModel import Settings
@@ -59,20 +60,20 @@ async def signup(user: SignupModel):
     try:
         await user_signup(app.state.db_pool, user)
     except Exception as e:
-        return {"message": "오류인듯", "error": str(e)}
+        return {"message": "오류", "error": str(e)}
 
     return {"message": "회원 가입 성공", "code": 200}
 
 # 로그인
 @app.post("/login")
 async def login(request: Request, response:Response, Authorize: AuthJWT = Depends()):
-    data = await request.json()
-    user_id = data.get("ID")
-    user_pw = data.get("PASSWORD")
+    req = await request.json()
+    user_id = req.get("USER_ID")
+    user_pw = req.get("PASSWORD")
 
     # 사용자 검증
-    user = await user_login(app.state.db_pool, user_id, user_pw)
-    if not user:
+    user_info = json.loads(await get_user_info(app.state.db_pool, user_id, user_pw))
+    if not user_info:
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
 
@@ -81,10 +82,9 @@ async def login(request: Request, response:Response, Authorize: AuthJWT = Depend
     access_token = Authorize.create_access_token(subject=user_id)
     refresh_token = Authorize.create_refresh_token(subject=user_id)
 
-    user_info = json.loads(user)
     user_info.put("refresh_token", refresh_token)
 
-    await redis().set(id, json.dumps(user_info), ex=timedelta(days=7))
+    await redis().hset(user_id, mapping=user_info, ex=timedelta(days=7))
     response.set_cookie(key="access_token", value=access_token, httponly=True)
     response.set_cookie(key="refresh_token", value=refresh_token, httponly=True)
 
@@ -118,13 +118,7 @@ async def refresh(request: Request, Authorize: AuthJWT = Depends()):
 
 # 로그아웃
 @app.post("/logout")
-async def logout(request: Request, response: Response, Authorize: AuthJWT = Depends()):
-    # 쿠키에서 리프레시 토큰 가져오기
-    access_token = request.cookies.get("access_token")
-
-    if not access_token:
-        raise HTTPException(status_code=401, detail="Access token not found")
-
+async def logout(response: Response, Authorize: AuthJWT = Depends()):
     user_id = Authorize.get_jwt_subject()
 
     # 토큰 제거
@@ -134,10 +128,35 @@ async def logout(request: Request, response: Response, Authorize: AuthJWT = Depe
 
     return {"message": "로그아웃 성공"}
 
+
+# 계좌 등록
+@app.post("/account")
+async def account(Account: AccountModel, Authorize: AuthJWT = Depends()):
+    user_id = Authorize.get_jwt_subject()
+    await account_register(app.state.db_pool, user_id, Account)
+    return {"message": "계좌 등록 성공"}
+
+# 계좌 조회
+@app.get("/account_info")
+async def account_info(request: Request, Authorize: AuthJWT = Depends()):
+    req = await request.json()
+    user_id = Authorize.get_jwt_subject()
+
+    info = json.loads(await get_account_info(app.state.db_pool, req.get("ACCOUNT_ID")))
+    await redis().hset(user_id, "CANO", info.get("CANO"))
+    await redis().hset(user_id, "ACNT_PRDT_CD", info.get("ACNT_PRDT_CD"))
+
+    return {"message": "계좌 조회", "account": info}
+
+
 # 잔고 조회
 @app.get("/balance")
-async def stock_balance(session_data: dict = Depends(session_token)):
-    balance = await get_stock_balance(session_data["CANO"], session_data["ACNT_PRDT_CD"])
+async def stock_balance(Authorize: AuthJWT = Depends()):
+    user_id = Authorize.get_jwt_subject()
+    cano = await redis().hget(user_id, "CANO")
+    acnt_prdt_cd = await redis().hget(user_id, "ACNT_PRDT_CD")
+
+    balance = await get_stock_balance(cano, acnt_prdt_cd)
     return {"message": "계좌 잔고 조회", "balance": balance}
 
 

@@ -1,12 +1,18 @@
-from model.SignupModel import Signup
+from model import AccountModel
 from module.DBConnection import DBConnectionPool, sql_execute
+from datetime import datetime
 
 
-async def user_signup(pool: DBConnectionPool, user: Signup):
-    query = "INSERT INTO ACCOUNT (ID, PASSWORD, DEVICE_ID, API_KEY, SERCRET_KEY) VALUES (%s, %s, %s, %s, %s)"
-    return await sql_execute(pool, query, (user.ID, user.PASSWORD, user.DEVICE_ID, user.API_KEY, user.SECRET_KEY))
+
+# 계좌 테이블 #
+
+# 계좌 정보 조회
+async def get_account_info(pool: DBConnectionPool, id: str):
+    query = "SELECT * FROM ACCOUNT where ID = %s"
+    return await sql_execute(pool, query, (id,))
 
 
-async def user_login(pool: DBConnectionPool, user_id: str, user_pw: str):
-    query = "SELECT * FROM ACCOUNT WHERE ID = %s AND PASSWORD = %s"
-    return await sql_execute(pool, query, (user_id, user_pw))
+# 계좌 등록
+async def account_register(pool: DBConnectionPool, account: AccountModel):
+    query = "INSERT INTO ACCOUNT (USER_ID, CANO, ACNT_PRDT_CD, REG_DT) VALUES (%s, %s, %s, %s)"
+    return await sql_execute(pool, query, (account.USER_ID, account.CANO, account.ACNT_PRDT_CD, datetime.now()))
