@@ -1,5 +1,6 @@
 from pydantic import BaseModel
 
+
 class Signup(BaseModel):
     ID: str
     PASSWORD: str

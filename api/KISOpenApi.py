@@ -1,10 +1,6 @@
-
-
 from module.Config import get_env
 from module.FetchAPI import fetch
-from module.RedisClient import redis_client
-import websockets
-import asyncio
+from module.RedisConnection import redis
 
 
 # 한국 투자 증권 접근 토큰
@@ -36,12 +32,11 @@ async def oauth_token(api_key: str, secret_key: str):
     # await redis.set("access_token", access_token, ex=response_data.get("expires_in"))
     return response
 
+
 # 실시간 (웹소켓) 접속키 발급
 # 접속키의 유효기간은 24시간이지만, 접속키는 세션 연결 시 초기 1회만 사용하기 때문에 접속키 인증 후에는 세션종료되지 않는 이상
 # 접속키 신규 발급받지 않으셔도 365일 내내 웹소켓 데이터 수신하실 수 있습니다.
 async def get_approval():
-    redis = await redis_client()
-
     path = "oauth2/Approval"
     api_url = f"{get_env('API_URL')}/{path}"
 
@@ -54,7 +49,7 @@ async def get_approval():
 
     # Redis에 토큰 저장 만료기간(expires_in) 설정
     approval_key = response_data.get("approval_key")
-    await redis.set("approval_key", approval_key, ex=response_data.get("expires_in"))
+    await redis().set("approval_key", approval_key, ex=response_data.get("expires_in"))
 
 
 

@@ -1,5 +1,5 @@
 from fastapi import Header, HTTPException
-from module.RedisClient import redis_client
+from module.RedisConnection import redis_client
 import json
 
 

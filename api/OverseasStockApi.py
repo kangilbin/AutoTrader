@@ -1,6 +1,6 @@
 from module.FetchAPI import fetch
 from module.Config import get_env
-from module.RedisClient import redis_client
+from module.RedisConnection import redis_client
 
 
 # 상품 조회

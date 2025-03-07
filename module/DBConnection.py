@@ -7,7 +7,7 @@ class DBConnectionPool:
         self.max_size = max_size
         self.pool = []  # 커넥션 풀을 저장하는 리스트
 
-    async def get_connection(self):
+    async def get(self):
         # 커넥션 풀에서 사용 가능한 커넥션을 반환하거나, 새로운 커넥션을 생성하여 반환
         if not self.pool:
             conn = await asyncmy.connect(
@@ -17,7 +17,7 @@ class DBConnectionPool:
         else:
             return self.pool.pop()
 
-    async def release_connection(self, conn):
+    async def release(self, conn):
         # 풀에 커넥션을 반환하거나, 풀 사이즈가 최대에 달하면 커넥션을 닫음
         if len(self.pool) < self.max_size:
             self.pool.append(conn)
@@ -60,4 +60,4 @@ async def sql_execute(pool: DBConnectionPool, query: str, params: tuple = ()):
     finally:
         # 커넥션 반환 (예외 발생 여부와 관계없이)
         if conn:
-            await pool.release_connection(conn)
+            await pool.release(conn)
