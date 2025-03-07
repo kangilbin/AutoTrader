@@ -16,3 +16,15 @@ async def get_account_info(pool: DBConnectionPool, id: str):
 async def account_register(pool: DBConnectionPool, account: AccountModel):
     query = "INSERT INTO ACCOUNT (USER_ID, CANO, ACNT_PRDT_CD, REG_DT) VALUES (%s, %s, %s, %s)"
     return await sql_execute(pool, query, (account.USER_ID, account.CANO, account.ACNT_PRDT_CD, datetime.now()))
+
+
+# 계좌 삭제
+async def account_delete(pool: DBConnectionPool, account_id: str, user_id: str):
+    query = "DELETE FROM ACCOUNT WHERE ID = %s AND USER_ID = %s"
+    return await sql_execute(pool, query, (account_id, user_id))
+
+
+# 계좌 리스트 조회
+async def get_account_list(pool: DBConnectionPool, user_id: str):
+    query = "SELECT * FROM ACCOUNT WHERE USER_ID = %s"
+    return await sql_execute(pool, query, (user_id,))

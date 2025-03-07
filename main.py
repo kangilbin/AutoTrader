@@ -10,15 +10,12 @@ from module.RedisConnection import redis_pool, redis
 import json
 from typing import Dict
 from contextlib import asynccontextmanager
-from queries.ACCOUNT import account_register, get_account_info
+from queries.ACCOUNT import account_register, get_account_info, account_delete, get_account_list
 from queries.KIS_LOCAL_STOCKS import get_stocks
 from queries.USER import user_signup, get_user_info
 from services.middleware import JWTAuthMiddleware
 from fastapi_jwt_auth import AuthJWT
 from model.JwtModel import Settings
-
-# 클라이언트 WebSocket 연결을 관리하는 딕셔너리
-connected_clients: Dict[str, WebSocket] = {}
 
 
 # 의존성 주입을 위한 설정
@@ -134,19 +131,36 @@ async def logout(response: Response, Authorize: AuthJWT = Depends()):
 async def account(Account: AccountModel, Authorize: AuthJWT = Depends()):
     user_id = Authorize.get_jwt_subject()
     await account_register(app.state.db_pool, user_id, Account)
+
     return {"message": "계좌 등록 성공"}
 
+
 # 계좌 조회
-@app.get("/account_info")
-async def account_info(request: Request, Authorize: AuthJWT = Depends()):
-    req = await request.json()
+@app.get("/account/{account_id}")
+async def account(account_id: str, Authorize: AuthJWT = Depends()):
     user_id = Authorize.get_jwt_subject()
 
-    info = json.loads(await get_account_info(app.state.db_pool, req.get("ACCOUNT_ID")))
-    await redis().hset(user_id, "CANO", info.get("CANO"))
-    await redis().hset(user_id, "ACNT_PRDT_CD", info.get("ACNT_PRDT_CD"))
+    account_info = json.loads(await get_account_info(app.state.db_pool, account_id))
+    await redis().hset(user_id, "CANO", account_info.get("CANO"))
+    await redis().hset(user_id, "ACNT_PRDT_CD", account_info.get("ACNT_PRDT_CD"))
 
-    return {"message": "계좌 조회", "account": info}
+    return {"message": "계좌 조회", "account": account_info}
+
+# 계좌 삭제
+@app.delete("/account/{account_id}")
+async def account(account_id: str, Authorize: AuthJWT = Depends()):
+    user_id = Authorize.get_jwt_subject()
+
+    await account_delete(app.state.db_pool, account_id, user_id)
+    return {"message": "계좌 삭제 성공"}
+
+
+# 계좌 리스트
+@app.get("/accounts")
+async def accounts(Authorize: AuthJWT = Depends()):
+    user_id = Authorize.get_jwt_subject()
+    account_list = await get_account_list(app.state.db_pool, user_id)
+    return {"message": "계좌 리스트 조회", "accounts": account_list}
 
 
 # 잔고 조회
