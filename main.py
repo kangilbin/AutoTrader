@@ -3,12 +3,10 @@ from datetime import timedelta
 from fastapi import FastAPI, Response, Request, Depends, WebSocket, HTTPException
 from api.KISOpenApi import oauth_token
 from api.LocalStockApi import get_stock_balance
-from depends.Header import session_token
 from model import SignupModel, AccountModel
 from module.DBConnection import DBConnectionPool
 from module.RedisConnection import redis_pool, redis
 import json
-from typing import Dict
 from contextlib import asynccontextmanager
 from queries.ACCOUNT import account_register, get_account_info, account_delete, get_account_list
 from queries.KIS_LOCAL_STOCKS import get_stocks
