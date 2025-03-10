@@ -1,8 +1,6 @@
 from fastapi import HTTPException, Request
 from fastapi_jwt_auth import AuthJWT
 from fastapi.middleware.base import BaseHTTPMiddleware
-from model.JwtModel import Settings
-
 
 
 # JWT 인증을 위한 미들웨어

@@ -1,5 +1,6 @@
-from model.SignupModel import Signup
+from model.schemas.UserModel import Signup
 from module.DBConnection import DBConnectionPool, sql_execute
+
 
 # 계정 테이블 @
 

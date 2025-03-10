@@ -1,10 +1,10 @@
 from datetime import timedelta
 
-from fastapi import FastAPI, Response, Request, Depends, WebSocket, HTTPException
+from fastapi import FastAPI, Response, Request, Depends, HTTPException
 from api.KISOpenApi import oauth_token
 from api.LocalStockApi import get_stock_balance
-from model import SignupModel, AccountModel
-from module.DBConnection import DBConnectionPool
+from model.schemas import AccountModel, UserModel
+from module.DBConnection import get_db
 from module.RedisConnection import redis_pool, redis
 import json
 from contextlib import asynccontextmanager
@@ -13,7 +13,7 @@ from queries.KIS_LOCAL_STOCKS import get_stocks
 from queries.USER import user_signup, get_user_info
 from services.middleware import JWTAuthMiddleware
 from fastapi_jwt_auth import AuthJWT
-from model.JwtModel import Settings
+from model.schemas.JwtModel import Settings
 
 
 # 의존성 주입을 위한 설정
@@ -24,7 +24,7 @@ def get_config():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    app.state.db_pool = DBConnectionPool(max_size=10)
+    app.state.db_pool get_db()
     app.state.redis_pool = await redis_pool(max_size=10)
     try:
         yield

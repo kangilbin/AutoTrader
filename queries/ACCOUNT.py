@@ -1,4 +1,4 @@
-from model import AccountModel
+from model.schemas import AccountModel
 from module.DBConnection import DBConnectionPool, sql_execute
 from datetime import datetime
 
