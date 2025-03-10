@@ -23,8 +23,9 @@ async def create_user(db: AsyncSession, user: User, user_data: UserModel):
     await db.refresh(db_user)  # 새로 추가된 사용자 객체 리프레시
     return db_user
 
+
 # 사용자 업데이트
-async def update_user(db: AsyncSession, user: User, user_id: str, user_data: UserModel):
+async def update_user(db: AsyncSession, user: User, user_data: UserModel, user_id: str):
     query = (
         update(user)
         .where(user.USER_ID == user_id)
@@ -33,15 +34,18 @@ async def update_user(db: AsyncSession, user: User, user_id: str, user_data: Use
     )
     await db.execute(query)
     await db.commit()
-    return await db.get(user, user_id)
+    # 업데이트 후 db에서 다시 가져오기
+    db_user = await db.get(user, user_id)  # user_id로 사용자 조회
+    if db_user:
+        await db.refresh(db_user)
+    return db_user
+
 
 
 # 사용자 삭제
-async def delete_user(db: AsyncSession, user_id: str):
-    query = select(User).filter(User.id == user_id)
-    result = await db.execute(query)
-    db_user = result.scalar()
-    if db_user:
-        await db.delete(db_user)
-        await db.commit()
-    return db_user
+async def delete_user(db: AsyncSession, user: User, user_id: str):
+    query = delete(user).where(user.USER_ID == user_id)
+    await db.execute(query)
+    await db.commit()
+
+    return user_id
