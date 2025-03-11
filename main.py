@@ -11,7 +11,6 @@ from contextlib import asynccontextmanager
 from queries.ACCOUNT import account_register, get_account_info, account_delete, get_account_list
 from queries.KIS_LOCAL_STOCKS import get_stocks
 from queries.USER import user_signup, get_user_info
-from services.middleware import JWTAuthMiddleware
 from fastapi_jwt_auth import AuthJWT
 from model.schemas.JwtModel import Settings
 
@@ -24,27 +23,40 @@ def get_config():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    app.state.db_pool get_db()
+    app.state.db_pool = get_db()
     app.state.redis_pool = await redis_pool(max_size=10)
     try:
         yield
     finally:
-        while app.state.db_pool.pool:
-            conn = app.state.db_pool.pool.pop()
-            try:
-                await conn.close()
-            except Exception as e:
-                print(f"Error closing connection: {e}")
-
+        await app.state.db_pool.close()
         app.state.redis_pool.close()
         await app.state.redis_pool.wait_closed()
 
 app = FastAPI(lifespan=lifespan)
-app.add_middleware(JWTAuthMiddleware)
+
+
+@app.middleware("http")
+async def jwt_auth_middleware(request: Request, call_next):
+    try:
+        # Authorization 헤더에서 토큰 추출
+        auth_header = request.headers.get("Authorization")
+        if auth_header is None:
+            raise HTTPException(status_code=401, detail="Authorization header missing")
+
+        # JWT 토큰 인증
+        Authorize = AuthJWT()
+        Authorize.jwt_required()  # 토큰 검증
+
+    except Exception as e:
+        raise HTTPException(status_code=401, detail=str(e))
+
+    response = await call_next(request)
+    return response
+
 
 # 회원 가입
 @app.post("/signup")
-async def signup(user: SignupModel):
+async def signup(user: UserModel):
     # 디바이스 정보 검증
     response = await oauth_token(user.API_KEY, user.SECRET_KEY)
 
