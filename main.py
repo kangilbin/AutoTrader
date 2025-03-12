@@ -3,17 +3,16 @@ from datetime import timedelta
 from fastapi import FastAPI, Response, Request, Depends, HTTPException
 from api.KISOpenApi import oauth_token
 from api.LocalStockApi import get_stock_balance
+from crud.User_crud import create_user, get_user
 from model.schemas import AccountModel, UserModel
 from module.DBConnection import get_db
 from module.RedisConnection import redis_pool, redis
 import json
 from contextlib import asynccontextmanager
-from queries.ACCOUNT import account_register, get_account_info, account_delete, get_account_list
 from queries.KIS_LOCAL_STOCKS import get_stocks
-from queries.USER import user_signup, get_user_info
 from fastapi_jwt_auth import AuthJWT
 from model.schemas.JwtModel import Settings
-
+import websockets
 
 # 의존성 주입을 위한 설정
 @AuthJWT.load_config
@@ -25,12 +24,14 @@ def get_config():
 async def lifespan(app: FastAPI):
     app.state.db_pool = get_db()
     app.state.redis_pool = await redis_pool(max_size=10)
+    app.state.websocket = await websockets.connect('ws://ops.koreainvestment.com:21000')
     try:
         yield
     finally:
         await app.state.db_pool.close()
-        app.state.redis_pool.close()
+        await app.state.redis_pool.close()
         await app.state.redis_pool.wait_closed()
+        await app.state.websocket.close()
 
 app = FastAPI(lifespan=lifespan)
 
@@ -65,11 +66,11 @@ async def signup(user: UserModel):
         return {"message": response.get("error_description"), "code": response.get("error_code")}
 
     try:
-        await user_signup(app.state.db_pool, user)
+        user = await create_user(app.state.db_pool, user)
     except Exception as e:
         return {"message": "오류", "error": str(e)}
 
-    return {"message": "회원 가입 성공", "code": 200}
+    return {"message": "회원 가입 성공", "data": user}
 
 # 로그인
 @app.post("/login")
@@ -79,7 +80,7 @@ async def login(request: Request, response:Response, Authorize: AuthJWT = Depend
     user_pw = req.get("PASSWORD")
 
     # 사용자 검증
-    user_info = json.loads(await get_user_info(app.state.db_pool, user_id, user_pw))
+    user_info = json.loads(await get_user(app.state.db_pool, user_id, user_pw))
     if not user_info:
         raise HTTPException(status_code=401, detail="Invalid credentials")
 

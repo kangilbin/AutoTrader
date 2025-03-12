@@ -1,4 +1,3 @@
-from fastapi.middleware.base import BaseHTTPMiddleware
 from datetime import timedelta
 from pydantic import BaseModel
 

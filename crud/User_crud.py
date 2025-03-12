@@ -1,18 +1,20 @@
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update, delete
-from model.schemas import UserModel
+from sqlalchemy import select, update, delete, and_
+from model.schemas.UserModel import UserCreate
 from model.orm.User import User
 
 
 # 비동기 사용자 조회
-async def get_user(db: AsyncSession, user_id: str):
-    query = select(User).filter(User.USER_ID.is_(user_id) if user_id is None else User.USER_ID == user_id)
+async def get_user(db: AsyncSession, user_id: str, user_pw: str):
+    query = select(User).filter(
+        and_(User.USER_ID == user_id, User.PASSWORD == user_pw)
+    )
     result = await db.execute(query)
     return result.scalars()
 
 
 # 사용자 생성
-async def create_user(db: AsyncSession, user_data: UserModel):
+async def create_user(db: AsyncSession, user_data: UserCreate):
     # 새로운 사용자 객체 생성
     db_user = User(USER_ID=user_data.USER_ID, USER_NAME=user_data.USER_NAME, PASSWORD=user_data.PASSWORD,
                    DEVICE_ID=user_data.DEVICE_ID
@@ -24,22 +26,22 @@ async def create_user(db: AsyncSession, user_data: UserModel):
 
 
 # 사용자 업데이트
-async def update_user(db: AsyncSession, user_data: UserModel, user_id: str):
+async def update_user(db: AsyncSession, user_data: UserCreate):
     query = (
         update(User)
-        .where(User.USER_ID.is_(user_id) if user_id is None else User.USER_ID == user_id)
+        .where(User.USER_ID == user_data.USER_ID)
         .values(**user_data.dict())
         .execution_options(synchronize_session=False)
     )
     await db.execute(query)
     await db.commit()
     # 업데이트 후 db에서 다시 가져오기
-    return await db.get(User, user_id)
+    return await db.get(User, user_data.USER_ID)
 
 
 # 사용자 삭제
 async def delete_user(db: AsyncSession, user_id: str):
-    query = delete(User).where(User.USER_ID.is_(user_id) if user_id is None else User.USER_ID == user_id)
+    query = delete(User).where(User.USER_ID == user_id)
     result = await db.execute(query)
     await db.commit()
 

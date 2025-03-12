@@ -1,6 +1,6 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, delete
-from model.schemas import AccountModel
+from model.schemas.AccountModel import Account
 from model.orm.Account import Account
 
 
