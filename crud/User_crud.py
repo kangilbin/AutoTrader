@@ -1,11 +1,11 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, delete, and_
-from model.schemas.UserModel import UserCreate
+from model.schemas.UserModel import UserCreate, UserResponse
 from model.orm.User import User
 
 
 # 비동기 사용자 조회
-async def get_user(db: AsyncSession, user_id: str, user_pw: str):
+async def select_user(db: AsyncSession, user_id: str, user_pw: str):
     query = select(User).filter(
         and_(User.USER_ID == user_id, User.PASSWORD == user_pw)
     )
@@ -14,7 +14,7 @@ async def get_user(db: AsyncSession, user_id: str, user_pw: str):
 
 
 # 사용자 생성
-async def create_user(db: AsyncSession, user_data: UserCreate):
+async def insert_user(db: AsyncSession, user_data: UserCreate):
     # 새로운 사용자 객체 생성
     db_user = User(USER_ID=user_data.USER_ID, USER_NAME=user_data.USER_NAME, PASSWORD=user_data.PASSWORD,
                    DEVICE_ID=user_data.DEVICE_ID
@@ -22,7 +22,7 @@ async def create_user(db: AsyncSession, user_data: UserCreate):
     db.add(db_user)  # 세션에 추가
     await db.commit()  # 비동기 커밋
     await db.refresh(db_user)  # 새로 추가된 사용자 객체 리프레시
-    return db_user
+    return UserResponse.from_orm(db_user)
 
 
 # 사용자 업데이트
