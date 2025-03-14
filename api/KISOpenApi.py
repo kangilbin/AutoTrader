@@ -47,7 +47,7 @@ async def get_approval(user_id: str, api_key: str, secret_key: str):
     response = await fetch("POST", api_url, json=body)
 
     # Redis에 토큰 저장 만료기간(expires_in) 설정
-    await redis().set(f"{user_id}_socket_token", response.get("approval_key"), ex=response.get("expires_in"))
+    await redis().set(f"{user_id}_socket_token", response.get("approval_key"), ex=86400)
     return response
 
 

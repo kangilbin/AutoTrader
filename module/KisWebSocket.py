@@ -17,7 +17,7 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
 
         if not socket_token:
             response = await get_approval(user_id, user_info.get("API_KEY"), user_info.get("SECRET_KEY"))
-            socket_token = response.get("access_token")
+            socket_token = response.get("approval_key")
         while True:
             # 클라이언트 메시지 대기
             data = await websocket.receive_json()
