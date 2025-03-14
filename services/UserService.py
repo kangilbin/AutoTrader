@@ -1,6 +1,8 @@
 import json
 from datetime import timedelta
 from fastapi import HTTPException
+
+from api.KISOpenApi import oauth_token
 from crud.User_crud import insert_user, select_user
 from model.schemas.UserModel import UserCreate, UserResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,34 +19,23 @@ async def login_user(db, user_id: str, user_pw: str, authorize: AuthJWT):
     if not user_info:
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
-    access_token = authorize.create_access_token(subject=user_id)
-    refresh_token = authorize.create_refresh_token(subject=user_id)
+    login_token = authorize.create_access_token(subject=user_id)
+    login_refresh_token = authorize.create_refresh_token(subject=user_id)
 
-    user_info.put("refresh_token", refresh_token)
-
-    await redis().hset(user_id, mapping=user_info, ex=timedelta(days=7))
-
-    return access_token, refresh_token, user_info
+    await redis().hset(user_id, mapping=user_info, ex=3600, xx=True)
+    return login_token, login_refresh_token
 
 
-async def refresh_token(token: str, authorize: AuthJWT):
-    # Authorization 헤더에서 리프레시 토큰 추출
+async def refresh_token(authorize: AuthJWT):
+    # refresh token 검증
+    try:
+        # refresh token 검증
+        authorize.jwt_refresh_token_required()
+    except Exception as e:
+        raise HTTPException(status_code=401, detail="Refresh token expired or invalid")
 
-    if not token:
-        raise HTTPException(status_code=401, detail="Refresh token missing")
-
-    # 액세스 토큰에서 사용자 ID 추출
+    # 새로운 액세스 토큰 발급
     user_id = authorize.get_jwt_subject()
+    login_token = authorize.create_access_token(subject=user_id)
 
-    # 리프레시 토큰이 저장되어 있는지 확인
-    user_info = json.loads(await redis().get(user_id))
-    if not user_info:
-        raise HTTPException(status_code=401, detail="Invalid refresh token")
-
-    if not (user_info.get("refresh_token") and user_info.get("refresh_token") == token):
-        raise HTTPException(status_code=401, detail="Invalid refresh token")
-
-    # 리프레시 토큰을 사용해 새로운 액세스 토큰 발급
-    access_token = authorize.create_access_token(subject=user_id)
-
-    return {"access_token": access_token}
+    return login_token

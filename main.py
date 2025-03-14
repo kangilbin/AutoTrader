@@ -1,18 +1,20 @@
-from fastapi import FastAPI, Response, Request, Depends, HTTPException
+import logging
+from fastapi import FastAPI, Response, Request, Depends, HTTPException, WebSocket
 from api.KISOpenApi import oauth_token
 from api.LocalStockApi import get_stock_balance
 from model.schemas.AccountModel import AccountCreate
 from model.schemas.UserModel import UserCreate
 from module.DBConnection import get_db
+from module.KisWebSocket import websocket_endpoint
 from module.RedisConnection import redis_pool, redis
 from contextlib import asynccontextmanager
-from queries.KIS_LOCAL_STOCKS import get_stocks
 from fastapi_jwt_auth import AuthJWT
 from model.schemas.JwtModel import Settings
-import websockets
 from services.AccountService import create_account, get_account, get_accounts, remove_account
 from services.UserService import create_user, login_user, refresh_token
 
+
+logging.basicConfig(level=logging.INFO)
 
 # 의존성 주입을 위한 설정
 @AuthJWT.load_config
@@ -24,14 +26,12 @@ def get_config():
 async def lifespan(app: FastAPI):
     app.state.db_pool = get_db()
     app.state.redis_pool = await redis_pool(max_size=10)
-    app.state.websocket = await websockets.connect('ws://ops.koreainvestment.com:21000')
     try:
         yield
     finally:
         await app.state.db_pool.close()
         await app.state.redis_pool.close()
         await app.state.redis_pool.wait_closed()
-        await app.state.websocket.close()
 
 app = FastAPI(lifespan=lifespan)
 
@@ -59,7 +59,7 @@ async def jwt_auth_middleware(request: Request, call_next):
 @app.post("/signup")
 async def signup(user_data: UserCreate):
     # 디바이스 정보 검증
-    response = await oauth_token(user_data.API_KEY, user_data.SECRET_KEY)
+    response = await oauth_token(user_data.USER_ID, user_data.API_KEY, user_data.SECRET_KEY)
 
     token = response.get("access_token")
     if (not token) or (response.get("error_code")):
@@ -72,6 +72,7 @@ async def signup(user_data: UserCreate):
 
     return {"message": "회원 가입 성공", "data": user}
 
+
 # 로그인
 @app.post("/login")
 async def login(request: Request, response: Response, authorize: AuthJWT = Depends()):
@@ -80,28 +81,31 @@ async def login(request: Request, response: Response, authorize: AuthJWT = Depen
     user_pw = req.get("PASSWORD")
 
     # 사용자 검증
-    access_token, refresh_token, user_info = await login_user(app.state.db_pool, user_id, user_pw, authorize)
+    login_token, login_refresh_token = await login_user(app.state.db_pool, user_id, user_pw, authorize)
 
-    response.set_cookie(key="access_token", value=access_token, httponly=True)
-    response.set_cookie(key="refresh_token", value=refresh_token, httponly=True)
+    response.set_cookie(key="login_token", value=login_token, httponly=True)
+    response.set_cookie(key="login_refresh_token", value=login_refresh_token, httponly=True)
 
     return {"message": "로그인 성공"}
 
 
 # 리프레시 토큰을 이용해 새로운 액세스 토큰 발급
 @app.post("/refresh")
-async def refresh(request: Request, authorize: AuthJWT = Depends()):
-    token = request.cookies.get("refresh_token")
-    return await refresh_token(token, authorize)
+async def refresh(response: Response, authorize: AuthJWT = Depends()):
+    login_token = await refresh_token(authorize)
+    response.set_cookie(key="login_token", value=login_token, httponly=True)
+
+    return {"message": "token 재발급"}
+
 
 # 로그아웃
 @app.post("/logout")
-async def logout(response: Response, Authorize: AuthJWT = Depends()):
-    user_id = Authorize.get_jwt_subject()
+async def logout(response: Response, authorize: AuthJWT = Depends()):
+    user_id = authorize.get_jwt_subject()
 
     # 토큰 제거
-    response.delete_cookie("refresh_token")
-    response.delete_cookie("access_token")
+    response.delete_cookie("login_refresh_token")
+    response.delete_cookie("login_token")
     await redis().delete(user_id)
 
     return {"message": "로그아웃 성공"}
@@ -143,8 +147,8 @@ async def accounts(authorize: AuthJWT = Depends()):
 
 # 잔고 조회
 @app.get("/balance")
-async def stock_balance(Authorize: AuthJWT = Depends()):
-    user_id = Authorize.get_jwt_subject()
+async def stock_balance(authorize: AuthJWT = Depends()):
+    user_id = authorize.get_jwt_subject()
     cano = await redis().hget(user_id, "CANO")
     acnt_prdt_cd = await redis().hget(user_id, "ACNT_PRDT_CD")
 
@@ -159,19 +163,10 @@ async def stock(name: str):
     return {"message": "종목 코드 조회", "stock": stock_info}
 
 # 주식 현재가/호가
-# @app.get("/socket")
-# async def websocket_endpoint(session_data: dict = Depends(session_token)):
-#     await websocket.accept()
-#     connected_clients[client_id] = websocket  # 연결된 클라이언트 저장
-#
-#     try:
-#         while True:
-#             # 클라이언트 메시지 대기 (필수는 아님)
-#             data = await websocket.receive_text()
-#             print(f"클라이언트 {client_id} 메시지: {data}")
-#     except Exception as e:
-#         print(f"클라이언트 {client_id} 연결 종료: {e}")
-#         del connected_clients[client_id]  # 연결 종료 시 삭제
+@app.websocket("/kis_socket")
+async def kis_websocket(websocket: WebSocket, authorize: AuthJWT = Depends()):
+    user_id = authorize.get_jwt_subject()
+    await websocket_endpoint(websocket, user_id)
 
 # 보유 주식
 

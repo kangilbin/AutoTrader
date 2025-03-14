@@ -8,7 +8,7 @@ from module.RedisConnection import redis
 # grant_type : 권한
 # appkey : 앱키
 # appsecret : 앱 시크키
-async def oauth_token(api_key: str, secret_key: str):
+async def oauth_token(user_id: str, api_key: str, secret_key: str):
     # redis = await redis_client()
     # access_token = await redis.get("access_token")
     #
@@ -28,15 +28,14 @@ async def oauth_token(api_key: str, secret_key: str):
     response = await fetch("POST", api_url, json=body)
 
     # Redis에 토큰 저장 만료기간(expires_in) 설정
-    # access_token = response_data.get("access_token")
-    # await redis.set("access_token", access_token, ex=response_data.get("expires_in"))
+    await redis().set(f"{user_id}_access_token", response.get("access_token"), ex=response.get("expires_in"))
     return response
 
 
 # 실시간 (웹소켓) 접속키 발급
 # 접속키의 유효기간은 24시간이지만, 접속키는 세션 연결 시 초기 1회만 사용하기 때문에 접속키 인증 후에는 세션종료되지 않는 이상
 # 접속키 신규 발급받지 않으셔도 365일 내내 웹소켓 데이터 수신하실 수 있습니다.
-async def get_approval():
+async def get_approval(user_id: str, api_key: str, secret_key: str):
     path = "oauth2/Approval"
     api_url = f"{get_env('API_URL')}/{path}"
 
@@ -45,12 +44,11 @@ async def get_approval():
         "appkey": get_env("API_KEY"),
         "appsecret": get_env("SECRET_KEY")
     }
-    response_data = await fetch("POST", api_url, json=body)
+    response = await fetch("POST", api_url, json=body)
 
     # Redis에 토큰 저장 만료기간(expires_in) 설정
-    approval_key = response_data.get("approval_key")
-    await redis().set("approval_key", approval_key, ex=response_data.get("expires_in"))
-
+    await redis().set(f"{user_id}_socket_token", response.get("approval_key"), ex=response.get("expires_in"))
+    return response
 
 
 # 자꾸 오류남 토큰 호출하면
@@ -192,5 +190,4 @@ async def hash_key(datas):
     response_data = await fetch("POST",api_url, body=datas, headers=headers)
 
     return response_data.json()["HASH"]
-# asyncio.run(connect())
 
