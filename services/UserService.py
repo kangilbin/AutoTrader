@@ -3,7 +3,7 @@ from datetime import timedelta
 from fastapi import HTTPException
 
 from api.KISOpenApi import oauth_token
-from crud.User_crud import insert_user, select_user
+from crud.UserCrud import insert_user, select_user
 from model.schemas.UserModel import UserCreate, UserResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi_jwt_auth import AuthJWT
