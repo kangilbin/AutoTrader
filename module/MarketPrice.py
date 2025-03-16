@@ -1,46 +1,46 @@
-from base64 import b64decode
-from Crypto.Cipher import AES
-from Crypto.Util.Padding import unpad
+# from base64 import b64decode
+# from Crypto.Cipher import AES
+# from Crypto.Util.Padding import unpad
 
-
-# AES256 복호화(DECODE)
-async def aes_cbc_base64_dec(key, iv, cipher_text):
-    """
-    :param key:  str type AES256 secret key value
-    :param iv: str type AES256 Initialize Vector
-    :param cipher_text: Base64 encoded AES256 str
-    :return: Base64-AES256 decodec str
-    """
-    cipher = AES.new(key.encode('utf-8'), AES.MODE_CBC, iv.encode('utf-8'))
-    return bytes.decode(unpad(cipher.decrypt(b64decode(cipher_text)), AES.block_size))
-
-
-# 주식체결가
-async def stockspurchase(data_cnt, data):
-    print("============================================")
-    menulist = "유가증권단축종목코드|주식체결시간|주식현재가|전일대비부호|전일대비|전일대비율|가중평균주식가격|주식시가|주식최고가|주식최저가|매도호가1|매수호가1|체결거래량|누적거래량|누적거래대금|매도체결건수|매수체결건수|순매수체결건수|체결강도|총매도수량|총매수수량|체결구분|매수비율|전일거래량대비등락율|시가시간|시가대비구분|시가대비|최고가시간|고가대비구분|고가대비|최저가시간|저가대비구분|저가대비|영업일자|신장운영구분코드|거래정지여부|매도호가잔량|매수호가잔량|총매도호가잔량|총매수호가잔량|거래량회전율|전일동시간누적거래량|전일동시간누적거래량비율|시간구분코드|임의종료구분코드|정적VI발동기준가"
-    menustr = menulist.split('|')
-    pValue = data.split('^')
-    i = 0
-    for cnt in range(data_cnt):     # 넘겨받은 체결데이터 개수만큼 print 한다
-        print("### [%d / %d]"%(cnt+1, data_cnt))
-        for menu in menustr:
-            print("%-13s[%s]" % (menu, pValue[i]))
-            i += 1
-
-# 주식체결통보
-async def stocksigningnotice(data, key, iv):
-    menulist = "고객ID|계좌번호|주문번호|원주문번호|매도매수구분|정정구분|주문종류|주문조건|주식단축종목코드|체결수량|체결단가|주식체결시간|거부여부|체결여부|접수여부|지점번호|주문수량|계좌명|체결종목명|신용구분|신용대출일자|체결종목명40|주문가격"
-    menustr1 = menulist.split('|')
-
-    # AES256 처리 단계
-    aes_dec_str = await aes_cbc_base64_dec(key, iv, data)
-    p_value = aes_dec_str.split('^')
-
-    i = 0
-    for menu in menustr1:
-        print("%s  [%s]" % (menu, p_value[i]))
-        i += 1
+#
+# # AES256 복호화(DECODE)
+# async def aes_cbc_base64_dec(key, iv, cipher_text):
+#     """
+#     :param key:  str type AES256 secret key value
+#     :param iv: str type AES256 Initialize Vector
+#     :param cipher_text: Base64 encoded AES256 str
+#     :return: Base64-AES256 decodec str
+#     """
+#     cipher = AES.new(key.encode('utf-8'), AES.MODE_CBC, iv.encode('utf-8'))
+#     return bytes.decode(unpad(cipher.decrypt(b64decode(cipher_text)), AES.block_size))
+#
+#
+# # 주식체결가
+# async def stockspurchase(data_cnt, data):
+#     print("============================================")
+#     menulist = "유가증권단축종목코드|주식체결시간|주식현재가|전일대비부호|전일대비|전일대비율|가중평균주식가격|주식시가|주식최고가|주식최저가|매도호가1|매수호가1|체결거래량|누적거래량|누적거래대금|매도체결건수|매수체결건수|순매수체결건수|체결강도|총매도수량|총매수수량|체결구분|매수비율|전일거래량대비등락율|시가시간|시가대비구분|시가대비|최고가시간|고가대비구분|고가대비|최저가시간|저가대비구분|저가대비|영업일자|신장운영구분코드|거래정지여부|매도호가잔량|매수호가잔량|총매도호가잔량|총매수호가잔량|거래량회전율|전일동시간누적거래량|전일동시간누적거래량비율|시간구분코드|임의종료구분코드|정적VI발동기준가"
+#     menustr = menulist.split('|')
+#     pValue = data.split('^')
+#     i = 0
+#     for cnt in range(data_cnt):     # 넘겨받은 체결데이터 개수만큼 print 한다
+#         print("### [%d / %d]"%(cnt+1, data_cnt))
+#         for menu in menustr:
+#             print("%-13s[%s]" % (menu, pValue[i]))
+#             i += 1
+#
+# # 주식체결통보
+# async def stocksigningnotice(data, key, iv):
+#     menulist = "고객ID|계좌번호|주문번호|원주문번호|매도매수구분|정정구분|주문종류|주문조건|주식단축종목코드|체결수량|체결단가|주식체결시간|거부여부|체결여부|접수여부|지점번호|주문수량|계좌명|체결종목명|신용구분|신용대출일자|체결종목명40|주문가격"
+#     menustr1 = menulist.split('|')
+#
+#     # AES256 처리 단계
+#     aes_dec_str = await aes_cbc_base64_dec(key, iv, data)
+#     p_value = aes_dec_str.split('^')
+#
+#     i = 0
+#     for menu in menustr1:
+#         print("%s  [%s]" % (menu, p_value[i]))
+#         i += 1
 
 
 # 주식 호가

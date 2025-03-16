@@ -6,7 +6,7 @@ from model.schemas.AccountModel import AccountCreate
 from model.schemas.UserModel import UserCreate
 from module.DBConnection import get_db
 from module.KisWebSocket import websocket_endpoint
-from module.RedisConnection import redis_pool, redis
+from module.RedisConnection import get_redis, create_redis
 from contextlib import asynccontextmanager
 from fastapi_jwt_auth import AuthJWT
 from model.schemas.JwtModel import Settings
@@ -25,13 +25,12 @@ def get_config():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     app.state.db_pool = get_db()
-    app.state.redis_pool = await redis_pool(max_size=10)
+    app.state.redis = await create_redis()
     try:
         yield
     finally:
         await app.state.db_pool.close()
-        await app.state.redis_pool.close()
-        await app.state.redis_pool.wait_closed()
+        await app.state.redis.close()
 
 app = FastAPI(lifespan=lifespan)
 
@@ -106,7 +105,7 @@ async def logout(response: Response, authorize: AuthJWT = Depends()):
     # 토큰 제거
     response.delete_cookie("login_refresh_token")
     response.delete_cookie("login_token")
-    await redis().delete(user_id)
+    await get_redis().delete(user_id)
 
     return {"message": "로그아웃 성공"}
 
@@ -149,8 +148,8 @@ async def accounts(authorize: AuthJWT = Depends()):
 @app.get("/balance")
 async def stock_balance(authorize: AuthJWT = Depends()):
     user_id = authorize.get_jwt_subject()
-    cano = await redis().hget(user_id, "CANO")
-    acnt_prdt_cd = await redis().hget(user_id, "ACNT_PRDT_CD")
+    cano = await get_redis().hget(user_id, "CANO")
+    acnt_prdt_cd = await get_redis().hget(user_id, "ACNT_PRDT_CD")
 
     balance = await get_stock_balance(cano, acnt_prdt_cd)
     return {"message": "계좌 잔고 조회", "balance": balance}

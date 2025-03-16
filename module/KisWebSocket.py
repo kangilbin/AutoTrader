@@ -2,7 +2,7 @@ import json
 import logging
 from fastapi import WebSocket
 from api.KISOpenApi import get_approval
-from module.RedisConnection import redis
+from module.RedisConnection import get_redis
 
 connected_clients = {}
 
@@ -12,8 +12,8 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
     connected_clients[user_id] = websocket  # 연결된 클라이언트 저장
 
     try:
-        user_info = await redis().hgetall(user_id)
-        socket_token = await redis().get(f"{user_id}_socket_token")
+        user_info = await get_redis().hgetall(user_id)
+        socket_token = await get_redis().get(f"{user_id}_socket_token")
 
         if not socket_token:
             response = await get_approval(user_id, user_info.get("API_KEY"), user_info.get("SECRET_KEY"))

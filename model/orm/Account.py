@@ -4,6 +4,7 @@ import datetime
 
 Base = declarative_base()
 
+
 class Account(Base):
     __tablename__ = "ACCOUNT"
 

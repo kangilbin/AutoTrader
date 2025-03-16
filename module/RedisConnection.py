@@ -2,12 +2,13 @@ import aioredis
 from main import app
 
 
-async def redis_pool(max_size: int = 10):
-    return await aioredis.create_redis_pool(
-        "redis://localhost:6379", minsize=5, maxsize=max_size, decode_responses=True
-    )
+async def create_redis():
+    # Redis 클라이언트 인스턴스 생성
+    redis = await aioredis.from_url("redis://localhost:6379", decode_responses=True)
+
+    return redis
 
 
-def redis():
-    return app.state.redis_pool
+def get_redis():
+    return app.state.redis
 
