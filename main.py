@@ -1,7 +1,8 @@
 import logging
 from fastapi import FastAPI, Response, Request, Depends, HTTPException, WebSocket
 from api.KISOpenApi import oauth_token
-from api.LocalStockApi import get_stock_balance
+from api.LocalStockApi import get_stock_balance, get_order_cash
+from model.schemas import OrderModel
 from model.schemas.AccountModel import AccountCreate
 from model.schemas.UserModel import UserCreate
 from module.DBConnection import get_db
@@ -168,7 +169,16 @@ async def kis_websocket(websocket: WebSocket, authorize: AuthJWT = Depends()):
     user_id = authorize.get_jwt_subject()
     await websocket_endpoint(websocket, user_id)
 
-# 보유 주식
+
+
+
+# 주식 매매 or 매도
+@app.post("/order")
+async def stock_buy_sell(order: OrderModel, authorize: AuthJWT = Depends()):
+    user_id = authorize.get_jwt_subject()
+
+    order = await get_order_cash(user_id, order)
+    return {"message": "주문 완료", "data": order}
 
 
 
@@ -177,3 +187,8 @@ async def kis_websocket(websocket: WebSocket, authorize: AuthJWT = Depends()):
 
 # 주식 매도
 
+# 주식 정정(취소)
+
+
+# 재무제표
+# import dart_fss as dart
