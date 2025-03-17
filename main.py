@@ -170,8 +170,6 @@ async def kis_websocket(websocket: WebSocket, authorize: AuthJWT = Depends()):
     await websocket_endpoint(websocket, user_id)
 
 
-
-
 # 주식 매매 or 매도
 @app.post("/order")
 async def stock_buy_sell(order: OrderModel, authorize: AuthJWT = Depends()):
@@ -180,12 +178,6 @@ async def stock_buy_sell(order: OrderModel, authorize: AuthJWT = Depends()):
     order = await get_order_cash(user_id, order)
     return {"message": "주문 완료", "data": order}
 
-
-
-# 주식 매매
-
-
-# 주식 매도
 
 # 주식 정정(취소)
 
