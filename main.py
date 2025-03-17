@@ -11,6 +11,7 @@ from contextlib import asynccontextmanager
 from fastapi_jwt_auth import AuthJWT
 from model.schemas.JwtModel import Settings
 from services.AccountService import create_account, get_account, get_accounts, remove_account
+from services.StockService import get_stock_initial
 from services.UserService import create_user, login_user, refresh_token
 
 
@@ -141,7 +142,7 @@ async def account(account_id: str, Authorize: AuthJWT = Depends()):
 async def accounts(authorize: AuthJWT = Depends()):
     user_id = authorize.get_jwt_subject()
     account_list = await get_accounts(app.state.db_pool, user_id)
-    return {"message": "계좌 리스트 조회", "accounts": account_list}
+    return {"message": "계좌 리스트 조회", "data": account_list}
 
 
 # 잔고 조회
@@ -152,14 +153,14 @@ async def stock_balance(authorize: AuthJWT = Depends()):
     acnt_prdt_cd = await get_redis().hget(user_id, "ACNT_PRDT_CD")
 
     balance = await get_stock_balance(cano, acnt_prdt_cd)
-    return {"message": "계좌 잔고 조회", "balance": balance}
+    return {"message": "계좌 잔고 조회", "data": balance}
 
 
 # 종목 코드 조회
 @app.get("/stock")
 async def stock(name: str):
-    stock_info = await get_stocks(app.state.db_pool, name)
-    return {"message": "종목 코드 조회", "stock": stock_info}
+    stock_info = await get_stock_initial(app.state.db_pool, name)
+    return {"message": "종목 코드 조회", "data": stock_info}
 
 # 주식 현재가/호가
 @app.websocket("/kis_socket")

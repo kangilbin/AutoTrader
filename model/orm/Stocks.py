@@ -4,8 +4,8 @@ from sqlalchemy import Column, String, Index
 Base = declarative_base()
 
 
-class KisLocalStocks(Base):
-    __tablename__ = "KIS_LOCAL_STOCKS"
+class Stocks(Base):
+    __tablename__ = "STOCK_INFO"
 
     ST_CODE = Column(String(50), nullable=False, comment='단축 코드', primary_key=True)  # ST_CODE 컬럼
     SD_CODE = Column(String(50), nullable=False, comment='표준 코드')  # SD_CODE 컬럼

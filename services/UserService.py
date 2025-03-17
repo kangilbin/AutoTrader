@@ -1,13 +1,10 @@
-import json
-from datetime import timedelta
 from fastapi import HTTPException
+from fastapi_jwt_auth import AuthJWT
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.KISOpenApi import oauth_token
 from crud.UserCrud import insert_user, select_user
 from model.schemas.UserModel import UserCreate, UserResponse
-from sqlalchemy.ext.asyncio import AsyncSession
-from fastapi_jwt_auth import AuthJWT
-from module.RedisConnection import redis
+from module.RedisConnection import get_redis
 
 
 async def create_user(db: AsyncSession, user_data: UserCreate) -> UserResponse:
@@ -22,7 +19,7 @@ async def login_user(db, user_id: str, user_pw: str, authorize: AuthJWT):
     login_token = authorize.create_access_token(subject=user_id)
     login_refresh_token = authorize.create_refresh_token(subject=user_id)
 
-    await redis().hset(user_id, mapping=user_info, ex=3600, xx=True)
+    await get_redis().hset(user_id, mapping=user_info, ex=3600, xx=True)
     return login_token, login_refresh_token
 
 

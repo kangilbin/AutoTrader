@@ -1,16 +1,11 @@
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update, delete, and_
-from model.schemas.UserModel import UserCreate, UserResponse
-from model.orm.User import User
+from sqlalchemy import text
 
 
-# 비동기 사용자 조회
-async def select_stock(db: AsyncSession, user_id: str, user_pw: str):
-    query = select(User).filter(
-        and_(User.USER_ID == user_id, User.PASSWORD == user_pw)
-    )
-    result = await db.execute(query)
-    return result.scalars()
-
+# 초성 검색
+async def select_stock_initial(db: AsyncSession, initial: str):
+    query = text(f"SELECT * FROM STOCK_INFO WHERE MATCH(NAME) AGAINST(:initial IN BOOLEAN MODE)")
+    result = await db.execute(query, {"initial": initial + "*"})
+    return result.scalars().all()
 
 
