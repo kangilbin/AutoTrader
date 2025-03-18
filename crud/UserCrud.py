@@ -5,9 +5,9 @@ from model.orm.User import User
 
 
 # 비동기 사용자 조회
-async def select_user(db: AsyncSession, user_id: str, user_pw: str):
+async def select_user(db: AsyncSession, user_id: str):
     query = select(User).filter(
-        and_(User.USER_ID == user_id, User.PASSWORD == user_pw)
+        and_(User.USER_ID == user_id)
     )
     result = await db.execute(query)
     return result.scalars()

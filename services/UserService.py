@@ -4,16 +4,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from crud.UserCrud import insert_user, select_user
 from model.schemas.UserModel import UserCreate, UserResponse
+from module.AESCrypto import encrypt
+from module.HashCrypto import hash_password, check_password
 from module.RedisConnection import get_redis
 
 
 async def create_user(db: AsyncSession, user_data: UserCreate) -> UserResponse:
+    user_data.SECRET_KEY = encrypt(user_data.SECRET_KEY)
+    user_data.API_KEY = encrypt(user_data.API_KEY)
+    user_data.PASSWORD = hash_password(user_data.PASSWORD)
     return await insert_user(db, user_data)
 
 
 async def login_user(db, user_id: str, user_pw: str, authorize: AuthJWT):
-    user_info = await select_user(db, user_id, user_pw)
-    if not user_info:
+    user_info = await select_user(db, user_id)
+    if not user_info or not check_password(user_pw, user_info.PASSWORD):
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
     login_token = authorize.create_access_token(subject=user_id)
