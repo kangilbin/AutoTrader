@@ -5,6 +5,7 @@ from module.Config import get_env
 from module.RedisConnection import get_redis
 from datetime import datetime, timedelta
 
+
 # 주식 잔고 조회
 async def get_stock_balance(user_id: str):
     user_info = await get_redis().hgetall(user_id)
@@ -45,7 +46,6 @@ async def get_stock_balance(user_id: str):
 # ord_dv : buy(매수), sell(매도)
 # itm_no : 종목번호
 # qty : 주문수량
-# unpr : 주문단가
 async def get_order_cash(user_id: str, order: OrderModel):
     user_info = await get_redis().hgetall(user_id)
     access_token = await get_redis().get(f"{user_id}_access_token")
@@ -69,7 +69,6 @@ async def get_order_cash(user_id: str, order: OrderModel):
 
     if order.QTY == 0:
         return None
-
 
     headers = {
         "authorization": f"Bearer {access_token}",
