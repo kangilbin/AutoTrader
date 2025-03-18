@@ -10,5 +10,4 @@ class Order(BaseModel):
     ORD_DV: str
     ITM_NO: str
     QTY: int
-    UNPR: int
 

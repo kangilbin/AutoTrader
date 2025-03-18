@@ -3,7 +3,7 @@ from model.schemas import OrderModel
 from module.FetchAPI import fetch
 from module.Config import get_env
 from module.RedisConnection import get_redis
-
+from datetime import datetime, timedelta
 
 # 주식 잔고 조회
 async def get_stock_balance(user_id: str):
@@ -70,8 +70,6 @@ async def get_order_cash(user_id: str, order: OrderModel):
     if order.QTY == 0:
         return None
 
-    if order.UNPR == 0:
-        return None
 
     headers = {
         "authorization": f"Bearer {access_token}",
@@ -83,19 +81,19 @@ async def get_order_cash(user_id: str, order: OrderModel):
     params = {
         "CANO": user_info.get("CANO"),                  # 종합계좌번호 8자리
         "ACNT_PRDT_CD": user_info.get("ACNT_PRDT_CD"),  # 계좌상품코드 2자리
-        "PDNO": order.ITM_NO,                                 # 종목코드(6자리) ETN의 경우, Q로 시작 (EX. Q500001)
+        "PDNO": order.ITM_NO,                           # 종목코드(6자리) ETN의 경우, Q로 시작 (EX. Q500001)
         "ORD_DVSN": "01",                               # 주문구분 00:지정가, 01:시장가, 02:조건부지정가  나머지주문구분 API 문서 참조
-        "ORD_QTY": str(order.QTY),                       # 주문주식수
-        "ORD_UNPR": str(order.UNPR)                      # 주문단가
+        "ORD_QTY": str(order.QTY),                      # 주문주식수
+        "ORD_UNPR": "0"                                 # 주문단가
     }
 
     return await fetch("POST", api_url, params=params, headers=headers)
 
 
 ####################################################################################
-# [국내주식] 주문/계좌 > 주식정정취소가능주문조회[v1_국내주식-004]
+# 주식정정취소가능주문내역 조회
 ####################################################################################
-async def get_inquire_psbl_rvsecncl_lst(user_id: str, tr_cont="", FK100="", NK100=""):  # 국내주식주문 > 주식정정취소가능주문조회
+async def get_inquire_psbl_rvsecncl_lst(user_id: str, FK100="", NK100=""):  # 국내주식주문 > 주식정정취소가능주문조회
 
     user_info = await get_redis().hgetall(user_id)
     access_token = await get_redis().get(f"{user_id}_access_token")
@@ -104,10 +102,9 @@ async def get_inquire_psbl_rvsecncl_lst(user_id: str, tr_cont="", FK100="", NK10
         response = await oauth_token(user_id, user_info.get("API_KEY"), user_info.get("SECRET_KEY"))
         access_token = response.get("access_token")
 
-    path = "/uapi/domestic-stock/v1/trading/order-cash"
+    path = "/uapi/domestic-stock/v1/trading/inquire-psbl-rvsecncl"
     api_url = f"{get_env('API_URL')}/{path}"
 
-    url = '/uapi/domestic-stock/v1/trading/inquire-psbl-rvsecncl'
     tr_id = "TTTC0084R"
 
     headers = {
@@ -216,3 +213,59 @@ async def get_order_rvsecncl(user_id:str, ord_orgno="", orgn_odno="", ord_dvsn="
 
     return await fetch("POST", api_url, params=params, headers=headers)
 
+
+####################################################################################
+# 주식일별주문체결(현황)조회
+####################################################################################
+async def get_inquire_daily_ccld_obj(user_id:str, inqr_strt_dt=None, inqr_end_dt=None, FK100="", NK100=""):
+    user_info = await get_redis().hgetall(user_id)
+    access_token = await get_redis().get(f"{user_id}_access_token")
+
+    if not access_token:
+        response = await oauth_token(user_id, user_info.get("API_KEY"), user_info.get("SECRET_KEY"))
+        access_token = response.get("access_token")
+
+    path = '/uapi/domestic-stock/v1/trading/inquire-daily-ccld'
+    api_url = f"{get_env('API_URL')}/{path}"
+
+    if inqr_strt_dt is None:
+        inqr_strt_dt = datetime.today().strftime("%Y%m%d")   # 시작일자 값이 없으면 현재일자
+
+    if inqr_end_dt is None:
+        inqr_end_dt  = datetime.today().strftime("%Y%m%d")   # 종료일자 값이 없으면 현재일자
+
+    # 시작일자와 현재일자를 datetime 객체로 변환
+    current_date = datetime.today()
+    # 3개월 전 날짜 계산
+    three_months_ago = current_date - timedelta(days=90)
+    if datetime.strptime(inqr_strt_dt, "%Y%m%d") > three_months_ago:
+        tr_id = "CTSC9115R"  # 02:3개월 이전 국내주식체결내역 (월단위 ex: 2024.04.25 이면 2024.01월이전)
+    else:
+        tr_id = "TTTC8001R"  # 01:3개월 이내 국내주식체결내역 (월단위 ex: 2024.04.25 이면 2024.01월~04월조회)
+
+
+    headers = {
+        "authorization": f"Bearer {access_token}",
+        "appkey": user_info.get("API_KEY"),
+        "appsecret": user_info.get("SECRET_KEY"),
+        "tr_id": tr_id,
+        "custtype": "P"  # B:법인, P:개인
+    }
+    params = {
+        "CANO": user_info.get("CANO"),                  # 종합계좌번호 8자리
+        "ACNT_PRDT_CD": user_info.get("ACNT_PRDT_CD"),  # 계좌상품코드 2자리
+        "INQR_STRT_DT": inqr_strt_dt,           # 조회시작일자
+        "INQR_END_DT": inqr_end_dt,             # 조회종료일자
+        "SLL_BUY_DVSN_CD": "00",                # 매도매수구분코드 00:전체 01:매도, 02:매수
+        "INQR_DVSN": "01",                      # 조회구분(정렬순서)  00:역순, 01:정순
+        "PDNO": "",                             # 종목번호(6자리)
+        "CCLD_DVSN": "00",                      # 체결구분 00:전체, 01:체결, 02:미체결
+        "ORD_GNO_BRNO": "",                     # 사용안함
+        "ODNO": "",                             # 주문번호
+        "INQR_DVSN_3": "00",                    # 조회구분3 00:전체, 01:현금, 02:융자, 03:대출, 04:대주
+        "INQR_DVSN_1": "0",                     # 조회구분1 공란 : 전체, 1 : ELW, 2 : 프리보드
+        "CTX_AREA_FK100": FK100,                # 공란 : 최초 조회시 이전 조회 Output CTX_AREA_FK100 값 : 다음페이지 조회시(2번째부터)
+        "CTX_AREA_NK100": NK100                 # 공란 : 최초 조회시 이전 조회 Output CTX_AREA_NK100 값 : 다음페이지 조회시(2번째부터)
+    }
+
+    return await fetch("POST", api_url, params=params, headers=headers)
