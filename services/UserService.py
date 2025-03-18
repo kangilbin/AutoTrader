@@ -16,8 +16,8 @@ async def create_user(db: AsyncSession, user_data: UserCreate) -> UserResponse:
     return await insert_user(db, user_data)
 
 
-async def login_user(db, user_id: str, user_pw: str, authorize: AuthJWT):
-    user_info = await select_user(db, user_id)
+async def login_user(db, user_id: str, user_pw: str, user_dvc: str, authorize: AuthJWT):
+    user_info = await select_user(db, user_id, user_dvc)
     if not user_info or not check_password(user_pw, user_info.PASSWORD):
         raise HTTPException(status_code=401, detail="Invalid credentials")
 

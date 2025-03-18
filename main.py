@@ -79,10 +79,11 @@ async def signup(user_data: UserCreate):
 async def login(request: Request, response: Response, authorize: AuthJWT = Depends()):
     req = await request.json()
     user_id = req.get("USER_ID")
+    user_dvc = req.get("DEVICE_ID")
     user_pw = req.get("PASSWORD")
 
     # 사용자 검증
-    login_token, login_refresh_token = await login_user(app.state.db_pool, user_id, user_pw, authorize)
+    login_token, login_refresh_token = await login_user(app.state.db_pool, user_id, user_pw, user_dvc, authorize)
 
     response.set_cookie(key="login_token", value=login_token, httponly=True)
     response.set_cookie(key="login_refresh_token", value=login_refresh_token, httponly=True)
