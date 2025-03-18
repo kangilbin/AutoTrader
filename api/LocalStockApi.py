@@ -58,9 +58,9 @@ async def get_order_cash(user_id: str, order: OrderModel):
     api_url = f"{get_env('API_URL')}/{path}"
 
     if order.ORD_DV == "buy":
-        tr_id = "TTTC0802U" # 주식 현금 매수 주문    [모의투자] VTTC0802U : 주식 현금 매수 주문
+        tr_id = "TTTC0012U" # 주식 현금 매수 주문    [모의투자] VTTC0802U : 주식 현금 매수 주문
     elif order.ORD_DV == "sell":
-        tr_id = "TTTC0801U" # 주식 현금 매도 주문    [모의투자] VTTC0801U : 주식 현금 매도 주문
+        tr_id = "TTTC0011U" # 주식 현금 매도 주문    [모의투자] VTTC0801U : 주식 현금 매도 주문
     else:
         return None
 
@@ -92,10 +92,72 @@ async def get_order_cash(user_id: str, order: OrderModel):
     return await fetch("POST", api_url, params=params, headers=headers)
 
 
+####################################################################################
+# [국내주식] 주문/계좌 > 주식정정취소가능주문조회[v1_국내주식-004]
+####################################################################################
+async def get_inquire_psbl_rvsecncl_lst(user_id: str, tr_cont="", FK100="", NK100=""):  # 국내주식주문 > 주식정정취소가능주문조회
+
+    user_info = await get_redis().hgetall(user_id)
+    access_token = await get_redis().get(f"{user_id}_access_token")
+
+    if not access_token:
+        response = await oauth_token(user_id, user_info.get("API_KEY"), user_info.get("SECRET_KEY"))
+        access_token = response.get("access_token")
+
+    path = "/uapi/domestic-stock/v1/trading/order-cash"
+    api_url = f"{get_env('API_URL')}/{path}"
+
+    url = '/uapi/domestic-stock/v1/trading/inquire-psbl-rvsecncl'
+    tr_id = "TTTC0084R"
+
+    headers = {
+        "authorization": f"Bearer {access_token}",
+        "appkey": user_info.get("API_KEY"),
+        "appsecret": user_info.get("SECRET_KEY"),
+        "tr_id": tr_id,
+        "custtype": "P"  # B:법인, P:개인
+    }
+    params = {
+        "CANO": user_info.get("CANO"),                  # 종합계좌번호 8자리
+        "ACNT_PRDT_CD": user_info.get("ACNT_PRDT_CD"),  # 계좌상품코드 2자리
+        "INQR_DVSN_1": "1",                     # 조회구분1(정렬순서)  0:조회순서, 1:주문순, 2:종목순
+        "INQR_DVSN_2": "0",                     # 조회구분2 0:전체, 1:매도, 2:매수
+        "CTX_AREA_FK100": FK100,                # 공란 : 최초 조회시 이전 조회 Output CTX_AREA_FK100 값 : 다음페이지 조회시(2번째부터)
+        "CTX_AREA_NK100": NK100                 # 공란 : 최초 조회시 이전 조회 Output CTX_AREA_NK100 값 : 다음페이지 조회시(2번째부터)
+    }
+
+    # print(tr_cont, FK100, NK100)
+    # if tr_cont == "D" or tr_cont == "E": # 마지막 페이지
+    #     print("The End")
+    #     current_data = pd.DataFrame(dataframe)
+    #     dataframe = current_data
+    #     return dataframe
+    # elif tr_cont == "F" or tr_cont == "M": # 다음 페이지 존재하는 경우 자기 호출 처리
+    #     print('Call Next')
+    #     return get_inquire_psbl_rvsecncl_lst("N", FK100, NK100, dataframe)
+
+    return await fetch("POST", api_url, params=params, headers=headers)
+
+
 # 주식 주문(정정취소)
-async def get_order_rvsecncl(ord_orgno="", orgn_odno="", ord_dvsn="", rvse_cncl_dvsn_cd="", ord_qty=0, ord_unpr=0, qty_all_ord_yn="", tr_cont="", dataframe=None):  # 국내주식주문 > 주식주문(정정취소)
-    url = '/uapi/domestic-stock/v1/trading/order-rvsecncl'
-    tr_id = "TTTC0803U"  # 주식 정정 취소 주문    [모의투자] VTTC0803U : 주식 정정 취소 주문
+# ord_orgno : 주문조직번호
+# orgn_odno : 원주문번호
+# ord_dvsn : 주문구분
+# rvse_cncl_dvsn_cd : 정정 : 01, 취소 : 02
+# ord_qty : 주문주식수
+# ord_unpr : 주문단가
+# qty_all_ord_yn : 잔량전부주문여부 [정정/취소] Y : 잔량전부, N : 잔량일부
+async def get_order_rvsecncl(user_id:str, ord_orgno="", orgn_odno="", ord_dvsn="", rvse_cncl_dvsn_cd="", ord_qty=0, ord_unpr=0, qty_all_ord_yn=""):  # 국내주식주문 > 주식주문(정정취소)
+    user_info = await get_redis().hgetall(user_id)
+    access_token = await get_redis().get(f"{user_id}_access_token")
+
+    if not access_token:
+        response = await oauth_token(user_id, user_info.get("API_KEY"), user_info.get("SECRET_KEY"))
+        access_token = response.get("access_token")
+
+    path = "/uapi/domestic-stock/v1/trading/order-rvsecncl"
+    api_url = f"{get_env('API_URL')}/{path}"
+    tr_id = "TTTC0013U"  # 주식 정정 취소 주문    [모의투자] VTTC0803U : 주식 정정 취소 주문
 
     if ord_orgno == "":
         print("주문조직번호 확인요망!!!")
@@ -125,9 +187,16 @@ async def get_order_rvsecncl(ord_orgno="", orgn_odno="", ord_dvsn="", rvse_cncl_
         print("주문단가 확인요망!!!")
         return None
 
+    headers = {
+        "authorization": f"Bearer {access_token}",
+        "appkey": user_info.get("API_KEY"),
+        "appsecret": user_info.get("SECRET_KEY"),
+        "tr_id": tr_id,
+        "custtype": "P"  # B:법인, P:개인
+    }
     params = {
-        "CANO": kis.getTREnv().my_acct,         # 종합계좌번호 8자리
-        "ACNT_PRDT_CD": kis.getTREnv().my_prod, # 계좌상품코드 2자리
+        "CANO": user_info.get("CANO"),                  # 종합계좌번호 8자리
+        "ACNT_PRDT_CD": user_info.get("ACNT_PRDT_CD"),  # 계좌상품코드 2자리
         "KRX_FWDG_ORD_ORGNO": ord_orgno,        # 주문조직번호 API output의 odno(주문번호) 값 입력주문시 한국투자증권 시스템에서 채번된 주문조직번호
         "ORGN_ODNO": orgn_odno,                 # 주식일별주문체결조회 API output의 odno(주문번호) 값 입력주문시 한국투자증권 시스템에서 채번된 주문번호
         "ORD_DVSN": ord_dvsn,                   # 주문구분 00:지정가, 01:시장가, 02:조건부지정가  나머지주문구분 API 문서 참조
@@ -137,14 +206,13 @@ async def get_order_rvsecncl(ord_orgno="", orgn_odno="", ord_dvsn="", rvse_cncl_
         "QTY_ALL_ORD_YN": qty_all_ord_yn        # 잔량전부주문여부 [정정/취소] Y : 잔량전부, N : 잔량일부
     }
 
-    res = kis._url_fetch(url, tr_id, tr_cont, params, postFlag=True)
 
-    if str(res.getBody().rt_cd) == "0":
-        current_data = pd.DataFrame(res.getBody().output, index=[0])
-        dataframe = current_data
-    else:
-        print(res.getBody().msg_cd + "," + res.getBody().msg1)
-        #print(res.getErrorCode() + "," + res.getErrorMessage())
-        dataframe = None
+    # if str(res.getBody().rt_cd) == "0":
+    #     current_data = pd.DataFrame(res.getBody().output, index=[0])
+    #     dataframe = current_data
+    # else:
+    #     print(res.getBody().msg_cd + "," + res.getBody().msg1)
+    #     #print(res.getErrorCode() + "," + res.getErrorMessage())
 
-    return dataframe
+    return await fetch("POST", api_url, params=params, headers=headers)
+
