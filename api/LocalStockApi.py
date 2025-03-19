@@ -6,7 +6,47 @@ from module.RedisConnection import get_redis
 from datetime import datetime, timedelta
 
 
-# 주식 잔고 조회
+"""현금 잔고조회"""
+async def get_balance(user_id: str):
+    user_info = await get_redis().hgetall(user_id)
+    access_token = await get_redis().get(f"{user_id}_access_token")
+
+    if not access_token:
+        response = await oauth_token(user_id, user_info.get("API_KEY"), user_info.get("SECRET_KEY"))
+        access_token = response.get("access_token")
+
+    path = "uapi/domestic-stock/v1/trading/inquire-psbl-order"
+    api_url = f"{get_env('API_URL')}/{path}"
+
+    #
+    # [실전투자]
+    # TTTC8908R : 매수 가능 조회
+    #
+    # [모의투자]
+    # VTTC8908R : 매수 가능 조회
+    headers = {"Content-Type":"application/json",
+               "authorization": f"Bearer {access_token}",
+               "appkey": user_info.get("API_KEY"),
+               "appsecret": user_info.get("SECRET_KEY"),
+               "tr_id":"TTTC8908R",
+               "custtype":"P",
+               }
+    params = {
+        "CANO": user_info.get("CANO"),
+        "ACNT_PRDT_CD": user_info.get("ACNT_PRDT_CD"),
+        # "PDNO": "005930",
+        "ORD_UNPR": "65500",
+        "ORD_DVSN": "01",
+        "CMA_EVLU_AMT_ICLD_YN": "Y",
+        "OVRS_ICLD_YN": "Y"
+    }
+    res = requests.get(URL, headers=headers, params=params)
+    cash = res.json()['output']['ord_psbl_cash']
+    send_message(f"주문 가능 현금 잔고: {cash}원")
+    return int(cash)
+
+
+# 보유 주식
 async def get_stock_balance(user_id: str):
     user_info = await get_redis().hgetall(user_id)
     access_token = await get_redis().get(f"{user_id}_access_token")

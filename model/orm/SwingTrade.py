@@ -17,8 +17,8 @@ class SwingTrade(Base):
     SHORT_TERM = Column(Integer, nullable=False)                            # 단기 이평선
     MEDIUM_TERM = Column(Integer, nullable=False)                           # 중기 이평선
     LONG_TERM = Column(Integer, nullable=False)                             # 장기 이평선
-    BUY_RATIO = Column(DECIMAL(5, 2), nullable=False)         # 매수 비율
-    SELL_RATIO = Column(DECIMAL(5, 2), nullable=False)        # 매도 비율
+    BUY_RATIO = Column(Integer, nullable=False)         # 매수 비율
+    SELL_RATIO = Column(Integer, nullable=False)        # 매도 비율
     CROSS_TYPE = Column(CHAR(1), nullable=False)                            # 크로스 타입 (R: 추세 반전, S: 강한 추세)
     REG_DT = Column(DateTime, default=datetime.datetime.utcnow, nullable=False)
     MOD_DT = Column(DateTime)
