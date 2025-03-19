@@ -10,7 +10,6 @@ class UserCreate(BaseModel):
     DEVICE_ID: str
 
 class UserResponse(UserCreate):
-    USER_ID: str
 
     class Config:
         orm_mode = True

@@ -3,7 +3,12 @@ from pydantic import BaseModel
 
 # CANO : 앞 8자리
 # ACNT_PRDT_CD : 뒤 2자리
-class Stock(BaseModel):
-    USER_ID: str
-    CANO: str
-    ACNT_PRDT_CD: str
+class StockCreate(BaseModel):
+    ST_CODE: str
+    SD_CODE: str
+    NAME: str
+
+class StockResponse(StockCreate):
+
+    class Config:
+        orm_mode = True
