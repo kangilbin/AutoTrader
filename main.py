@@ -1,8 +1,8 @@
 import logging
 from fastapi import FastAPI, Response, Request, Depends, HTTPException, WebSocket
 from api.KISOpenApi import oauth_token
-from api.LocalStockApi import get_stock_balance, get_order_cash
-from model.schemas import OrderModel
+from api.LocalStockApi import get_stock_balance, get_order_cash, get_order_rvsecncl, get_inquire_psbl_rvsecncl_lst
+from model.schemas import OrderModel, ModOrderModel
 from model.schemas.AccountModel import AccountCreate
 from model.schemas.UserModel import UserCreate
 from module.DBConnection import get_db
@@ -180,8 +180,24 @@ async def stock_buy_sell(order: OrderModel, authorize: AuthJWT = Depends()):
     return {"message": "주문 완료", "data": order}
 
 
-# 주식 정정(취소)
+# 주식 정정 취소 가능 주문 내역 조회
+@app.get("/order/details")
+async def stock_order(request: Request, authorize: AuthJWT = Depends()):
+    user_id = authorize.get_jwt_subject()
+    fk100 = request.query_params.get("FK100")
+    nk100 = request.query_params.get("NK100")
 
+    order = await get_inquire_psbl_rvsecncl_lst(user_id, fk100, nk100)
+    return {"message": "주문 내역 조회", "data": order}
+
+
+# 주식 정정(취소)
+@app.post("/order/{order_no}")
+async def stock_update_cancel(order: ModOrderModel, authorize: AuthJWT = Depends()):
+    user_id = authorize.get_jwt_subject()
+
+    order = await get_order_rvsecncl(user_id, order)
+    return {"message": "정정 완료", "data": order}
 
 # 재무제표
 # import dart_fss as dart

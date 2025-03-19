@@ -1,5 +1,5 @@
 from api.KISOpenApi import oauth_token
-from model.schemas import OrderModel
+from model.schemas import OrderModel, ModOrderModel
 from module.FetchAPI import fetch
 from module.Config import get_env
 from module.RedisConnection import get_redis
@@ -92,8 +92,7 @@ async def get_order_cash(user_id: str, order: OrderModel):
 ####################################################################################
 # 주식정정취소가능주문내역 조회
 ####################################################################################
-async def get_inquire_psbl_rvsecncl_lst(user_id: str, FK100="", NK100=""):  # 국내주식주문 > 주식정정취소가능주문조회
-
+async def get_inquire_psbl_rvsecncl_lst(user_id: str, fk100="", nk100=""):  # 국내주식주문 > 주식정정취소가능주문조회
     user_info = await get_redis().hgetall(user_id)
     access_token = await get_redis().get(f"{user_id}_access_token")
 
@@ -118,8 +117,8 @@ async def get_inquire_psbl_rvsecncl_lst(user_id: str, FK100="", NK100=""):  # �
         "ACNT_PRDT_CD": user_info.get("ACNT_PRDT_CD"),  # 계좌상품코드 2자리
         "INQR_DVSN_1": "1",                     # 조회구분1(정렬순서)  0:조회순서, 1:주문순, 2:종목순
         "INQR_DVSN_2": "0",                     # 조회구분2 0:전체, 1:매도, 2:매수
-        "CTX_AREA_FK100": FK100,                # 공란 : 최초 조회시 이전 조회 Output CTX_AREA_FK100 값 : 다음페이지 조회시(2번째부터)
-        "CTX_AREA_NK100": NK100                 # 공란 : 최초 조회시 이전 조회 Output CTX_AREA_NK100 값 : 다음페이지 조회시(2번째부터)
+        "CTX_AREA_FK100": fk100,                # 공란 : 최초 조회시 이전 조회 Output CTX_AREA_FK100 값 : 다음페이지 조회시(2번째부터)
+        "CTX_AREA_NK100": nk100                 # 공란 : 최초 조회시 이전 조회 Output CTX_AREA_NK100 값 : 다음페이지 조회시(2번째부터)
     }
 
     # print(tr_cont, FK100, NK100)
@@ -143,7 +142,7 @@ async def get_inquire_psbl_rvsecncl_lst(user_id: str, FK100="", NK100=""):  # �
 # ord_qty : 주문주식수
 # ord_unpr : 주문단가
 # qty_all_ord_yn : 잔량전부주문여부 [정정/취소] Y : 잔량전부, N : 잔량일부
-async def get_order_rvsecncl(user_id:str, ord_orgno="", orgn_odno="", ord_dvsn="", rvse_cncl_dvsn_cd="", ord_qty=0, ord_unpr=0, qty_all_ord_yn=""):  # 국내주식주문 > 주식주문(정정취소)
+async def get_order_rvsecncl(user_id:str, order: ModOrderModel):
     user_info = await get_redis().hgetall(user_id)
     access_token = await get_redis().get(f"{user_id}_access_token")
 
@@ -155,31 +154,31 @@ async def get_order_rvsecncl(user_id:str, ord_orgno="", orgn_odno="", ord_dvsn="
     api_url = f"{get_env('API_URL')}/{path}"
     tr_id = "TTTC0013U"  # 주식 정정 취소 주문    [모의투자] VTTC0803U : 주식 정정 취소 주문
 
-    if ord_orgno == "":
+    if order.ORD_ORGNO == "":
         print("주문조직번호 확인요망!!!")
         return None
 
-    if orgn_odno == "":
+    if order.ORGN_ODNO == "":
         print("원주문번호 확인요망!!!")
         return None
 
-    if ord_dvsn == "":
+    if order.ORD_DVSN == "":
         print("주문구분 확인요망!!!")
         return None
 
-    if not rvse_cncl_dvsn_cd in ["01","02"]:
+    if not order.RVSE_CNCL_DVSN_CD in ["01","02"]:
         print("정정취소구분코드 확인요망!!!") # 정정:01. 취소:02
         return None
 
-    if qty_all_ord_yn == "Y" and ord_qty > 0:
+    if order.QTY_ALL_ORD_YN == "Y" and order.ORD_QTY > 0:
         print("잔량전부 취소/정정주문인 경우 주문수량 0 처리!!!")
         ord_qty = 0
 
-    if qty_all_ord_yn == "N" and ord_qty == 0:
+    if order.QTY_ALL_ORD_YN == "N" and order.ORD_QTY == 0:
         print("취소/정정 수량 확인요망!!!")
         return None
 
-    if rvse_cncl_dvsn_cd == "01" and ord_unpr == 0:
+    if order.RVSE_CNCL_DVSN_CD == "01" and order.ORD_UNPR == 0:
         print("주문단가 확인요망!!!")
         return None
 
@@ -193,13 +192,13 @@ async def get_order_rvsecncl(user_id:str, ord_orgno="", orgn_odno="", ord_dvsn="
     params = {
         "CANO": user_info.get("CANO"),                  # 종합계좌번호 8자리
         "ACNT_PRDT_CD": user_info.get("ACNT_PRDT_CD"),  # 계좌상품코드 2자리
-        "KRX_FWDG_ORD_ORGNO": ord_orgno,        # 주문조직번호 API output의 odno(주문번호) 값 입력주문시 한국투자증권 시스템에서 채번된 주문조직번호
-        "ORGN_ODNO": orgn_odno,                 # 주식일별주문체결조회 API output의 odno(주문번호) 값 입력주문시 한국투자증권 시스템에서 채번된 주문번호
-        "ORD_DVSN": ord_dvsn,                   # 주문구분 00:지정가, 01:시장가, 02:조건부지정가  나머지주문구분 API 문서 참조
-        "RVSE_CNCL_DVSN_CD": rvse_cncl_dvsn_cd, # 정정 : 01, 취소 : 02
-        "ORD_QTY": str(int(ord_qty)),           # 주문주식수     [잔량전부 취소/정정주문] "0" 설정 ( QTY_ALL_ORD_YN=Y 설정 ) [잔량일부 취소/정정주문] 취소/정정 수량
-        "ORD_UNPR": str(int(ord_unpr)),         # 주문단가  [정정] 정정주문 1주당 가격 [취소] "0" 설정
-        "QTY_ALL_ORD_YN": qty_all_ord_yn        # 잔량전부주문여부 [정정/취소] Y : 잔량전부, N : 잔량일부
+        "KRX_FWDG_ORD_ORGNO": order.ORD_ORGNO,        # 주문조직번호 API output의 odno(주문번호) 값 입력주문시 한국투자증권 시스템에서 채번된 주문조직번호
+        "ORGN_ODNO": order.ORGN_ODNO,                 # 주식일별주문체결조회 API output의 odno(주문번호) 값 입력주문시 한국투자증권 시스템에서 채번된 주문번호
+        "ORD_DVSN": order.ORD_DVSN,                   # 주문구분 00:지정가, 01:시장가, 02:조건부지정가  나머지주문구분 API 문서 참조
+        "RVSE_CNCL_DVSN_CD": order.RVSE_CNCL_DVSN_CD, # 정정 : 01, 취소 : 02
+        "ORD_QTY": str(int(order.ORD_QTY)),           # 주문주식수     [잔량전부 취소/정정주문] "0" 설정 ( QTY_ALL_ORD_YN=Y 설정 ) [잔량일부 취소/정정주문] 취소/정정 수량
+        "ORD_UNPR": str(int(order.ORD_UNPR)),         # 주문단가  [정정] 정정주문 1주당 가격 [취소] "0" 설정
+        "QTY_ALL_ORD_YN": order.QTY_ALL_ORD_YN        # 잔량전부주문여부 [정정/취소] Y : 잔량전부, N : 잔량일부
     }
 
 
