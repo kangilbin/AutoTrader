@@ -1,6 +1,7 @@
 from pydantic import BaseModel
 
 class SwingCreate(BaseModel):
+    SWING_ID: int
     ACCOUNT_NO: str
     STOCK_CODE: str
     USE_YN: str

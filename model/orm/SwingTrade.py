@@ -5,7 +5,7 @@ import datetime
 Base = declarative_base()
 
 # 스윙 트레이드
-class SwingTrade(Base):
+class Swing(Base):
     __tablename__ = "SWING_TRADE"
 
     SWING_ID = Column(Integer, Sequence('swing_id_seq'), primary_key=True)  # 자동 증가 ID 컬럼

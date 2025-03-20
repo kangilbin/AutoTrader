@@ -18,7 +18,6 @@ async def get_balance(user_id: str):
     path = "uapi/domestic-stock/v1/trading/inquire-psbl-order"
     api_url = f"{get_env('API_URL')}/{path}"
 
-    #
     # [실전투자]
     # TTTC8908R : 매수 가능 조회
     #
@@ -34,16 +33,16 @@ async def get_balance(user_id: str):
     params = {
         "CANO": user_info.get("CANO"),
         "ACNT_PRDT_CD": user_info.get("ACNT_PRDT_CD"),
-        # "PDNO": "005930",
-        "ORD_UNPR": "65500",
-        "ORD_DVSN": "01",
+        "PDNO": "",
+        "ORD_UNPR": "",
+        "ORD_DVSN": "01",   # 시장가(ORD_DVSN:01)
         "CMA_EVLU_AMT_ICLD_YN": "Y",
         "OVRS_ICLD_YN": "Y"
     }
-    res = requests.get(URL, headers=headers, params=params)
-    cash = res.json()['output']['ord_psbl_cash']
-    send_message(f"주문 가능 현금 잔고: {cash}원")
+    response = await fetch("GET", api_url, params=params, headers=headers)
+    cash = response['output']['ord_psbl_cash']
     return int(cash)
+
 
 
 # 보유 주식

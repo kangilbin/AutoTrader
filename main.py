@@ -5,6 +5,7 @@ from api.LocalStockApi import get_stock_balance, get_order_cash, get_order_rvsec
 from model.schemas import OrderModel, ModOrderModel
 from model.schemas.AccountModel import AccountCreate
 from model.schemas.UserModel import UserCreate
+from module.Schedules import schedule_start
 from module.DBConnection import get_db
 from module.KisWebSocket import websocket_endpoint
 from module.RedisConnection import get_redis, create_redis
@@ -14,7 +15,6 @@ from model.schemas.JwtModel import Settings
 from services.AccountService import create_account, get_account, get_accounts, remove_account
 from services.StockService import get_stock_initial
 from services.UserService import create_user, login_user, refresh_token
-
 
 logging.basicConfig(level=logging.INFO)
 
@@ -36,6 +36,8 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
+# 스케줄러 시작
+schedule_start()
 
 @app.middleware("http")
 async def jwt_auth_middleware(request: Request, call_next):
