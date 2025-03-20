@@ -125,7 +125,7 @@ async def get_order_cash(user_id: str, order: OrderModel):
         "ORD_UNPR": "0"                                 # 주문단가
     }
 
-    return await fetch("POST", api_url, params=params, headers=headers)
+    return await fetch("POST", api_url, body=params, headers=headers)
 
 
 ####################################################################################
@@ -151,7 +151,7 @@ async def get_inquire_psbl_rvsecncl_lst(user_id: str, fk100="", nk100=""):  # �
         "tr_id": tr_id,
         "custtype": "P"  # B:법인, P:개인
     }
-    params = {
+    body = {
         "CANO": user_info.get("CANO"),                  # 종합계좌번호 8자리
         "ACNT_PRDT_CD": user_info.get("ACNT_PRDT_CD"),  # 계좌상품코드 2자리
         "INQR_DVSN_1": "1",                     # 조회구분1(정렬순서)  0:조회순서, 1:주문순, 2:종목순
@@ -170,7 +170,7 @@ async def get_inquire_psbl_rvsecncl_lst(user_id: str, fk100="", nk100=""):  # �
     #     print('Call Next')
     #     return get_inquire_psbl_rvsecncl_lst("N", FK100, NK100, dataframe)
 
-    return await fetch("POST", api_url, params=params, headers=headers)
+    return await fetch("POST", api_url, json=body, headers=headers)
 
 
 # 주식 주문(정정취소)
@@ -228,7 +228,7 @@ async def get_order_rvsecncl(user_id:str, order: ModOrderModel):
         "tr_id": tr_id,
         "custtype": "P"  # B:법인, P:개인
     }
-    params = {
+    body = {
         "CANO": user_info.get("CANO"),                  # 종합계좌번호 8자리
         "ACNT_PRDT_CD": user_info.get("ACNT_PRDT_CD"),  # 계좌상품코드 2자리
         "KRX_FWDG_ORD_ORGNO": order.ORD_ORGNO,        # 주문조직번호 API output의 odno(주문번호) 값 입력주문시 한국투자증권 시스템에서 채번된 주문조직번호
@@ -248,7 +248,7 @@ async def get_order_rvsecncl(user_id:str, order: ModOrderModel):
     #     print(res.getBody().msg_cd + "," + res.getBody().msg1)
     #     #print(res.getErrorCode() + "," + res.getErrorMessage())
 
-    return await fetch("POST", api_url, params=params, headers=headers)
+    return await fetch("POST", api_url, json=body, headers=headers)
 
 
 ####################################################################################
@@ -288,7 +288,7 @@ async def get_inquire_daily_ccld_obj(user_id:str, inqr_strt_dt=None, inqr_end_dt
         "tr_id": tr_id,
         "custtype": "P"  # B:법인, P:개인
     }
-    params = {
+    body = {
         "CANO": user_info.get("CANO"),                  # 종합계좌번호 8자리
         "ACNT_PRDT_CD": user_info.get("ACNT_PRDT_CD"),  # 계좌상품코드 2자리
         "INQR_STRT_DT": inqr_strt_dt,           # 조회시작일자
@@ -305,4 +305,27 @@ async def get_inquire_daily_ccld_obj(user_id:str, inqr_strt_dt=None, inqr_end_dt
         "CTX_AREA_NK100": NK100                 # 공란 : 최초 조회시 이전 조회 Output CTX_AREA_NK100 값 : 다음페이지 조회시(2번째부터)
     }
 
-    return await fetch("POST", api_url, params=params, headers=headers)
+    return await fetch("POST", api_url, json=body, headers=headers)
+
+
+async def get_target_price(code: str):
+    """변동성 돌파 전략으로 매수 목표가 조회"""
+    PATH = "uapi/domestic-stock/v1/quotations/inquire-daily-price"
+    URL = f"{URL_BASE}/{PATH}"
+    headers = {"Content-Type":"application/json",
+               "authorization": f"Bearer {ACCESS_TOKEN}",
+               "appKey":APP_KEY,
+               "appSecret":APP_SECRET,
+               "tr_id":"FHKST01010400"}
+    body = {
+        "FID_COND_MRKT_DIV_CODE": "J", # J:KRX, NX:NXT, UN:통합
+        "FID_INPUT_ISCD	": code,
+        "FID_ORG_ADJ_PRC": "1",
+        "FID_PERIOD_DIV_CODE": "D"
+    }
+    response = await fetch("POST", api_url, json=body, headers=headers)
+
+    stck_oprc = int(response['output'][0]['stck_oprc']) #오늘 시가
+    stck_hgpr = int(response['output'][0]['stck_hgpr']) #전일 고가
+    stck_lwpr = int(response['output'][0]['stck_lwpr']) #전일 저가
+    return response['output'][0]

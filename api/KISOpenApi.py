@@ -1,6 +1,6 @@
 from module.Config import get_env
 from module.FetchAPI import fetch
-from module.RedisConnection import redis
+from module.RedisConnection import get_redis
 
 
 # 한국 투자 증권 접근 토큰
@@ -28,7 +28,7 @@ async def oauth_token(user_id: str, api_key: str, secret_key: str):
     response = await fetch("POST", api_url, json=body)
 
     # Redis에 토큰 저장 만료기간(expires_in) 설정
-    await redis().set(f"{user_id}_access_token", response.get("access_token"), ex=response.get("expires_in"))
+    await get_redis().set(f"{user_id}_access_token", response.get("access_token"), ex=response.get("expires_in"))
     return response
 
 
@@ -47,7 +47,7 @@ async def get_approval(user_id: str, api_key: str, secret_key: str):
     response = await fetch("POST", api_url, json=body)
 
     # Redis에 토큰 저장 만료기간(expires_in) 설정
-    await redis().set(f"{user_id}_socket_token", response.get("approval_key"), ex=86400)
+    await get_redis().set(f"{user_id}_socket_token", response.get("approval_key"), ex=86400)
     return response
 
 
