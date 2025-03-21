@@ -1,10 +1,10 @@
 from module.AESCrypto import decrypt
-from module.DBConnection import Database
+from module.RedisConnection import get_redis
 from services.SwingService import get_all_swing
 
 
 async def trade_job():
-    db = await Database.get_session()
+    db = await get_redis()
     swing_list = await get_all_swing(db)
     for swing in swing_list:
         print("#################스윙 시작################")
