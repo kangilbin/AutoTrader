@@ -1,18 +1,26 @@
 from api.KISOpenApi import oauth_token
 from module.FetchAPI import fetch
 from module.Config import get_env
-from module.RedisConnection import redis
+from module.RedisConnection import get_redis
+
+
+async def user(user_id: str):
+    redis = await get_redis()
+
+    user_info = redis.hgetall(user_id)
+    access_token = redis.get(f"{user_id}_access_token")
+
+    if not access_token:
+        response = await oauth_token(user_id, user_info.get("API_KEY"), user_info.get("SECRET_KEY"))
+        access_token = response.get("access_token")
+
+    return user_info, access_token
 
 
 # 상품 조회
 async def get_overseas_product(user_id: str):
-    user_info = await redis().hgetall(user_id)
-    access_token = await redis().get(f"{user_id}_access_token")
+    user_info, access_token = await user(user_id)
 
-    if not access_token:
-        response = await oauth_token(user_id, user_info.get("API_KEY"), user_info.get("SECRET_KEY"))
-
-    access_token = response.get("access_token")
     path = "/uapi/domestic-stock/v1/quotations/search-info"
     api_url = f"{get_env('API_URL')}/{path}"
 

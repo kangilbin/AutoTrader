@@ -2,19 +2,26 @@ from api.KISOpenApi import oauth_token
 from model.schemas import OrderModel, ModOrderModel
 from module.FetchAPI import fetch
 from module.Config import get_env
-from module.RedisConnection import get_redis
+from module.RedisConnection import get_redis, Redis
 from datetime import datetime, timedelta
 
 
-"""현금 잔고조회"""
-async def get_balance(user_id: str):
-    user_info = await get_redis().hgetall(user_id)
-    access_token = await get_redis().get(f"{user_id}_access_token")
+async def user(user_id: str):
+    redis = await get_redis()
+
+    user_info = redis.hgetall(user_id)
+    access_token = redis.get(f"{user_id}_access_token")
 
     if not access_token:
         response = await oauth_token(user_id, user_info.get("API_KEY"), user_info.get("SECRET_KEY"))
         access_token = response.get("access_token")
 
+    return user_info, access_token
+
+
+# 현금 잔고 조회
+async def get_balance(user_id: str):
+    user_info, access_token = await user(user_id)
     path = "uapi/domestic-stock/v1/trading/inquire-psbl-order"
     api_url = f"{get_env('API_URL')}/{path}"
 
@@ -44,15 +51,9 @@ async def get_balance(user_id: str):
     return int(cash)
 
 
-
 # 보유 주식
 async def get_stock_balance(user_id: str):
-    user_info = await get_redis().hgetall(user_id)
-    access_token = await get_redis().get(f"{user_id}_access_token")
-
-    if not access_token:
-        response = await oauth_token(user_id, user_info.get("API_KEY"), user_info.get("SECRET_KEY"))
-        access_token = response.get("access_token")
+    user_info, access_token = await user(user_id)
 
     path = "/uapi/domestic-stock/v1/trading/inquire-balance"
     api_url = f"{get_env('API_URL')}/{path}"
@@ -86,12 +87,7 @@ async def get_stock_balance(user_id: str):
 # itm_no : 종목번호
 # qty : 주문수량
 async def get_order_cash(user_id: str, order: OrderModel):
-    user_info = await get_redis().hgetall(user_id)
-    access_token = await get_redis().get(f"{user_id}_access_token")
-
-    if not access_token:
-        response = await oauth_token(user_id, user_info.get("API_KEY"), user_info.get("SECRET_KEY"))
-        access_token = response.get("access_token")
+    user_info, access_token = await user(user_id)
 
     path = "/uapi/domestic-stock/v1/trading/order-cash"
     api_url = f"{get_env('API_URL')}/{path}"
@@ -132,12 +128,7 @@ async def get_order_cash(user_id: str, order: OrderModel):
 # 주식정정취소가능주문내역 조회
 ####################################################################################
 async def get_inquire_psbl_rvsecncl_lst(user_id: str, fk100="", nk100=""):  # 국내주식주문 > 주식정정취소가능주문조회
-    user_info = await get_redis().hgetall(user_id)
-    access_token = await get_redis().get(f"{user_id}_access_token")
-
-    if not access_token:
-        response = await oauth_token(user_id, user_info.get("API_KEY"), user_info.get("SECRET_KEY"))
-        access_token = response.get("access_token")
+    user_info, access_token = await user(user_id)
 
     path = "/uapi/domestic-stock/v1/trading/inquire-psbl-rvsecncl"
     api_url = f"{get_env('API_URL')}/{path}"
@@ -182,12 +173,7 @@ async def get_inquire_psbl_rvsecncl_lst(user_id: str, fk100="", nk100=""):  # �
 # ord_unpr : 주문단가
 # qty_all_ord_yn : 잔량전부주문여부 [정정/취소] Y : 잔량전부, N : 잔량일부
 async def get_order_rvsecncl(user_id:str, order: ModOrderModel):
-    user_info = await get_redis().hgetall(user_id)
-    access_token = await get_redis().get(f"{user_id}_access_token")
-
-    if not access_token:
-        response = await oauth_token(user_id, user_info.get("API_KEY"), user_info.get("SECRET_KEY"))
-        access_token = response.get("access_token")
+    user_info, access_token = await user(user_id)
 
     path = "/uapi/domestic-stock/v1/trading/order-rvsecncl"
     api_url = f"{get_env('API_URL')}/{path}"
@@ -255,12 +241,7 @@ async def get_order_rvsecncl(user_id:str, order: ModOrderModel):
 # 주식일별주문체결(현황)조회
 ####################################################################################
 async def get_inquire_daily_ccld_obj(user_id:str, inqr_strt_dt=None, inqr_end_dt=None, FK100="", NK100=""):
-    user_info = await get_redis().hgetall(user_id)
-    access_token = await get_redis().get(f"{user_id}_access_token")
-
-    if not access_token:
-        response = await oauth_token(user_id, user_info.get("API_KEY"), user_info.get("SECRET_KEY"))
-        access_token = response.get("access_token")
+    user_info, access_token = await user(user_id)
 
     path = '/uapi/domestic-stock/v1/trading/inquire-daily-ccld'
     api_url = f"{get_env('API_URL')}/{path}"
@@ -308,15 +289,18 @@ async def get_inquire_daily_ccld_obj(user_id:str, inqr_strt_dt=None, inqr_end_dt
     return await fetch("POST", api_url, json=body, headers=headers)
 
 
-async def get_target_price(code: str):
-    """변동성 돌파 전략으로 매수 목표가 조회"""
-    PATH = "uapi/domestic-stock/v1/quotations/inquire-daily-price"
-    URL = f"{URL_BASE}/{PATH}"
-    headers = {"Content-Type":"application/json",
-               "authorization": f"Bearer {ACCESS_TOKEN}",
-               "appKey":APP_KEY,
-               "appSecret":APP_SECRET,
-               "tr_id":"FHKST01010400"}
+async def get_target_price(code: str, user_id: str):
+    user_info, access_token = await user(user_id)
+    path = 'uapi/domestic-stock/v1/quotations/inquire-daily-price'
+    api_url = f"{get_env('API_URL')}/{path}"
+
+    headers = {
+        "authorization": f"Bearer {access_token}",
+        "appkey": user_info.get("API_KEY"),
+        "appsecret": user_info.get("SECRET_KEY"),
+        "tr_id": "FHKST01010400",
+    }
+
     body = {
         "FID_COND_MRKT_DIV_CODE": "J", # J:KRX, NX:NXT, UN:통합
         "FID_INPUT_ISCD	": code,

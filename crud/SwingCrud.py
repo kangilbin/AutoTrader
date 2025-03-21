@@ -39,7 +39,7 @@ async def list_all_swing(db: AsyncSession):
                  "LEFT JOIN USER U ON A.USER_ID = U.USER_ID "
                  "WHERE ST.USE_YN = 'Y'")
     result = await db.execute(query)
-    return result.scalars().all()
+    return result.all()
 
 
 # 스윙 업데이트

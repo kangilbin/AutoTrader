@@ -2,21 +2,23 @@ import logging
 from fastapi import FastAPI, Response, Request, Depends, HTTPException, WebSocket
 from api.KISOpenApi import oauth_token
 from api.LocalStockApi import get_stock_balance, get_order_cash, get_order_rvsecncl, get_inquire_psbl_rvsecncl_lst
-from model.schemas import OrderModel, ModOrderModel
 from model.schemas.AccountModel import AccountCreate
+from model.schemas.ModOrderModel import ModOrder
+from model.schemas.OrderModel import Order
 from model.schemas.UserModel import UserCreate
 from module.Schedules import schedule_start
-from module.DBConnection import get_db
+from module.DBConnection import get_db, Database
 from module.KisWebSocket import websocket_endpoint
-from module.RedisConnection import get_redis, create_redis
+from module.RedisConnection import get_redis, Redis
 from contextlib import asynccontextmanager
 from fastapi_jwt_auth import AuthJWT
 from model.schemas.JwtModel import Settings
 from services.AccountService import create_account, get_account, get_accounts, remove_account
 from services.StockService import get_stock_initial
 from services.UserService import create_user, login_user, refresh_token
+from sqlalchemy.ext.asyncio import AsyncSession
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.DEBUG)
 
 # 의존성 주입을 위한 설정
 @AuthJWT.load_config
@@ -26,13 +28,13 @@ def get_config():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    app.state.db_pool = get_db()
-    app.state.redis = await create_redis()
+    await Database.connect()
+    await Redis.connect()
     try:
         yield
     finally:
-        await app.state.db_pool.close()
-        await app.state.redis.close()
+        await Database.disconnect()
+        await Redis.disconnect()
 
 app = FastAPI(lifespan=lifespan)
 
@@ -60,7 +62,7 @@ async def jwt_auth_middleware(request: Request, call_next):
 
 # 회원 가입
 @app.post("/signup")
-async def signup(user_data: UserCreate):
+async def signup(user_data: UserCreate, db: AsyncSession = Depends(get_db)):
     # 디바이스 정보 검증
     response = await oauth_token(user_data.USER_ID, user_data.API_KEY, user_data.SECRET_KEY)
 
@@ -69,7 +71,7 @@ async def signup(user_data: UserCreate):
         return {"message": response.get("error_description"), "code": response.get("error_code")}
 
     try:
-        user = await create_user(app.state.db_pool, user_data)
+        user = await create_user(db, user_data)
     except Exception as e:
         return {"message": "오류", "error": str(e)}
 
@@ -78,14 +80,14 @@ async def signup(user_data: UserCreate):
 
 # 로그인
 @app.post("/login")
-async def login(request: Request, response: Response, authorize: AuthJWT = Depends()):
+async def login(request: Request, response: Response, db: AsyncSession = Depends(get_db), authorize: AuthJWT = Depends()):
     req = await request.json()
     user_id = req.get("USER_ID")
     user_dvc = req.get("DEVICE_ID")
     user_pw = req.get("PASSWORD")
 
     # 사용자 검증
-    login_token, login_refresh_token = await login_user(app.state.db_pool, user_id, user_pw, user_dvc, authorize)
+    login_token, login_refresh_token = await login_user(db, user_id, user_pw, user_dvc, authorize)
 
     response.set_cookie(key="login_token", value=login_token, httponly=True)
     response.set_cookie(key="login_refresh_token", value=login_refresh_token, httponly=True)
@@ -117,53 +119,52 @@ async def logout(response: Response, authorize: AuthJWT = Depends()):
 
 # 계좌 등록
 @app.post("/account")
-async def account(account_data: AccountCreate, authorize: AuthJWT = Depends()):
+async def account(account_data: AccountCreate, db: AsyncSession = Depends(get_db), authorize: AuthJWT = Depends()):
     user_id = authorize.get_jwt_subject()
     account_data.USER_ID = user_id
-    await create_account(app.state.db_pool, account_data)
+    await create_account(db, account_data)
 
     return {"message": "계좌 등록 성공"}
 
 
 # 계좌 조회
 @app.get("/account/{account_id}")
-async def account(account_id: str, authorize: AuthJWT = Depends()):
+async def account(account_id: str, db: AsyncSession = Depends(get_db), authorize: AuthJWT = Depends()):
     user_id = authorize.get_jwt_subject()
-    account_info = await get_account(app.state.db_pool, account_id, user_id)
+    account_info = await get_account(db, account_id, user_id)
     return {"message": "계좌 조회", "data": account_info}
 
 
 # 계좌 삭제
 @app.delete("/account/{account_id}")
-async def account(account_id: str, Authorize: AuthJWT = Depends()):
+async def account(account_id: str, db: AsyncSession = Depends(get_db), Authorize: AuthJWT = Depends()):
     user_id = Authorize.get_jwt_subject()
-    await remove_account(app.state.db_pool, account_id, user_id)
+    await remove_account(db, account_id, user_id)
     return {"message": "계좌 삭제 성공"}
 
 
 # 계좌 리스트
 @app.get("/accounts")
-async def accounts(authorize: AuthJWT = Depends()):
+async def accounts(db: AsyncSession = Depends(get_db), authorize: AuthJWT = Depends()):
     user_id = authorize.get_jwt_subject()
-    account_list = await get_accounts(app.state.db_pool, user_id)
+    account_list = await get_accounts(db, user_id)
     return {"message": "계좌 리스트 조회", "data": account_list}
 
 
 # 잔고 조회
 @app.get("/balance")
 async def stock_balance(authorize: AuthJWT = Depends()):
-    user_id = authorize.get_jwt_subject()
-    cano = await get_redis().hget(user_id, "CANO")
-    acnt_prdt_cd = await get_redis().hget(user_id, "ACNT_PRDT_CD")
 
-    balance = await get_stock_balance(cano, acnt_prdt_cd)
+    user_id = authorize.get_jwt_subject()
+
+    balance = await get_stock_balance(user_id)
     return {"message": "계좌 잔고 조회", "data": balance}
 
 
 # 종목 코드 조회
 @app.get("/stock")
-async def stock(name: str):
-    stock_info = await get_stock_initial(app.state.db_pool, name)
+async def stock(name: str, db: AsyncSession = Depends(get_db)):
+    stock_info = await get_stock_initial(db, name)
     return {"message": "종목 코드 조회", "data": stock_info}
 
 # 주식 현재가/호가
@@ -175,7 +176,7 @@ async def kis_websocket(websocket: WebSocket, authorize: AuthJWT = Depends()):
 
 # 주식 매매 or 매도
 @app.post("/order")
-async def stock_buy_sell(order: OrderModel, authorize: AuthJWT = Depends()):
+async def stock_buy_sell(order: Order, authorize: AuthJWT = Depends()):
     user_id = authorize.get_jwt_subject()
 
     order = await get_order_cash(user_id, order)
@@ -195,7 +196,7 @@ async def stock_order(request: Request, authorize: AuthJWT = Depends()):
 
 # 주식 정정(취소)
 @app.post("/order/{order_no}")
-async def stock_update_cancel(order: ModOrderModel, authorize: AuthJWT = Depends()):
+async def stock_update_cancel(order: ModOrder, authorize: AuthJWT = Depends()):
     user_id = authorize.get_jwt_subject()
 
     order = await get_order_rvsecncl(user_id, order)
