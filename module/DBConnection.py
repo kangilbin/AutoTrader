@@ -14,7 +14,7 @@ class Database:
         """DB 엔진과 세션 팩토리를 싱글톤으로 초기화"""
         if cls._engine is None:
             cls._engine = create_async_engine(
-                os.getenv("DATABASE_URL", "mysql+asyncmy://kang:qwer1234!@localhost:3306/AUTO_TRADER"),
+                os.getenv("DATABASE_URL", "mysql+asyncmy://kang:qwer1234!@112.172.211.167:3306/AUTO_TRADER"),
                 echo=True,
                 pool_size=10,
                 max_overflow=20,

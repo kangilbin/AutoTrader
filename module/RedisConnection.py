@@ -10,7 +10,7 @@ class Redis:
     async def connect(cls) -> aioredis.Redis:
         """Redis 커넥션을 싱글톤으로 초기화하고 반환"""
         if cls._instance is None:
-            redis_url = os.getenv("REDIS_URL", "redis://localhost:6379")
+            redis_url = os.getenv("REDIS_URL", "redis://112.172.211.167:6379")
             cls._instance = await aioredis.from_url(redis_url, decode_responses=True)
             await cls._instance.ping()  # 연결 테스트
         return cls._instance

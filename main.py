@@ -30,6 +30,8 @@ def get_config():
 async def lifespan(app: FastAPI):
     await Database.connect()
     await Redis.connect()
+    await schedule_start()
+
     try:
         yield
     finally:
@@ -39,11 +41,14 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 
 # 스케줄러 시작
-schedule_start()
 
 @app.middleware("http")
 async def jwt_auth_middleware(request: Request, call_next):
     try:
+        if request.url.path == "/signup":  # 회원가입 경로를 제외
+            response = await call_next(request)
+            return response
+
         # Authorization 헤더에서 토큰 추출
         auth_header = request.headers.get("Authorization")
         if auth_header is None:
