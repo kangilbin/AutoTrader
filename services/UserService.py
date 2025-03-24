@@ -15,13 +15,16 @@ async def create_user(db: AsyncSession, user_data: UserCreate) -> UserResponse:
 
 async def login_user(db, user_id: str, user_pw: str, user_dvc: str, authorize: AuthJWT):
     user_info = await select_user(db, user_id, user_dvc)
-    if not user_info or not check_password(user_pw, user_info.PASSWORD):
+    redis = await get_redis()
+
+    if not user_info or not check_password(user_pw, user_info["PASSWORD"]):
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
     login_token = authorize.create_access_token(subject=user_id)
     login_refresh_token = authorize.create_refresh_token(subject=user_id)
 
-    await get_redis().hset(user_id, mapping=user_info, ex=3600, xx=True)
+    await redis.hset(user_id, mapping=user_info)
+    await redis.expire(user_id, 3600)
     return login_token, login_refresh_token
 
 

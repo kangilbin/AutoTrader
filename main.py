@@ -48,7 +48,7 @@ app = FastAPI(lifespan=lifespan)
 @app.middleware("http")
 async def jwt_auth_middleware(request: Request, call_next):
     try:
-        if request.url.path == "/signup":  # 회원가입 경로를 제외
+        if request.url.path == "/signup" or request.url.path == "/login":  # 회원가입 경로를 제외
             response = await call_next(request)
             return response
 
@@ -81,11 +81,10 @@ async def signup(user_data: UserCreate, db: AsyncSession = Depends(get_db)):
 
 # 로그인
 @app.post("/login")
-async def login(request: Request, response: Response, db: AsyncSession = Depends(get_db), authorize: AuthJWT = Depends()):
-    req = await request.json()
-    user_id = req.get("USER_ID")
-    user_dvc = req.get("DEVICE_ID")
-    user_pw = req.get("PASSWORD")
+async def login(user_data: UserCreate, response: Response, db: AsyncSession = Depends(get_db), authorize: AuthJWT = Depends()):
+    user_id = user_data.USER_ID
+    user_dvc = user_data.DEVICE_ID
+    user_pw = user_data.PASSWORD
 
     # 사용자 검증
     login_token, login_refresh_token = await login_user(db, user_id, user_pw, user_dvc, authorize)

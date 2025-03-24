@@ -4,6 +4,6 @@ from module.Config import get_env
 
 
 class Settings(BaseModel):
-    JWT_SECRET_KEY: str = get_env("JWT_SECRET_KEY")
-    TOKEN_ACCESS_EXP: timedelta = timedelta(minutes=15)
-    TOKEN_REFRESH_EXP: timedelta = timedelta(days=7)
+    authjwt_secret_key: str = get_env("JWT_SECRET_KEY")
+    token_access_exp: timedelta = timedelta(minutes=15)
+    token_refresh_exp: timedelta = timedelta(days=7)

@@ -5,10 +5,10 @@ from services.SwingService import get_all_swing
 
 async def trade_job():
     db = await get_redis()
-    swing_list = await get_all_swing(db)
-    for swing in swing_list:
-        print("#################스윙 시작################")
-        print(swing.SWING_ID, swing.STOCK_CODE, decrypt(swing.APP_KEY), decrypt(swing.SECRET_KEY))
+    # swing_list = await get_all_swing(db)
+    # for swing in swing_list:
+    #     print("#################스윙 시작################")
+    #     print(swing.SWING_ID, swing.STOCK_CODE, decrypt(swing.APP_KEY), decrypt(swing.SECRET_KEY))
 
     print("#################스윙 끝################")
 

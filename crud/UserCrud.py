@@ -8,13 +8,15 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+
 # 비동기 사용자 조회
 async def select_user(db: AsyncSession, user_id: str, user_dvc: str):
     query = select(User).filter(
         and_(User.USER_ID == user_id, User.DEVICE_ID == user_dvc)
     )
     result = await db.execute(query)
-    return result.scalars()
+    user_info = result.scalars().first()
+    return UserResponse.from_orm(user_info).dict()
 
 
 # 사용자 생성
