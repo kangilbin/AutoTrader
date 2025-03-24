@@ -1,7 +1,8 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, delete
+
+from model.TableCreate import Account
 from model.schemas.AccountModel import AccountCreate
-from model.orm.Account import Account
 
 
 # 계좌 조회

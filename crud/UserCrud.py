@@ -1,8 +1,12 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, delete, and_
+from model.TableCreate import User
 from model.schemas.UserModel import UserCreate, UserResponse
-from model.orm.User import User
+from sqlalchemy.exc import SQLAlchemyError
+import logging
 
+
+logger = logging.getLogger(__name__)
 
 # 비동기 사용자 조회
 async def select_user(db: AsyncSession, user_id: str, user_dvc: str):
@@ -16,11 +20,16 @@ async def select_user(db: AsyncSession, user_id: str, user_dvc: str):
 # 사용자 생성
 async def insert_user(db: AsyncSession, user_data: UserCreate):
     # 새로운 사용자 객체 생성
-    db_user = User(USER_ID=user_data.USER_ID, USER_NAME=user_data.USER_NAME, PASSWORD=user_data.PASSWORD,
-                   DEVICE_ID=user_data.DEVICE_ID
-                   , API_KEY=user_data.API_KEY, SECRET_KEY=user_data.SECRET_KEY)
-    db.add(db_user)  # 세션에 추가
-    await db.commit()  # 비동기 커밋
+    try:
+        db_user = User(USER_ID=user_data.USER_ID, USER_NAME=user_data.USER_NAME, PASSWORD=user_data.PASSWORD,
+                       DEVICE_ID=user_data.DEVICE_ID)
+        db.add(db_user)  # 세션에 추가
+        await db.commit()  # 비동기 커밋
+    except SQLAlchemyError as e:
+        await db.rollback()
+        logger.error(f"Database error occurred: {e}", exc_info=True)
+        raise e
+
     await db.refresh(db_user)  # 새로 추가된 사용자 객체 리프레시
     return UserResponse.from_orm(db_user)
 

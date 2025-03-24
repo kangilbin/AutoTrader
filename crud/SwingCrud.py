@@ -1,7 +1,7 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, delete, text
+from model.TableCreate import Swing
 from model.schemas.SwingModel import SwingCreate, SwingResponse
-from model.orm.SwingTrade import Swing
 
 
 # 스윙 생성
