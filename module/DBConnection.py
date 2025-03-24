@@ -1,6 +1,7 @@
 from sqlalchemy import MetaData
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
+from model.TableCreate import Base
 import os
 
 
@@ -14,7 +15,7 @@ class Database:
         """DB 엔진과 세션 팩토리를 싱글톤으로 초기화"""
         if cls._engine is None:
             cls._engine = create_async_engine(
-                os.getenv("DATABASE_URL", "mysql+asyncmy://kang:qwer1234!@112.172.211.167:3306/AUTO_TRADER"),
+                os.getenv("DATABASE_URL"),
                 echo=True,
                 pool_size=10,
                 max_overflow=20,
@@ -23,7 +24,7 @@ class Database:
             )
             # 테이블 생성 (최초 실행 시)
             async with cls._engine.begin() as conn:
-                await conn.run_sync(cls._meta.create_all)
+                await conn.run_sync(Base.metadata.create_all)
 
         if cls._async_session is None:
             cls._async_session = sessionmaker(
