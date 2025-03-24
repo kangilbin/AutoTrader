@@ -1,12 +1,12 @@
 from fastapi import HTTPException
 from fastapi_jwt_auth import AuthJWT
 from sqlalchemy.ext.asyncio import AsyncSession
-
-from crud.UserCrud import insert_user, select_user
+from crud.UserCrud import insert_user, select_user, update_user, delete_user
 from model.schemas.UserModel import UserCreate, UserResponse
 from module.AESCrypto import encrypt
 from module.HashCrypto import hash_password, check_password
 from module.RedisConnection import get_redis
+from datetime import datetime
 
 
 async def create_user(db: AsyncSession, user_data: UserCreate) -> UserResponse:
@@ -26,6 +26,15 @@ async def login_user(db, user_id: str, user_pw: str, user_dvc: str, authorize: A
 
     await get_redis().hset(user_id, mapping=user_info, ex=3600, xx=True)
     return login_token, login_refresh_token
+
+
+async def mod_user(db: AsyncSession, user_data: UserCreate):
+    user_data.MOD_DT = datetime.now()
+    await update_user(db, user_data)
+
+
+async def remove_user(db: AsyncSession, user_id: str):
+    await delete_user(db, user_id)
 
 
 async def refresh_token(authorize: AuthJWT):
