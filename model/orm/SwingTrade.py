@@ -9,7 +9,7 @@ class Swing(Base):
     __tablename__ = "SWING_TRADE"
 
     SWING_ID = Column(Integer, Sequence('swing_id_seq'), primary_key=True)  # 자동 증가 ID 컬럼
-    ACCOUNT_NO = Column(String(50), nullable=False)                         # 계좌 번호
+    ACCOUNT_NO = Column(String(50), nullable=False)                         # 계좌 번호(10 자리)
     STOCK_CODE = Column(String(20), nullable=False)                         # 주식 종목 코드
     USE_YN = Column(CHAR(1), nullable=False)                                # 사용 여부
     SWING_AMOUNT = Column(DECIMAL(15, 2), nullable=False)     # 초기 투자금
