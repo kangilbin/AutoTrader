@@ -5,12 +5,12 @@ from model.schemas.AuthModel import AuthCreate, AuthResponse
 
 
 # Auth key 조회
-async def select_auth(db: AsyncSession, user_id: str, auth_id: str):
+async def select_auth(db: AsyncSession, user_id: str, auth_id: str) -> AuthResponse:
     query = select(Auth).filter(
         and_(Auth.USER_ID == user_id, Auth.AUTH_ID == auth_id)
     )
     result = await db.execute(query)
-    return result.scalars()
+    return AuthResponse.from_orm(result.scalars().first())
 
 
 # Auth key 조회(list)
@@ -21,7 +21,7 @@ async def list_auth(db: AsyncSession, user_id: str):
 
 
 # Auth key 생성
-async def insert_auth(db: AsyncSession, auth_data: AuthCreate):
+async def insert_auth(db: AsyncSession, auth_data: AuthCreate) -> AuthResponse:
     # 새로운 사용자 객체 생성
     db_auth = Auth(USER_ID=auth_data.USER_ID, USER_NAME=auth_data.SIMULATION_YN, API_KEY=auth_data.API_KEY,
                    SECRET_KEY=auth_data.SECRET_KEY)

@@ -12,19 +12,16 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
     connected_clients[user_id] = websocket  # 연결된 클라이언트 저장
 
     try:
-        user_info = await get_redis().hgetall(user_id)
-        socket_token = await get_redis().get(f"{user_id}_socket_token")
-
-        if not socket_token:
-            response = await get_approval(user_id, user_info.get("API_KEY"), user_info.get("SECRET_KEY"))
-            socket_token = response.get("approval_key")
+        socket_data = await get_redis().hgetall(f"{user_id}_socket_token")
+        if not socket_data:
+            socket_data = await get_approval(user_id)
         while True:
             # 클라이언트 메시지 대기
             data = await websocket.receive_json()
 
             # API 서버로 메시지 전달
-            async with WebSocket('ws://ops.koreainvestment.com:21000') as api_websocket:
-                await api_websocket.send_text(send_message(data, socket_token))
+            async with WebSocket(socket_data.get("url")) as api_websocket:
+                await api_websocket.send_text(send_message(data, socket_data.get("socket_token")))
                 response = await api_websocket.receive_text()
                 await websocket.send_text(response)
     except Exception as e:

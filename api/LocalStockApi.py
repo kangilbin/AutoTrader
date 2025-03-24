@@ -7,39 +7,39 @@ from datetime import datetime, timedelta
 
 
 async def user(user_id: str):
-    redis = await get_redis()
+    access_data = await get_redis().hgetall(f"{user_id}_access_token")
+    user_data = await get_redis().hgetall(user_id)
 
-    user_info = redis.hgetall(user_id)
-    access_token = redis.get(f"{user_id}_access_token")
+    if not access_data:
+        access_data = await oauth_token(user_id, access_data.get("api_key"), access_data.get("secret_key"))
 
-    if not access_token:
-        response = await oauth_token(user_id, user_info.get("API_KEY"), user_info.get("SECRET_KEY"))
-        access_token = response.get("access_token")
-
-    return user_info, access_token
+    return user_data, access_data
 
 
 # 현금 잔고 조회
 async def get_balance(user_id: str):
-    user_info, access_token = await user(user_id)
+    user_data, access_data = await user(user_id)
     path = "uapi/domestic-stock/v1/trading/inquire-psbl-order"
-    api_url = f"{get_env('API_URL')}/{path}"
+    api_url = f"{access_data.get('api_url')}/{path}"
 
-    # [실전투자]
-    # TTTC8908R : 매수 가능 조회
-    #
-    # [모의투자]
-    # VTTC8908R : 매수 가능 조회
-    headers = {"Content-Type":"application/json",
-               "authorization": f"Bearer {access_token}",
-               "appkey": user_info.get("API_KEY"),
-               "appsecret": user_info.get("SECRET_KEY"),
-               "tr_id":"TTTC8908R",
-               "custtype":"P",
+    if access_data.get("simulation_yn") == "Y":
+        # [모의투자]
+        tr_id = "VTTC8908R"
+    else:
+        # [실전투자]
+        tr_id = "TTTC8908R"
+
+    headers = {
+               "authorization": f"Bearer {access_data.get('access_token')}",
+               "appkey": access_data.get("api_key"),
+               "appsecret": access_data.get("secret_key"),
+               "tr_id": tr_id,
+               "custtype": "P",
                }
+
     params = {
-        "CANO": user_info.get("CANO"),
-        "ACNT_PRDT_CD": user_info.get("ACNT_PRDT_CD"),
+        "CANO": user_data.get("ACCOUNT_NO")[:8],
+        "ACNT_PRDT_CD": user_data.get("ACCOUNT_NO")[-2:],
         "PDNO": "",
         "ORD_UNPR": "",
         "ORD_DVSN": "01",   # 시장가(ORD_DVSN:01)
@@ -53,21 +53,28 @@ async def get_balance(user_id: str):
 
 # 보유 주식
 async def get_stock_balance(user_id: str):
-    user_info, access_token = await user(user_id)
+    user_data, access_data = await user(user_id)
 
     path = "/uapi/domestic-stock/v1/trading/inquire-balance"
-    api_url = f"{get_env('API_URL')}/{path}"
+    api_url = f"{access_data.get('api_url')}/{path}"
+
+    if access_data.get("simulation_yn") == "Y":
+        # [모의투자]
+        tr_id = "VTTC8434R"
+    else:
+        # [실전투자]
+        tr_id = "TTTC8434R"
 
     headers = {
-        "authorization": f"Bearer {access_token}",
-        "appkey": user_info.get("API_KEY"),
-        "appsecret": user_info.get("SECRET_KEY"),
-        "tr_id": "TTTC8434R",
+        "authorization": f"Bearer {access_data.get('access_token')}",
+        "appkey": access_data.get("api_key"),
+        "appsecret": access_data.get("secret_key"),
+        "tr_id": tr_id,
         "custtype": "P"  # B:법인, P:개인
     }
     params = {
-        "CANO": user_info.get("CANO"),
-        "ACNT_PRDT_CD": user_info.get("ACNT_PRDT_CD"),
+        "CANO": user_data.get("ACCOUNT_NO")[:8],
+        "ACNT_PRDT_CD": user_data.get("ACCOUNT_NO")[-2:],
         "AFHR_FLPR_YN": "N",
         "OFL_YN": "",
         "INQR_DVSN": "02",
@@ -82,20 +89,32 @@ async def get_stock_balance(user_id: str):
     return await fetch("GET", api_url, params=params, headers=headers)
 
 
-# 주식 주문
-# ord_dv : buy(매수), sell(매도)
-# itm_no : 종목번호
-# qty : 주문수량
 async def get_order_cash(user_id: str, order: OrderModel):
-    user_info, access_token = await user(user_id)
+    """
+    주식 주문
+    :param user_id:
+    :param order: itm_no(종목 번호), qty(주문 수량), ord_dv(매수/매도)
+    :return:
+    """
+    user_data, access_data = await user(user_id)
 
     path = "/uapi/domestic-stock/v1/trading/order-cash"
-    api_url = f"{get_env('API_URL')}/{path}"
+    api_url = f"{access_data.get('api_url')}/{path}"
 
     if order.ORD_DV == "buy":
-        tr_id = "TTTC0012U" # 주식 현금 매수 주문    [모의투자] VTTC0802U : 주식 현금 매수 주문
+        if access_data.get("simulation_yn") == "Y":
+            # [모의투자]
+            tr_id = "VTTC0802U"
+        else:
+            # [실전투자]
+            tr_id = "TTTC0012U"
     elif order.ORD_DV == "sell":
-        tr_id = "TTTC0011U" # 주식 현금 매도 주문    [모의투자] VTTC0801U : 주식 현금 매도 주문
+        if access_data.get("simulation_yn") == "Y":
+        # [모의투자]
+            tr_id = "VTTC0801U"
+        else:
+        # [실전투자]
+            tr_id = "TTTC0011U"
     else:
         return None
 
@@ -106,15 +125,15 @@ async def get_order_cash(user_id: str, order: OrderModel):
         return None
 
     headers = {
-        "authorization": f"Bearer {access_token}",
-        "appkey": user_info.get("API_KEY"),
-        "appsecret": user_info.get("SECRET_KEY"),
+        "authorization": f"Bearer {access_data.get('access_token')}",
+        "appkey": access_data.get("api_key"),
+        "appsecret": access_data.get("secret_key"),
         "tr_id": tr_id,
         "custtype": "P"  # B:법인, P:개인
     }
     params = {
-        "CANO": user_info.get("CANO"),                  # 종합계좌번호 8자리
-        "ACNT_PRDT_CD": user_info.get("ACNT_PRDT_CD"),  # 계좌상품코드 2자리
+        "CANO": user_data.get("ACCOUNT_NO")[:8],           # 종합계좌번호 8자리
+        "ACNT_PRDT_CD": user_data.get("ACCOUNT_NO")[-2:],  # 계좌상품코드 2자리
         "PDNO": order.ITM_NO,                           # 종목코드(6자리) ETN의 경우, Q로 시작 (EX. Q500001)
         "ORD_DVSN": "01",                               # 주문구분 00:지정가, 01:시장가, 02:조건부지정가  나머지주문구분 API 문서 참조
         "ORD_QTY": str(order.QTY),                      # 주문주식수
@@ -124,27 +143,32 @@ async def get_order_cash(user_id: str, order: OrderModel):
     return await fetch("POST", api_url, body=params, headers=headers)
 
 
-####################################################################################
-# 주식정정취소가능주문내역 조회
-####################################################################################
-async def get_inquire_psbl_rvsecncl_lst(user_id: str, fk100="", nk100=""):  # 국내주식주문 > 주식정정취소가능주문조회
-    user_info, access_token = await user(user_id)
+async def get_inquire_psbl_rvsecncl_lst(user_id: str, fk100="", nk100=""):
+    """
+    주식정정취소가능주문내역
+    모의 투자 미지원
+    :param user_id:
+    :param fk100:
+    :param nk100:
+    :return:
+    """
+    user_data, access_data = await user(user_id)
 
     path = "/uapi/domestic-stock/v1/trading/inquire-psbl-rvsecncl"
-    api_url = f"{get_env('API_URL')}/{path}"
+    api_url = f"{get_env('REAL_API_URL')}/{path}"
 
     tr_id = "TTTC0084R"
 
     headers = {
-        "authorization": f"Bearer {access_token}",
-        "appkey": user_info.get("API_KEY"),
-        "appsecret": user_info.get("SECRET_KEY"),
+        "authorization": f"Bearer {access_data.get('access_token')}",
+        "appkey": access_data.get("api_key"),
+        "appsecret": access_data.get("secret_key"),
         "tr_id": tr_id,
         "custtype": "P"  # B:법인, P:개인
     }
     body = {
-        "CANO": user_info.get("CANO"),                  # 종합계좌번호 8자리
-        "ACNT_PRDT_CD": user_info.get("ACNT_PRDT_CD"),  # 계좌상품코드 2자리
+        "CANO": user_data.get("ACCOUNT_NO")[:8],           # 종합계좌번호 8자리
+        "ACNT_PRDT_CD": user_data.get("ACCOUNT_NO")[-2:],  # 계좌상품코드 2자리
         "INQR_DVSN_1": "1",                     # 조회구분1(정렬순서)  0:조회순서, 1:주문순, 2:종목순
         "INQR_DVSN_2": "0",                     # 조회구분2 0:전체, 1:매도, 2:매수
         "CTX_AREA_FK100": fk100,                # 공란 : 최초 조회시 이전 조회 Output CTX_AREA_FK100 값 : 다음페이지 조회시(2번째부터)
@@ -164,20 +188,30 @@ async def get_inquire_psbl_rvsecncl_lst(user_id: str, fk100="", nk100=""):  # �
     return await fetch("POST", api_url, json=body, headers=headers)
 
 
-# 주식 주문(정정취소)
-# ord_orgno : 주문조직번호
-# orgn_odno : 원주문번호
-# ord_dvsn : 주문구분
-# rvse_cncl_dvsn_cd : 정정 : 01, 취소 : 02
-# ord_qty : 주문주식수
-# ord_unpr : 주문단가
-# qty_all_ord_yn : 잔량전부주문여부 [정정/취소] Y : 잔량전부, N : 잔량일부
 async def get_order_rvsecncl(user_id:str, order: ModOrderModel):
-    user_info, access_token = await user(user_id)
+    """
+    주식 주문(정정취소)
+    :param user_id:
+    :param order:
+        ord_orgno : 주문조직번호
+        orgn_odno : 원주문번호
+        ord_dvsn : 주문구분
+        rvse_cncl_dvsn_cd : 정정 : 01, 취소 : 02
+        ord_qty : 주문주식수
+        ord_unpr : 주문단가
+        qty_all_ord_yn : 잔량전부주문여부 [정정/취소] Y : 잔량전부, N : 잔량일부
+    :return:
+    """
+    user_data, access_data = await user(user_id)
 
     path = "/uapi/domestic-stock/v1/trading/order-rvsecncl"
-    api_url = f"{get_env('API_URL')}/{path}"
-    tr_id = "TTTC0013U"  # 주식 정정 취소 주문    [모의투자] VTTC0803U : 주식 정정 취소 주문
+    api_url = f"{access_data.get('api_url')}/{path}"
+    if access_data.get("simulation_yn") == "Y":
+        # [모의투자]
+        tr_id = "VTTC0803U"
+    else:
+        # [실전투자]
+        tr_id = "TTTC0013U"
 
     if order.ORD_ORGNO == "":
         print("주문조직번호 확인요망!!!")
@@ -208,15 +242,15 @@ async def get_order_rvsecncl(user_id:str, order: ModOrderModel):
         return None
 
     headers = {
-        "authorization": f"Bearer {access_token}",
-        "appkey": user_info.get("API_KEY"),
-        "appsecret": user_info.get("SECRET_KEY"),
+        "authorization": f"Bearer {access_data.get('access_token')}",
+        "appkey": access_data.get("api_key"),
+        "appsecret": access_data.get("secret_key"),
         "tr_id": tr_id,
         "custtype": "P"  # B:법인, P:개인
     }
     body = {
-        "CANO": user_info.get("CANO"),                  # 종합계좌번호 8자리
-        "ACNT_PRDT_CD": user_info.get("ACNT_PRDT_CD"),  # 계좌상품코드 2자리
+        "CANO": user_data.get("ACCOUNT_NO")[:8],           # 종합계좌번호 8자리
+        "ACNT_PRDT_CD": user_data.get("ACCOUNT_NO")[-2:],  # 계좌상품코드 2자리
         "KRX_FWDG_ORD_ORGNO": order.ORD_ORGNO,        # 주문조직번호 API output의 odno(주문번호) 값 입력주문시 한국투자증권 시스템에서 채번된 주문조직번호
         "ORGN_ODNO": order.ORGN_ODNO,                 # 주식일별주문체결조회 API output의 odno(주문번호) 값 입력주문시 한국투자증권 시스템에서 채번된 주문번호
         "ORD_DVSN": order.ORD_DVSN,                   # 주문구분 00:지정가, 01:시장가, 02:조건부지정가  나머지주문구분 API 문서 참조
@@ -237,14 +271,20 @@ async def get_order_rvsecncl(user_id:str, order: ModOrderModel):
     return await fetch("POST", api_url, json=body, headers=headers)
 
 
-####################################################################################
-# 주식일별주문체결(현황)조회
-####################################################################################
 async def get_inquire_daily_ccld_obj(user_id:str, inqr_strt_dt=None, inqr_end_dt=None, FK100="", NK100=""):
-    user_info, access_token = await user(user_id)
+    """
+    주식일별주문체결(현황)조회
+    :param user_id:
+    :param inqr_strt_dt: 시작일자
+    :param inqr_end_dt:  종료일자
+    :param FK100:
+    :param NK100:
+    :return:
+    """
+    user_data, access_data = await user(user_id)
 
     path = '/uapi/domestic-stock/v1/trading/inquire-daily-ccld'
-    api_url = f"{get_env('API_URL')}/{path}"
+    api_url = f"{access_data.get('api_url')}/{path}"
 
     if inqr_strt_dt is None:
         inqr_strt_dt = datetime.today().strftime("%Y%m%d")   # 시작일자 값이 없으면 현재일자
@@ -257,21 +297,21 @@ async def get_inquire_daily_ccld_obj(user_id:str, inqr_strt_dt=None, inqr_end_dt
     # 3개월 전 날짜 계산
     three_months_ago = current_date - timedelta(days=90)
     if datetime.strptime(inqr_strt_dt, "%Y%m%d") > three_months_ago:
-        tr_id = "CTSC9115R"  # 02:3개월 이전 국내주식체결내역 (월단위 ex: 2024.04.25 이면 2024.01월이전)
+        tr_id = "CTSC9215R"  # 02:3개월 이전 국내주식체결내역 (월단위 ex: 2024.04.25 이면 2024.01월이전)
     else:
-        tr_id = "TTTC8001R"  # 01:3개월 이내 국내주식체결내역 (월단위 ex: 2024.04.25 이면 2024.01월~04월조회)
+        tr_id = "TTTC0081R"  # 01:3개월 이내 국내주식체결내역 (월단위 ex: 2024.04.25 이면 2024.01월~04월조회)
 
 
     headers = {
-        "authorization": f"Bearer {access_token}",
-        "appkey": user_info.get("API_KEY"),
-        "appsecret": user_info.get("SECRET_KEY"),
+        "authorization": f"Bearer {access_data.get('access_token')}",
+        "appkey": access_data.get("api_key"),
+        "appsecret": access_data.get("secret_key"),
         "tr_id": tr_id,
         "custtype": "P"  # B:법인, P:개인
     }
     body = {
-        "CANO": user_info.get("CANO"),                  # 종합계좌번호 8자리
-        "ACNT_PRDT_CD": user_info.get("ACNT_PRDT_CD"),  # 계좌상품코드 2자리
+        "CANO": user_data.get("ACCOUNT_NO")[:8],           # 종합계좌번호 8자리
+        "ACNT_PRDT_CD": user_data.get("ACCOUNT_NO")[-2:],  # 계좌상품코드 2자리
         "INQR_STRT_DT": inqr_strt_dt,           # 조회시작일자
         "INQR_END_DT": inqr_end_dt,             # 조회종료일자
         "SLL_BUY_DVSN_CD": "00",                # 매도매수구분코드 00:전체 01:매도, 02:매수
@@ -290,14 +330,15 @@ async def get_inquire_daily_ccld_obj(user_id:str, inqr_strt_dt=None, inqr_end_dt
 
 
 async def get_target_price(code: str, user_id: str):
-    user_info, access_token = await user(user_id)
+    user_data, access_data = await user(user_id)
+
     path = 'uapi/domestic-stock/v1/quotations/inquire-daily-price'
-    api_url = f"{get_env('API_URL')}/{path}"
+    api_url = f"{access_data.get('api_url')}/{path}"
 
     headers = {
-        "authorization": f"Bearer {access_token}",
-        "appkey": user_info.get("API_KEY"),
-        "appsecret": user_info.get("SECRET_KEY"),
+        "authorization": f"Bearer {access_data.get('access_token')}",
+        "appkey": access_data.get("api_key"),
+        "appsecret": access_data.get("secret_key"),
         "tr_id": "FHKST01010400",
     }
 

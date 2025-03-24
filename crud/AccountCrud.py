@@ -12,15 +12,15 @@ async def select_account(db: AsyncSession, account_id: str):
 
 
 # 계좌 목록
-async def list_account(db: AsyncSession, user_id: str):
-    query = select(Account).filter(Account.USER_ID == user_id)
+async def list_account(db: AsyncSession, user_id: str, auth_id: int):
+    query = select(Account).filter(Account.USER_ID == user_id and Account.AUTH_ID == auth_id)
     result = await db.execute(query)
     return result.scalars().all()
 
 
 # 계좌 생성
 async def insert_account(db: AsyncSession, account_data: AccountCreate):
-    db_account = Account(USER_ID=account_data.USER_ID, CANO=account_data.CANO, ACNT_PRDT_CD=account_data.ACNT_PRDT_CD)
+    db_account = Account(USER_ID=account_data.USER_ID, ACCOUNT_NO=account_data.ACCOUNT_NO, AUTH_ID=account_data.AUTH_ID)
     db.add(db_account)  
     await db.commit() 
     await db.refresh(db_account) 

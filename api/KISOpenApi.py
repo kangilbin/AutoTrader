@@ -3,52 +3,73 @@ from module.FetchAPI import fetch
 from module.RedisConnection import get_redis
 
 
-# 한국 투자 증권 접근 토큰
-# 유효기간 24시 이며 (1일 1회 발급) 갱신발급 주기는 6시간(6시 이내는 기존 발급키 응답)
-# grant_type : 권한
-# appkey : 앱키
-# appsecret : 앱 시크키
-async def oauth_token(user_id: str, api_key: str, secret_key: str):
-    # redis = await redis_client()
-    # access_token = await redis.get("access_token")
-    #
-    # # 값이 있으면 반환
-    # if access_token:
-    #     return {"access_token": access_token}
-
+async def oauth_token(user_id: str, simulation_yn: str, api_key: str, secret_key: str):
+    """
+    한국 투자 증권 접근 토큰
+    유효기간 24시 이며 (1일 1회 발급) 갱신발급 주기는 6시간(6시 이내는 기존 발급키 응답)
+    :param user_id:
+    :param simulation_yn: 모의 투자 여부
+    :param api_key: 앱키
+    :param secret_key: 앱 시크키
+    :return:
+    """
     path = "oauth2/tokenP"
-    api_url = f"{get_env('API_URL')}/{path}"
+    api_url = ""
+    if simulation_yn == "Y":
+        api_url = get_env("DEV_API_URL")
+    else:
+        api_url = get_env("REAL_API_URL")
 
+    url = f"{api_url}/{path}"
     body = {
         "grant_type": "client_credentials",
         "appkey": api_key,
         "appsecret": secret_key
     }
 
-    response = await fetch("POST", api_url, json=body)
+    response = await fetch("POST", url, json=body)
+    data = {
+        "access_token": response.get("access_token"),
+        "api_key": api_key,
+        "secret_key": secret_key,
+        "url": api_url,
+        "simulation_yn": simulation_yn
+    }
 
     # Redis에 토큰 저장 만료기간(expires_in) 설정
-    await get_redis().set(f"{user_id}_access_token", response.get("access_token"), ex=response.get("expires_in"))
-    return response
+    # await get_redis().set(f"{user_id}_access_token", response.get("access_token"), ex=response.get("expires_in"))
+    await get_redis().hset(f"{user_id}_access_token", mapping=data, ex=response.get("expires_in"), xx=True)
+    return data
 
 
 # 실시간 (웹소켓) 접속키 발급
 # 접속키의 유효기간은 24시간이지만, 접속키는 세션 연결 시 초기 1회만 사용하기 때문에 접속키 인증 후에는 세션종료되지 않는 이상
 # 접속키 신규 발급받지 않으셔도 365일 내내 웹소켓 데이터 수신하실 수 있습니다.
-async def get_approval(user_id: str, api_key: str, secret_key: str):
+async def get_approval(user_id: str):
+    user_auth = await get_redis().hgetall(f"{user_id}_access_token")
+    socket_url = ""
+    if user_auth.get("simulation_yn") == "Y":
+        socket_url = get_env("REAL_SOCKET_URL")
+    else:
+        socket_url = get_env("DEV_SOCKET_URL")
+
     path = "oauth2/Approval"
-    api_url = f"{get_env('API_URL')}/{path}"
+    api_url = f"{user_auth.get('url')}/{path}"
 
     body = {
         "grant_type": "client_credentials",
-        "appkey": get_env("API_KEY"),
-        "appsecret": get_env("SECRET_KEY")
+        "appkey": user_auth.get('api_key'),
+        "appsecret": user_auth.get('secret_key')
     }
     response = await fetch("POST", api_url, json=body)
-
+    data = {
+        "socket_token": response.get("approval_key"),
+        "url": socket_url
+    }
     # Redis에 토큰 저장 만료기간(expires_in) 설정
-    await get_redis().set(f"{user_id}_socket_token", response.get("approval_key"), ex=86400)
-    return response
+    # await get_redis().set(f"{user_id}_socket_token", response.get("approval_key"), ex=86400)
+    await get_redis().hset(f"{user_id}_socket_token", mapping=data, ex=86400, xx=True)
+    return data
 
 
 # 자꾸 오류남 토큰 호출하면

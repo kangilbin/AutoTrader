@@ -2,7 +2,9 @@ import logging
 from fastapi import FastAPI, Response, Request, Depends, HTTPException, WebSocket
 from api.KISOpenApi import oauth_token
 from api.LocalStockApi import get_stock_balance, get_order_cash, get_order_rvsecncl, get_inquire_psbl_rvsecncl_lst
+from crud.AuthCrud import select_auth
 from model.schemas.AccountModel import AccountCreate
+from model.schemas.AuthModel import AuthCreate
 from model.schemas.ModOrderModel import ModOrder
 from model.schemas.OrderModel import Order
 from model.schemas.UserModel import UserCreate
@@ -14,6 +16,7 @@ from contextlib import asynccontextmanager
 from fastapi_jwt_auth import AuthJWT
 from model.schemas.JwtModel import Settings
 from services.AccountService import create_account, get_account, get_accounts, remove_account
+from services.AuthService import create_auth, get_auth_key
 from services.StockService import get_stock_initial
 from services.UserService import create_user, login_user, refresh_token
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -68,13 +71,6 @@ async def jwt_auth_middleware(request: Request, call_next):
 # 회원 가입
 @app.post("/signup")
 async def signup(user_data: UserCreate, db: AsyncSession = Depends(get_db)):
-    # 디바이스 정보 검증
-    response = await oauth_token(user_data.USER_ID, user_data.API_KEY, user_data.SECRET_KEY)
-
-    token = response.get("access_token")
-    if (not token) or (response.get("error_code")):
-        return {"message": response.get("error_description"), "code": response.get("error_code")}
-
     try:
         user = await create_user(db, user_data)
     except Exception as e:
@@ -122,6 +118,34 @@ async def logout(response: Response, authorize: AuthJWT = Depends()):
     return {"message": "로그아웃 성공"}
 
 
+# 보안키 등록
+@app.post("/auth")
+async def auth(auth_data: AuthCreate, db: AsyncSession = Depends(get_db), authorize: AuthJWT = Depends()):
+    user_id = authorize.get_jwt_subject()
+
+    # 디바이스 정보 검증
+    response = await oauth_token(user_id, auth_data.SIMULATION_YN,  auth_data.API_KEY, auth_data.SECRET_KEY)
+
+    token = response.get("access_token")
+    if (not token) or (response.get("error_code")):
+        return {"message": response.get("error_description"), "code": response.get("error_code")}
+
+    try:
+        await create_auth(db, auth_data)
+    except Exception as e:
+        return {"message": "오류", "error": str(e)}
+
+    return {"message": "보안 등록 완료"}
+
+# 보안키 선택
+@app.post("/auth/{auth_id}")
+async def auth(auth_id: str, db: AsyncSession = Depends(get_db), authorize: AuthJWT = Depends()):
+    user_id = authorize.get_jwt_subject()
+
+    await get_auth_key(db, user_id, auth_id)
+    return {"message": "보안 등록 완료"}
+
+
 # 계좌 등록
 @app.post("/account")
 async def account(account_data: AccountCreate, db: AsyncSession = Depends(get_db), authorize: AuthJWT = Depends()):
@@ -142,17 +166,17 @@ async def account(account_id: str, db: AsyncSession = Depends(get_db), authorize
 
 # 계좌 삭제
 @app.delete("/account/{account_id}")
-async def account(account_id: str, db: AsyncSession = Depends(get_db), Authorize: AuthJWT = Depends()):
-    user_id = Authorize.get_jwt_subject()
-    await remove_account(db, account_id, user_id)
+async def account(account_id: str, db: AsyncSession = Depends(get_db)):
+    await remove_account(db, account_id)
     return {"message": "계좌 삭제 성공"}
 
 
 # 계좌 리스트
 @app.get("/accounts")
-async def accounts(db: AsyncSession = Depends(get_db), authorize: AuthJWT = Depends()):
+async def accounts(request: Request, db: AsyncSession = Depends(get_db), authorize: AuthJWT = Depends()):
     user_id = authorize.get_jwt_subject()
-    account_list = await get_accounts(db, user_id)
+    auth_id = request.get("auth_id")
+    account_list = await get_accounts(db, user_id, auth_id)
     return {"message": "계좌 리스트 조회", "data": account_list}
 
 
