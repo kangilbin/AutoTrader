@@ -7,8 +7,9 @@ from datetime import datetime, timedelta
 
 
 async def user(user_id: str):
-    access_data = await get_redis().hgetall(f"{user_id}_access_token")
-    user_data = await get_redis().hgetall(user_id)
+    redis = await get_redis()
+    access_data = await redis.hgetall(f"{user_id}_access_token")
+    user_data = await redis.hgetall(user_id)
 
     if not access_data:
         access_data = await oauth_token(user_id, access_data.get("api_key"), access_data.get("secret_key"))

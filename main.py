@@ -2,7 +2,6 @@ import logging
 from fastapi import FastAPI, Response, Request, Depends, HTTPException, WebSocket
 from api.KISOpenApi import oauth_token
 from api.LocalStockApi import get_stock_balance, get_order_cash, get_order_rvsecncl, get_inquire_psbl_rvsecncl_lst
-from crud.AuthCrud import select_auth
 from model.schemas.AccountModel import AccountCreate
 from model.schemas.AuthModel import AuthCreate
 from model.schemas.ModOrderModel import ModOrder
@@ -20,6 +19,7 @@ from services.AuthService import create_auth, get_auth_key
 from services.StockService import get_stock_initial
 from services.UserService import create_user, login_user, refresh_token
 from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi_jwt_auth.exceptions import JWTDecodeError
 
 logging.basicConfig(level=logging.DEBUG)
 
@@ -48,7 +48,7 @@ app = FastAPI(lifespan=lifespan)
 @app.middleware("http")
 async def jwt_auth_middleware(request: Request, call_next):
     try:
-        if request.url.path == "/signup" or request.url.path == "/login":  # 회원가입 경로를 제외
+        if request.url.path in ["/signup", "/login"]:
             response = await call_next(request)
             return response
 
@@ -58,9 +58,11 @@ async def jwt_auth_middleware(request: Request, call_next):
             raise HTTPException(status_code=401, detail="Authorization header missing")
 
         # JWT 토큰 인증
-        Authorize = AuthJWT()
-        Authorize.jwt_required()  # 토큰 검증
+        authorize = AuthJWT(request)
+        authorize.jwt_required()  # 토큰 검증
 
+    except JWTDecodeError:
+        raise HTTPException(status_code=401, detail="Invalid token")
     except Exception as e:
         raise HTTPException(status_code=401, detail=str(e))
 
@@ -108,11 +110,11 @@ async def refresh(response: Response, authorize: AuthJWT = Depends()):
 @app.post("/logout")
 async def logout(response: Response, authorize: AuthJWT = Depends()):
     user_id = authorize.get_jwt_subject()
-
+    redis = await get_redis()
     # 토큰 제거
     response.delete_cookie("login_refresh_token")
     response.delete_cookie("login_token")
-    await get_redis().delete(user_id)
+    await redis.delete(user_id)
 
     return {"message": "로그아웃 성공"}
 
@@ -182,7 +184,6 @@ async def accounts(request: Request, db: AsyncSession = Depends(get_db), authori
 # 잔고 조회
 @app.get("/balance")
 async def stock_balance(authorize: AuthJWT = Depends()):
-
     user_id = authorize.get_jwt_subject()
 
     balance = await get_stock_balance(user_id)

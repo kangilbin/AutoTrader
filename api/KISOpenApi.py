@@ -35,10 +35,11 @@ async def oauth_token(user_id: str, simulation_yn: str, api_key: str, secret_key
         "url": api_url,
         "simulation_yn": simulation_yn
     }
-
     # Redis에 토큰 저장 만료기간(expires_in) 설정
     # await get_redis().set(f"{user_id}_access_token", response.get("access_token"), ex=response.get("expires_in"))
-    await get_redis().hset(f"{user_id}_access_token", mapping=data, ex=response.get("expires_in"), xx=True)
+    redis = await get_redis()
+    await redis.hset(f"{user_id}_access_token", mapping=data)
+    await redis.expire(f"{user_id}_access_token", response.get("expires_in"))
     return data
 
 
@@ -47,7 +48,6 @@ async def oauth_token(user_id: str, simulation_yn: str, api_key: str, secret_key
 # 접속키 신규 발급받지 않으셔도 365일 내내 웹소켓 데이터 수신하실 수 있습니다.
 async def get_approval(user_id: str):
     user_auth = await get_redis().hgetall(f"{user_id}_access_token")
-    socket_url = ""
     if user_auth.get("simulation_yn") == "Y":
         socket_url = get_env("REAL_SOCKET_URL")
     else:
@@ -67,8 +67,9 @@ async def get_approval(user_id: str):
         "url": socket_url
     }
     # Redis에 토큰 저장 만료기간(expires_in) 설정
-    # await get_redis().set(f"{user_id}_socket_token", response.get("approval_key"), ex=86400)
-    await get_redis().hset(f"{user_id}_socket_token", mapping=data, ex=86400, xx=True)
+    redis = await get_redis()
+    await redis.hset(f"{user_id}_socket_token", mapping=data)
+    await redis.expire(f"{user_id}_socket_token", 86400)
     return data
 
 

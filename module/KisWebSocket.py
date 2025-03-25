@@ -3,35 +3,41 @@ import logging
 from fastapi import WebSocket
 from api.KISOpenApi import get_approval
 from module.RedisConnection import get_redis
+import websockets
 
 connected_clients = {}
 
 
 async def websocket_endpoint(websocket: WebSocket, user_id: str):
     await websocket.accept()
+    redis = await get_redis()
+
     connected_clients[user_id] = websocket  # 연결된 클라이언트 저장
 
     try:
-        socket_data = await get_redis().hgetall(f"{user_id}_socket_token")
-        if not socket_data:
+        socket_data = await redis.hgetall(f"{user_id}_socket_token")
+        if not socket_data or not socket_data.get("url") or not socket_data.get("socket_token"):
             socket_data = await get_approval(user_id)
+
+        api_websocket_url = socket_data.get("url")
+        socket_token = socket_data.get("socket_token")
         while True:
             # 클라이언트 메시지 대기
             data = await websocket.receive_json()
 
             # API 서버로 메시지 전달
-            async with WebSocket(socket_data.get("url")) as api_websocket:
-                await api_websocket.send_text(send_message(data, socket_data.get("socket_token")))
+            async with websockets.connect(api_websocket_url) as api_websocket:
+                await api_websocket.send_text(send_message(data, socket_token))
                 response = await api_websocket.receive_text()
                 await websocket.send_text(response)
     except Exception as e:
         logging.error(f"Error: {e}")
     finally:
-        del connected_clients[user_id]
+        connected_clients.pop(user_id, None)
 
 
 # 클라이언트 메시지 포맷
-async def send_message(data: dict,  socket_token: str):
+def send_message(data: dict,  socket_token: str):
     # 주식 호가
     # tr_id = 'H0STASP0'
     # tr_type = '1'

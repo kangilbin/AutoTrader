@@ -14,7 +14,9 @@ async def create_account(db: AsyncSession, account_data: AccountCreate) -> Accou
 async def get_account(db: AsyncSession, account_id: str, user_id: str):
     account_info = await select_account(db, account_id)
     account_info_json = json.loads(account_info)
-    await get_redis().hset(user_id, "ACCOUNT_NO", account_info_json.get("ACCOUNT_NO"))
+
+    redis = await get_redis()
+    await redis.hset(user_id, "ACCOUNT_NO", account_info_json.get("ACCOUNT_NO"))
 
     return account_info_json
 
