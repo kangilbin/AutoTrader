@@ -21,13 +21,16 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
 
         api_websocket_url = socket_data.get("url")
         socket_token = socket_data.get("socket_token")
-        while True:
-            # 클라이언트 메시지 대기
-            data = await websocket.receive_json()
 
-            # API 서버로 메시지 전달
-            async with websockets.connect(api_websocket_url) as api_websocket:
+        async with websockets.connect(api_websocket_url) as api_websocket:
+            while True:
+                # 클라이언트 메시지 수신
+                data = await websocket.receive_json()
+
+                # API 서버로 메시지 전달
                 await api_websocket.send_text(send_message(data, socket_token))
+
+                # API 응답 수신 후 클라이언트로 전달
                 response = await api_websocket.receive_text()
                 await websocket.send_text(response)
     except Exception as e:
