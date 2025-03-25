@@ -28,10 +28,10 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
                 data = await websocket.receive_json()
 
                 # API 서버로 메시지 전달
-                await api_websocket.send_text(send_message(data, socket_token))
+                await api_websocket.send(send_message(data, socket_token))
 
                 # API 응답 수신 후 클라이언트로 전달
-                response = await api_websocket.receive_text()
+                response = await api_websocket.recv()
                 await websocket.send_text(response)
     except Exception as e:
         logging.error(f"Error: {e}")
