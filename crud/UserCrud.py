@@ -5,17 +5,20 @@ from model.schemas.UserModel import UserCreate, UserResponse
 from sqlalchemy.exc import SQLAlchemyError
 import logging
 
-
 logger = logging.getLogger(__name__)
 
 
 # 비동기 사용자 조회
 async def select_user(db: AsyncSession, user_id: str, user_dvc: str):
-    query = select(User).filter(
-        and_(User.USER_ID == user_id, User.DEVICE_ID == user_dvc)
-    )
-    result = await db.execute(query)
-    db_user = result.scalars().first()
+    try:
+        query = select(User).filter(
+            and_(User.USER_ID == user_id, User.DEVICE_ID == user_dvc)
+        )
+        result = await db.execute(query)
+        db_user = result.scalars().first()
+    except SQLAlchemyError as e:
+        logger.error(f"Database error occurred: {e}", exc_info=True)
+        raise
     return UserResponse.from_orm(db_user).dict()
 
 
@@ -30,7 +33,7 @@ async def insert_user(db: AsyncSession, user_data: UserCreate):
     except SQLAlchemyError as e:
         await db.rollback()
         logger.error(f"Database error occurred: {e}", exc_info=True)
-        raise e
+        raise
 
     await db.refresh(db_user)  # 새로 추가된 사용자 객체 리프레시
     return UserResponse.from_orm(db_user).dict()
@@ -50,7 +53,7 @@ async def update_user(db: AsyncSession, user_data: UserCreate):
     except SQLAlchemyError as e:
         await db.rollback()
         logger.error(f"Database error occurred: {e}", exc_info=True)
-        raise e
+        raise
 
     # 업데이트 후 db에서 다시 가져오기
     return await db.get(User, user_data.USER_ID)
@@ -65,7 +68,7 @@ async def delete_user(db: AsyncSession, user_id: str):
     except SQLAlchemyError as e:
         await db.rollback()
         logger.error(f"Database error occurred: {e}", exc_info=True)
-        raise e
+        raise
 
     if result.rowcount == 0:
         return None  # 삭제된 행이 없으면 None 반환

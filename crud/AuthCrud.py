@@ -9,12 +9,15 @@ logger = logging.getLogger(__name__)
 
 # Auth key 조회
 async def select_auth(db: AsyncSession, user_id: str, auth_id: str):
-    query = select(Auth).filter(
-        and_(Auth.USER_ID == user_id, Auth.AUTH_ID == auth_id)
-    )
-    result = await db.execute(query)
-    db_auth = result.scalars().first()
-
+    try:
+        query = select(Auth).filter(
+            and_(Auth.USER_ID == user_id, Auth.AUTH_ID == auth_id)
+        )
+        result = await db.execute(query)
+        db_auth = result.scalars().first()
+    except SQLAlchemyError as e:
+        logger.error(f"Database error occurred: {e}", exc_info=True)
+        raise
     return AuthResponse.from_orm(db_auth).dict()
 
 
