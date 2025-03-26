@@ -1,5 +1,5 @@
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update, delete, text
+from sqlalchemy import select, update, delete, text, and_
 from model.TableCreate import Swing
 from model.schemas.SwingModel import SwingCreate, SwingResponse
 from sqlalchemy.exc import SQLAlchemyError
@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 async def insert_swing(db: AsyncSession, swing_data: SwingCreate):
     try:
         # 새로운 사용자 객체 생성
-        swing_info = Swing(ACCOUNT_NO=swing_data.ACCOUNT_NO, STOCK_CODE=swing_data.STOCK_CODE, USE_YN=swing_data.USE_YN,
+        swing_info = Swing(ACCOUNT_NO=swing_data.ACCOUNT_NO, USER_ID=swing_data.USER_ID, ST_CODE=swing_data.ST_CODE, USE_YN=swing_data.USE_YN,
                         SWING_AMOUNT=swing_data.SWING_AMOUNT, SWING_TYPE=swing_data.SWING_TYPE, SHORT_TERM=swing_data.SHORT_TERM,
                         MEDIUM_TERM=swing_data.MEDIUM_TERM, LONG_TERM=swing_data.LONG_TERM, BUY_RATIO=swing_data.BUY_RATIO,
                         SELL_RATIO=swing_data.SELL_RATIO, CROSS_TYPE=swing_data.CROSS_TYPE)
@@ -29,7 +29,7 @@ async def insert_swing(db: AsyncSession, swing_data: SwingCreate):
 # 스윙 조회
 async def select_swing(db: AsyncSession, swing_id: int):
     try:
-        query = select(Swing).where(Swing.SWING_ID == swing_id)
+        query = select(Swing).filter(Swing.SWING_ID == swing_id)
         result = await db.execute(query)
     except SQLAlchemyError as e:
         logger.error(f"Database error occurred: {e}", exc_info=True)
@@ -38,9 +38,11 @@ async def select_swing(db: AsyncSession, swing_id: int):
 
 
 # 스윙 조회(계좌 번호)
-async def select_swing_account(db: AsyncSession, account_no: str):
+async def select_swing_account(db: AsyncSession, user_id, account_no: str):
     try:
-        query = select(Swing).where(Swing.ACCOUNT_NO == account_no)
+        query = select(Swing).filter(
+            and_(Swing.USER_ID == user_id, Swing.ACCOUNT_NO == account_no)
+        )
         result = await db.execute(query)
     except SQLAlchemyError as e:
         logger.error(f"Database error occurred: {e}", exc_info=True)
@@ -68,7 +70,7 @@ async def update_swing(db: AsyncSession, swing_data: SwingCreate):
     try:
         query = (
             update(Swing)
-            .where(Swing.SWING_ID == swing_data.SWING_ID)
+            .filter(Swing.SWING_ID == swing_data.SWING_ID)
             .values(**swing_data.dict())
             .execution_options(synchronize_session=False)
         )
@@ -85,7 +87,7 @@ async def update_swing(db: AsyncSession, swing_data: SwingCreate):
 # 스윙 삭제
 async def delete_swing(db: AsyncSession, swing_id: int):
     try:
-        query = delete(Swing).where(Swing.SWING_ID == swing_id)
+        query = delete(Swing).filter(Swing.SWING_ID == swing_id)
         result = await db.execute(query)
         await db.commit()
     except SQLAlchemyError as e:

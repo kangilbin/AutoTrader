@@ -50,7 +50,7 @@ async def update_auth(db: AsyncSession, auth_data: AuthCreate):
     try:
         query = (
             update(Auth)
-            .where(Auth.AUTH_ID == auth_data.AUTH_ID)
+            .filter(Auth.AUTH_ID == auth_data.AUTH_ID)
             .values(**Auth.dict())
             .execution_options(synchronize_session=False)
         )
@@ -67,7 +67,7 @@ async def update_auth(db: AsyncSession, auth_data: AuthCreate):
 # Auth key 삭제
 async def delete_auth(db: AsyncSession, auth_id: str):
     try:
-        query = delete(Auth).where(Auth.AUTH_ID == auth_id)
+        query = delete(Auth).filter(Auth.AUTH_ID == auth_id)
         result = await db.execute(query)
         await db.commit()
     except SQLAlchemyError as e:

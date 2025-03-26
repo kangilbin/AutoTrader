@@ -50,7 +50,7 @@ async def update_account(db: AsyncSession, account_data: AccountCreate, account_
     try:
         query = (
             update(Account)
-            .where(Account.ACCOUNT_ID == account_id)
+            .filter(Account.ACCOUNT_ID == account_id)
             .values(**account_data.dict())
             .execution_options(synchronize_session=False)
         )
@@ -68,7 +68,7 @@ async def delete_account(db: AsyncSession, account_id: str):
     try:
         query = (
             delete(Account)
-            .where(Account.ACCOUNT_ID == account_id)
+            .filter(Account.ACCOUNT_ID == account_id)
         )
         result = await db.execute(query)
         await db.commit()

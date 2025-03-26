@@ -44,7 +44,7 @@ async def update_user(db: AsyncSession, user_data: UserCreate):
     try:
         query = (
             update(User)
-            .where(User.USER_ID == user_data.USER_ID)
+            .filter(User.USER_ID == user_data.USER_ID)
             .values(**user_data.dict())
             .execution_options(synchronize_session=False)
         )
@@ -62,7 +62,7 @@ async def update_user(db: AsyncSession, user_data: UserCreate):
 # 사용자 삭제
 async def delete_user(db: AsyncSession, user_id: str):
     try:
-        query = delete(User).where(User.USER_ID == user_id)
+        query = delete(User).filter(User.USER_ID == user_id)
         result = await db.execute(query)
         await db.commit()
     except SQLAlchemyError as e:
