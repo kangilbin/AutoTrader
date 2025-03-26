@@ -38,13 +38,15 @@ class Auth(Base):
     REG_DT = Column(DateTime, default=datetime.datetime.utcnow, nullable=False, comment='등록일')
     MOD_DT = Column(DateTime, comment='수정일')
 
-class Stocks(Base):
+
+class Stock(Base):
     __tablename__ = "STOCK_INFO"
 
     ST_CODE = Column(String(50), nullable=False, comment='주식 단축 코드', primary_key=True)
     SD_CODE = Column(String(50), nullable=False, comment='주식 표준 코드', primary_key=True)
     NAME = Column(String(100), nullable=False, comment='종목명', index=True)
     DATA_YN = Column(CHAR(1), nullable=False, default='N', comment='데이터 적재 여부', index=True)
+    DEL_YN = Column(CHAR(1), nullable=False, default='N', comment='상장 폐지 여부')
     REG_DT = Column(DateTime, default=datetime.datetime.utcnow, nullable=False, comment='등록일')
 
     __table_args__ = (
@@ -58,7 +60,7 @@ class Swing(Base):
 
     SWING_ID = Column(Integer, Sequence('swing_id_seq'), primary_key=True, comment='스윙 ID')
     ACCOUNT_NO = Column(String(50), nullable=False, comment='계좌 번호')
-    STOCK_CODE = Column(String(20), nullable=False, comment='주식 표준 코드')
+    ST_CODE = Column(String(50), nullable=False, comment='주식 단축 코드')
     USE_YN = Column(CHAR(1), nullable=False, comment='사용 여부')
     SWING_AMOUNT = Column(DECIMAL(15, 2), nullable=False, comment='초기 투자금')
     SWING_TYPE = Column(CHAR(1), nullable=False, comment='스윙 타입 (D: 일봉, M: 분봉)')

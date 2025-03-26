@@ -7,6 +7,10 @@ class StockCreate(BaseModel):
     ST_CODE: str
     SD_CODE: str
     NAME: str
+    DATA_YN: str
+    DEL_YN: str
+    REG_DT: str
+
 
 class StockResponse(StockCreate):
 
