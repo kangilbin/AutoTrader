@@ -5,8 +5,6 @@ from model.schemas.UserModel import UserCreate, UserResponse
 from sqlalchemy.exc import SQLAlchemyError
 import logging
 
-logger = logging.getLogger(__name__)
-
 
 # 비동기 사용자 조회
 async def select_user(db: AsyncSession, user_id: str, user_dvc: str):
@@ -17,7 +15,7 @@ async def select_user(db: AsyncSession, user_id: str, user_dvc: str):
         result = await db.execute(query)
         db_user = result.scalars().first()
     except SQLAlchemyError as e:
-        logger.error(f"Database error occurred: {e}", exc_info=True)
+        logging.error(f"Database error occurred: {e}", exc_info=True)
         raise
     return UserResponse.from_orm(db_user).dict()
 
@@ -32,7 +30,7 @@ async def insert_user(db: AsyncSession, user_data: UserCreate):
         await db.commit()  # 비동기 커밋
     except SQLAlchemyError as e:
         await db.rollback()
-        logger.error(f"Database error occurred: {e}", exc_info=True)
+        logging.error(f"Database error occurred: {e}", exc_info=True)
         raise
 
     await db.refresh(db_user)  # 새로 추가된 사용자 객체 리프레시
@@ -52,7 +50,7 @@ async def update_user(db: AsyncSession, user_data: UserCreate):
         await db.commit()
     except SQLAlchemyError as e:
         await db.rollback()
-        logger.error(f"Database error occurred: {e}", exc_info=True)
+        logging.error(f"Database error occurred: {e}", exc_info=True)
         raise
 
     # 업데이트 후 db에서 다시 가져오기
@@ -67,7 +65,7 @@ async def delete_user(db: AsyncSession, user_id: str):
         await db.commit()
     except SQLAlchemyError as e:
         await db.rollback()
-        logger.error(f"Database error occurred: {e}", exc_info=True)
+        logging.error(f"Database error occurred: {e}", exc_info=True)
         raise
 
     if result.rowcount == 0:

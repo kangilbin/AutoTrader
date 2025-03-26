@@ -5,7 +5,6 @@ from model.schemas.AuthModel import AuthCreate, AuthResponse
 import logging
 from sqlalchemy.exc import SQLAlchemyError
 
-logger = logging.getLogger(__name__)
 
 # Auth key 조회
 async def select_auth(db: AsyncSession, user_id: str, auth_id: str):
@@ -16,7 +15,7 @@ async def select_auth(db: AsyncSession, user_id: str, auth_id: str):
         result = await db.execute(query)
         db_auth = result.scalars().first()
     except SQLAlchemyError as e:
-        logger.error(f"Database error occurred: {e}", exc_info=True)
+        logging.error(f"Database error occurred: {e}", exc_info=True)
         raise
     return AuthResponse.from_orm(db_auth).dict()
 
@@ -38,7 +37,7 @@ async def insert_auth(db: AsyncSession, auth_data: AuthCreate) :
         await db.commit()
     except SQLAlchemyError as e:
         await db.rollback()
-        logger.error(f"Database error occurred: {e}", exc_info=True)
+        logging.error(f"Database error occurred: {e}", exc_info=True)
         raise e
 
     await db.refresh(db_auth)
@@ -58,7 +57,7 @@ async def update_auth(db: AsyncSession, auth_data: AuthCreate):
         await db.commit()
     except SQLAlchemyError as e:
         await db.rollback()
-        logger.error(f"Database error occurred: {e}", exc_info=True)
+        logging.error(f"Database error occurred: {e}", exc_info=True)
         raise e
     # 업데이트 후 db에서 다시 가져오기
     return await db.get(Auth, auth_data.AUTH_ID)
@@ -72,7 +71,7 @@ async def delete_auth(db: AsyncSession, auth_id: str):
         await db.commit()
     except SQLAlchemyError as e:
         await db.rollback()
-        logger.error(f"Database error occurred: {e}", exc_info=True)
+        logging.error(f"Database error occurred: {e}", exc_info=True)
         raise e
 
     if result.rowcount == 0:

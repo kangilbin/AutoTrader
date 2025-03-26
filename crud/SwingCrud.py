@@ -5,8 +5,6 @@ from model.schemas.SwingModel import SwingCreate, SwingResponse
 from sqlalchemy.exc import SQLAlchemyError
 import logging
 
-logger = logging.getLogger(__name__)
-
 
 # 스윙 생성
 async def insert_swing(db: AsyncSession, swing_data: SwingCreate):
@@ -21,7 +19,7 @@ async def insert_swing(db: AsyncSession, swing_data: SwingCreate):
         await db.refresh(swing_info)
     except SQLAlchemyError as e:
         await db.rollback()
-        logger.error(f"Database error occurred: {e}", exc_info=True)
+        logging.error(f"Database error occurred: {e}", exc_info=True)
         raise
     return SwingResponse.from_orm(swing_info)
 
@@ -32,7 +30,7 @@ async def select_swing(db: AsyncSession, swing_id: int):
         query = select(Swing).filter(Swing.SWING_ID == swing_id)
         result = await db.execute(query)
     except SQLAlchemyError as e:
-        logger.error(f"Database error occurred: {e}", exc_info=True)
+        logging.error(f"Database error occurred: {e}", exc_info=True)
         raise
     return result.scalars()
 
@@ -45,7 +43,7 @@ async def select_swing_account(db: AsyncSession, user_id, account_no: str):
         )
         result = await db.execute(query)
     except SQLAlchemyError as e:
-        logger.error(f"Database error occurred: {e}", exc_info=True)
+        logging.error(f"Database error occurred: {e}", exc_info=True)
         raise
     return result.scalars().all()
 
@@ -60,7 +58,7 @@ async def list_all_swing(db: AsyncSession):
                      "WHERE ST.USE_YN = 'Y'")
         result = await db.execute(query)
     except SQLAlchemyError as e:
-        logger.error(f"Database error occurred: {e}", exc_info=True)
+        logging.error(f"Database error occurred: {e}", exc_info=True)
         raise
     return result.all()
 
@@ -78,7 +76,7 @@ async def update_swing(db: AsyncSession, swing_data: SwingCreate):
         await db.commit()
     except SQLAlchemyError as e:
         await db.rollback()
-        logger.error(f"Database error occurred: {e}", exc_info=True)
+        logging.error(f"Database error occurred: {e}", exc_info=True)
         raise
     # 업데이트 후 db에서 다시 가져오기
     return await db.get(Swing, swing_data.SWING_ID)
@@ -92,7 +90,7 @@ async def delete_swing(db: AsyncSession, swing_id: int):
         await db.commit()
     except SQLAlchemyError as e:
         await db.rollback()
-        logger.error(f"Database error occurred: {e}", exc_info=True)
+        logging.error(f"Database error occurred: {e}", exc_info=True)
         raise
 
     if result.rowcount == 0:

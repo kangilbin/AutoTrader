@@ -6,8 +6,6 @@ from model.schemas.AccountModel import AccountCreate
 import logging
 from sqlalchemy.exc import SQLAlchemyError
 
-logger = logging.getLogger(__name__)
-
 
 # 계좌 조회
 async def select_account(db: AsyncSession, account_id: str):
@@ -15,7 +13,7 @@ async def select_account(db: AsyncSession, account_id: str):
         query = select(Account).filter(Account.ACCOUNT_ID == account_id)
         result = await db.execute(query)
     except SQLAlchemyError as e:
-        logger.error(f"Database error occurred: {e}", exc_info=True)
+        logging.error(f"Database error occurred: {e}", exc_info=True)
         raise
     return result.scalars()
 
@@ -26,7 +24,7 @@ async def list_account(db: AsyncSession, user_id: str, auth_id: int):
         query = select(Account).filter(Account.USER_ID == user_id and Account.AUTH_ID == auth_id)
         result = await db.execute(query)
     except SQLAlchemyError as e:
-        logger.error(f"Database error occurred: {e}", exc_info=True)
+        logging.error(f"Database error occurred: {e}", exc_info=True)
         raise
     return result.scalars().all()
 
@@ -40,7 +38,7 @@ async def insert_account(db: AsyncSession, account_data: AccountCreate):
         await db.refresh(db_account)
     except SQLAlchemyError as e:
         await db.rollback()
-        logger.error(f"Database error occurred: {e}", exc_info=True)
+        logging.error(f"Database error occurred: {e}", exc_info=True)
         raise
     return db_account
 
@@ -58,7 +56,7 @@ async def update_account(db: AsyncSession, account_data: AccountCreate, account_
         await db.commit()
     except SQLAlchemyError as e:
         await db.rollback()
-        logger.error(f"Database error occurred: {e}", exc_info=True)
+        logging.error(f"Database error occurred: {e}", exc_info=True)
         raise
     return await db.get(Account, account_id)
 
@@ -74,7 +72,7 @@ async def delete_account(db: AsyncSession, account_id: str):
         await db.commit()
     except SQLAlchemyError as e:
         await db.rollback()
-        logger.error(f"Database error occurred: {e}", exc_info=True)
+        logging.error(f"Database error occurred: {e}", exc_info=True)
         raise
     if result.rowcount == 0:
         return None  # 삭제된 행이 없으면 None 반환

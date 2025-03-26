@@ -6,8 +6,6 @@ from sqlalchemy.exc import SQLAlchemyError
 from typing import List
 import logging
 
-logger = logging.getLogger(__name__)
-
 
 # 초성 검색
 async def select_stock_initial(db: AsyncSession, initial: str):
@@ -15,7 +13,7 @@ async def select_stock_initial(db: AsyncSession, initial: str):
         query = text(f"SELECT * FROM STOCK_INFO WHERE MATCH(NAME) AGAINST(:initial IN BOOLEAN MODE)")
         result = await db.execute(query, {"initial": initial + "*"})
     except SQLAlchemyError as e:
-        logger.error(f"Database error occurred: {e}", exc_info=True)
+        logging.error(f"Database error occurred: {e}", exc_info=True)
         raise
     return result.scalars().all()
 
@@ -26,7 +24,7 @@ async def select_stock(db: AsyncSession, code: str) -> StockResponse:
         result = await db.execute(query)
         db_user = result.scalars().first()
     except SQLAlchemyError as e:
-        logger.error(f"Database error occurred: {e}", exc_info=True)
+        logging.error(f"Database error occurred: {e}", exc_info=True)
         raise
     return StockResponse.from_orm(db_user)
 
@@ -44,7 +42,7 @@ async def update_stock(db: AsyncSession, stock_data: StockCreate):
         await db.commit()
     except SQLAlchemyError as e:
         await db.rollback()
-        logger.error(f"Database error occurred: {e}", exc_info=True)
+        logging.error(f"Database error occurred: {e}", exc_info=True)
         raise
     return stock_data
 
@@ -57,6 +55,6 @@ async def insert_bulk_stock_hstr(db: AsyncSession, stock_hstr_data: List[dict]) 
         await db.commit()
     except SQLAlchemyError as e:
         await db.rollback()
-        logger.error(f"Database error occurred: {e}", exc_info=True)
+        logging.error(f"Database error occurred: {e}", exc_info=True)
         raise
     return len(stock_hstr_data)
