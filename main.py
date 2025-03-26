@@ -6,6 +6,7 @@ from model.schemas.AccountModel import AccountCreate
 from model.schemas.AuthModel import AuthCreate
 from model.schemas.ModOrderModel import ModOrder
 from model.schemas.OrderModel import Order
+from model.schemas.SwingModel import SwingCreate
 from model.schemas.UserModel import UserCreate
 from module.Schedules import schedule_start
 from module.DBConnection import get_db, Database
@@ -17,6 +18,7 @@ from model.schemas.JwtModel import Settings
 from services.AccountService import create_account, get_account, get_accounts, remove_account
 from services.AuthService import create_auth, get_auth_key
 from services.StockService import get_stock_initial
+from services.SwingService import create_swing
 from services.UserService import create_user, login_user, refresh_token
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi_jwt_auth.exceptions import JWTDecodeError
@@ -219,8 +221,8 @@ async def stock_order(request: Request, authorize: AuthJWT = Depends()):
     fk100 = request.query_params.get("FK100")
     nk100 = request.query_params.get("NK100")
 
-    order = await get_inquire_psbl_rvsecncl_lst(user_id, fk100, nk100)
-    return {"message": "주문 내역 조회", "data": order}
+    response = await get_inquire_psbl_rvsecncl_lst(user_id, fk100, nk100)
+    return {"message": "주문 내역 조회", "data": response}
 
 
 # 주식 정정(취소)
@@ -228,8 +230,15 @@ async def stock_order(request: Request, authorize: AuthJWT = Depends()):
 async def stock_update_cancel(order: ModOrder, authorize: AuthJWT = Depends()):
     user_id = authorize.get_jwt_subject()
 
-    order = await get_order_rvsecncl(user_id, order)
-    return {"message": "정정 완료", "data": order}
+    response = await get_order_rvsecncl(user_id, order)
+    return {"message": "정정 완료", "data": response}
+
+# 스윙 등록
+@app.post("/swing")
+async def swing_create(swing: SwingCreate, db: AsyncSession = Depends(get_db), authorize: AuthJWT = Depends()):
+    response = await create_swing(db, swing)
+    return {"message": "정정 완료", "data": response}
+
 
 # 재무제표
 # import dart_fss as dart

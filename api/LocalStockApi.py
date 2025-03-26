@@ -355,3 +355,37 @@ async def get_target_price(code: str, user_id: str):
     stck_hgpr = int(response['output'][0]['stck_hgpr']) #전일 고가
     stck_lwpr = int(response['output'][0]['stck_lwpr']) #전일 저가
     return response['output'][0]
+
+
+async def get_stock_data(user_id: str, code: str, start_date: str, end_date: str):
+    """"
+    기간별 데이터 적재
+    FID_COND_MRKT_DIV_CODE	조건 시장 분류 코드	String	Y	2	J:KRX, NX:NXT, UN:통합
+    FID_INPUT_ISCD	입력 종목코드	String	Y	12	종목코드 (ex 005930 삼성전자)
+    FID_INPUT_DATE_1	입력 날짜 1	String	Y	10	조회 시작일자
+    FID_INPUT_DATE_2	입력 날짜 2	String	Y	10	조회 종료일자 (최대 100개)
+    FID_PERIOD_DIV_CODE	기간분류코드	String	Y	32	D:일봉 W:주봉, M:월봉, Y:년봉
+    FID_ORG_ADJ_PRC	수정주가 원주가 가격 여부	String	Y	10	0:수정주가 1:원주가
+    """
+    user_data, access_data = await user(user_id)
+    path = "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice"
+    api_url = f"{access_data.get('api_url')}/{path}"
+
+    headers = {
+        "authorization": f"Bearer {access_data.get('access_token')}",
+        "appkey": access_data.get("api_key"),
+        "appsecret": access_data.get("secret_key"),
+        "tr_id": "FHKST03010100",
+        "custtype": "P",
+    }
+
+    params = {
+        "FID_COND_MRKT_DIV_CODE": "J",
+        "FID_INPUT_ISCD": code,
+        "FID_INPUT_DATE_1": start_date,
+        "FID_INPUT_DATE_2": end_date,
+        "FID_PERIOD_DIV_CODE": "D",
+        "FID_ORG_ADJ_PRC": "0"
+    }
+
+    return await fetch("GET", api_url, params=params, headers=headers)

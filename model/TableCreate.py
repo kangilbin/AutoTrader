@@ -1,33 +1,43 @@
 from sqlalchemy.orm import declarative_base
 from sqlalchemy import Integer, Sequence, CHAR, Column, String, DateTime, Index, DECIMAL
-import datetime
+from datetime import datetime
+
 
 Base = declarative_base()
 
 
 class User(Base):
+    """"
+    계정 테이블 정의
+    """
     __tablename__ = "USER"
 
     USER_ID = Column(String(50), primary_key=True, comment='사용자 ID')
     USER_NAME = Column(String(50), index=True, nullable=False, comment='사용자 이름')
     PASSWORD = Column(String(100), nullable=False, comment='비밀 번호')
     DEVICE_ID = Column(String(50), nullable=False, comment='핸드폰 ID')
-    REG_DT = Column(DateTime, default=datetime.datetime.utcnow, nullable=False, comment='등록일')
+    REG_DT = Column(DateTime, default=datetime.utcnow, nullable=False, comment='등록일')
     MOD_DT = Column(DateTime, comment='수정일')
 
 
 class Account(Base):
+    """"
+    계좌 테이블 정의
+    """
     __tablename__ = "ACCOUNT"
 
     ACCOUNT_ID = Column(Integer, Sequence('account_id_seq'), primary_key=True, comment='ACCOUNT ID')
     USER_ID = Column(String(50), nullable=False, primary_key=True, comment='사용자 ID')
     ACCOUNT_NO = Column(String(10), nullable=False, comment='계좌 번호')
     AUTH_ID = Column(Integer, nullable=False, comment='권한 ID')
-    REG_DT = Column(DateTime, default=datetime.datetime.utcnow, nullable=False, comment='등록일')
+    REG_DT = Column(DateTime, default=datetime.utcnow, nullable=False, comment='등록일')
     MOD_DT = Column(DateTime, comment='수정일')
 
 
 class Auth(Base):
+    """"
+    권한 테이블 정의
+    """
     __tablename__ = "AUTH_KEY"
 
     AUTH_ID = Column(Integer, Sequence('auth_id_seq'), primary_key=True, comment='권한 ID')
@@ -35,19 +45,23 @@ class Auth(Base):
     SIMULATION_YN = Column(CHAR(1), default='N', nullable=False, comment='모의 투자 여부(Y: 모의투자, N: 실전투자)')
     API_KEY = Column(String(50), nullable=False, comment='앱키 키')
     SECRET_KEY = Column(String(50), nullable=False, comment='시크릿 키')
-    REG_DT = Column(DateTime, default=datetime.datetime.utcnow, nullable=False, comment='등록일')
+    REG_DT = Column(DateTime, default=datetime.utcnow, nullable=False, comment='등록일')
     MOD_DT = Column(DateTime, comment='수정일')
 
 
 class Stock(Base):
+    """"
+    주식 정보 테이블 정의
+    """
     __tablename__ = "STOCK_INFO"
 
     ST_CODE = Column(String(50), nullable=False, comment='주식 단축 코드', primary_key=True)
-    SD_CODE = Column(String(50), nullable=False, comment='주식 표준 코드', primary_key=True)
+    SD_CODE = Column(String(50), nullable=False, comment='주식 표준 코드')
     NAME = Column(String(100), nullable=False, comment='종목명', index=True)
     DATA_YN = Column(CHAR(1), nullable=False, default='N', comment='데이터 적재 여부', index=True)
     DEL_YN = Column(CHAR(1), nullable=False, default='N', comment='상장 폐지 여부')
-    REG_DT = Column(DateTime, default=datetime.datetime.utcnow, nullable=False, comment='등록일')
+    REG_DT = Column(DateTime, default=datetime.utcnow, nullable=False, comment='등록일')
+    MOD_DT = Column(DateTime, comment='수정일')
 
     __table_args__ = (
         Index('ix_name_fulltext', 'NAME', mysql_prefix='FULLTEXT'),
@@ -55,11 +69,33 @@ class Stock(Base):
     )
 
 
+class StockHstr(Base):
+    """"
+    주식 일일 데이터 내역 테이블 정의
+    """
+    __tablename__ = "STOCK_DAY_HISTORY"
+
+    ST_CODE = Column(String(50), nullable=False, primary_key=True, comment='주식 단축 코드')
+    HSTR_DT = Column(DateTime, nullable=False, primary_key=True, comment='일자')
+    OPEN_PRICE = Column(DECIMAL(15, 2), nullable=False, comment='시가')
+    HIGH_PRICE = Column(DECIMAL(15, 2), nullable=False, comment='고가')
+    LOW_PRICE = Column(DECIMAL(15, 2), nullable=False, comment='저가')
+    CLOSE_PRICE = Column(DECIMAL(15, 2), nullable=False, comment='종가')
+    TRADE_QTY = Column(Integer, nullable=False, comment='거래량')
+    REG_DT = Column(DateTime, default=datetime.utcnow, nullable=False, comment='등록일')
+    MOD_DT = Column(DateTime, comment='수정일')
+
+
+
 class Swing(Base):
+    """"
+    스윙 테이블 정의
+    """
     __tablename__ = "SWING_TRADE"
 
     SWING_ID = Column(Integer, Sequence('swing_id_seq'), primary_key=True, comment='스윙 ID')
-    ACCOUNT_NO = Column(String(50), nullable=False, comment='계좌 번호')
+    USER_ID = Column(String(50), nullable=False, primary_key=True, comment='사용자 ID')
+    ACCOUNT_NO = Column(String(50), nullable=False, primary_key=True, comment='계좌 번호')
     ST_CODE = Column(String(50), nullable=False, comment='주식 단축 코드')
     USE_YN = Column(CHAR(1), nullable=False, comment='사용 여부')
     SWING_AMOUNT = Column(DECIMAL(15, 2), nullable=False, comment='초기 투자금')
@@ -70,5 +106,22 @@ class Swing(Base):
     BUY_RATIO = Column(Integer, nullable=False, comment='매수 비율')
     SELL_RATIO = Column(Integer, nullable=False, comment='매도 비율')
     CROSS_TYPE = Column(CHAR(1), nullable=False, comment='크로스 타입 (R: 추세 반전, S: 강한 추세)')
-    REG_DT = Column(DateTime, default=datetime.datetime.utcnow, nullable=False, comment='등록일')
+    REG_DT = Column(DateTime, default=datetime.utcnow, nullable=False, comment='등록일')
     MOD_DT = Column(DateTime, comment='수정일')
+
+
+class TradeHistory(Base):
+    """"
+    거래 내역 테이블 정의
+    """
+    __tablename__ = "TRADE_HISTORY"
+
+    TRADE_ID = Column(Integer, Sequence('trade_id_seq'), primary_key=True, comment='거래 ID')
+    SWING_ID = Column(Integer, nullable=False, comment='스윙 ID')
+    TRADE_DATE = Column(DateTime, nullable=False, comment='거래 일자')
+    TRADE_TYPE = Column(CHAR(1), nullable=False, comment='거래 타입 (B: 매수, S: 매도)')
+    TRADE_PRICE = Column(DECIMAL(15, 2), nullable=False, comment='거래 가격')
+    TRADE_QTY = Column(Integer, nullable=False, comment='거래 수량')
+    TRADE_AMOUNT = Column(DECIMAL(15, 2), nullable=False, comment='거래 금액')
+    REG_DT = Column(DateTime, default=datetime.utcnow, nullable=False, comment='등록일')
+

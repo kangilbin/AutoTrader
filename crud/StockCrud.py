@@ -1,8 +1,9 @@
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import text, update, select
-from model.TableCreate import Stock
+from sqlalchemy import text, update, select, insert
+from model.TableCreate import Stock, StockHstr
 from model.schemas.StockModel import StockResponse, StockCreate
 from sqlalchemy.exc import SQLAlchemyError
+from typing import List
 import logging
 
 logger = logging.getLogger(__name__)
@@ -46,3 +47,16 @@ async def update_stock(db: AsyncSession, stock_data: StockCreate):
         logger.error(f"Database error occurred: {e}", exc_info=True)
         raise
     return stock_data
+
+
+# 주식 일별 데이터 적재
+async def insert_bulk_stock_hstr(db: AsyncSession, stock_hstr_data: List[dict]) -> int:
+    try:
+        query = insert(StockHstr).values(stock_hstr_data)
+        await db.execute(query)
+        await db.commit()
+    except SQLAlchemyError as e:
+        await db.rollback()
+        logger.error(f"Database error occurred: {e}", exc_info=True)
+        raise
+    return len(stock_hstr_data)

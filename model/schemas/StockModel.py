@@ -1,18 +1,31 @@
 from pydantic import BaseModel
+from typing import Optional
 
 
-# CANO : 앞 8자리
-# ACNT_PRDT_CD : 뒤 2자리
 class StockCreate(BaseModel):
     ST_CODE: str
-    SD_CODE: str
-    NAME: str
-    DATA_YN: str
-    DEL_YN: str
-    REG_DT: str
+    SD_CODE: Optional[str] = None
+    NAME: Optional[str] = None
+    DATA_YN: Optional[str] = None
+    DEL_YN: Optional[str] = None
+    REG_DT: Optional[str] = None
+    MOD_DT: Optional[str] = None
 
 
 class StockResponse(StockCreate):
 
     class Config:
         orm_mode = True
+
+
+class StockHstrCreate(BaseModel):
+    ST_CODE: str
+    HSTR_DT: str
+    DATE: str
+    OPEN_PRICE: float
+    HIGH_PRICE: float
+    LOW_PRICE: float
+    CLOSE_PRICE: float
+    TRADE_QTY: int
+    REG_DT: Optional[str] = None
+    MOD_DT: Optional[str] = None

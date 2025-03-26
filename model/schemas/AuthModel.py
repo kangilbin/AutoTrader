@@ -1,14 +1,14 @@
 from pydantic import BaseModel
-
+from typing import Optional
 
 class AuthCreate(BaseModel):
-    AUTH_ID: str
-    USER_ID: str
-    SIMULATION_YN: str
-    API_KEY: str
-    SECRET_KEY: str
-    REG_DT: str
-    MOD_DT: str
+    AUTH_ID: int
+    USER_ID: Optional[str] = None
+    SIMULATION_YN: Optional[str] = None
+    API_KEY: Optional[str] = None
+    SECRET_KEY: Optional[str] = None
+    REG_DT: Optional[str] = None
+    MOD_DT: Optional[str] = None
 
 class AuthResponse(AuthCreate):
 
