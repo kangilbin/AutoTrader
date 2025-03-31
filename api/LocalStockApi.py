@@ -12,7 +12,7 @@ async def user(user_id: str):
     user_data = await redis.hgetall(user_id)
 
     if not access_data:
-        access_data = await oauth_token(user_id, access_data.get("api_key"), access_data.get("secret_key"))
+        access_data = await oauth_token(user_id, user_data.get("SIMULATION_YN"), user_data.get("API_KEY"), user_data.get("SECRET_KEY"))
 
     return user_data, access_data
 

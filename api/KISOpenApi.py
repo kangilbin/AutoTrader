@@ -14,7 +14,6 @@ async def oauth_token(user_id: str, simulation_yn: str, api_key: str, secret_key
     :return:
     """
     path = "oauth2/tokenP"
-    api_url = ""
     if simulation_yn == "Y":
         api_url = get_env("DEV_API_URL")
     else:

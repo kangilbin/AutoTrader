@@ -17,7 +17,7 @@ async def get_account(db: AsyncSession, account_id: str, user_id: str):
     account_info_json = json.loads(account_info)
 
     redis = await get_redis()
-    await redis.hset(user_id, "ACCOUNT_NO", account_info_json.get("ACCOUNT_NO"))
+    await redis.hmset(user_id, account_info_json)
 
     return account_info_json
 

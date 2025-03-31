@@ -1,16 +1,15 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, delete
-
 from model.TableCreate import Account
 from model.schemas.AccountModel import AccountCreate
-import logging
 from sqlalchemy.exc import SQLAlchemyError
+import logging
 
 
 # 계좌 조회
 async def select_account(db: AsyncSession, account_id: str):
     try:
-        query = select(Account).filter(Account.ACCOUNT_ID == account_id)
+        query = select(Account.ACCOUNT_NO, Account.SIMULATION_YN, Account.API_KEY, Account.SECRET_KEY).join(Account.auth).filter(Account.ACCOUNT_ID == account_id)
         result = await db.execute(query)
     except SQLAlchemyError as e:
         logging.error(f"Database error occurred: {e}", exc_info=True)

@@ -233,6 +233,7 @@ async def stock_update_cancel(order: ModOrder, authorize: AuthJWT = Depends()):
     response = await get_order_rvsecncl(user_id, order)
     return {"message": "정정 완료", "data": response}
 
+
 # 스윙 등록
 @app.post("/swing")
 async def swing_create(swing: SwingCreate, db: AsyncSession = Depends(get_db), authorize: AuthJWT = Depends()):
