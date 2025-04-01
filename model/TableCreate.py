@@ -76,12 +76,12 @@ class StockHstr(Base):
     __tablename__ = "STOCK_DAY_HISTORY"
 
     ST_CODE = Column(String(50), nullable=False, primary_key=True, comment='주식 단축 코드')
-    HSTR_DT = Column(DateTime, nullable=False, primary_key=True, comment='일자')
-    OPEN_PRICE = Column(DECIMAL(15, 2), nullable=False, comment='시가')
-    HIGH_PRICE = Column(DECIMAL(15, 2), nullable=False, comment='고가')
-    LOW_PRICE = Column(DECIMAL(15, 2), nullable=False, comment='저가')
-    CLOSE_PRICE = Column(DECIMAL(15, 2), nullable=False, comment='종가')
-    TRADE_QTY = Column(Integer, nullable=False, comment='거래량')
+    STCK_BSOP_DATE = Column(DateTime, nullable=False, primary_key=True, comment='주식 영업 일자')
+    STCK_OPRC = Column(DECIMAL(15, 2), nullable=False, comment='	주식 시가')
+    STCK_HGPR = Column(DECIMAL(15, 2), nullable=False, comment='주식 최고가')
+    STCK_LWPR = Column(DECIMAL(15, 2), nullable=False, comment='주식 최저가')
+    STCK_CLPR = Column(DECIMAL(15, 2), nullable=False, comment='주식 종가')
+    ACML_VOL = Column(Integer, nullable=False, comment='누적 거래량')
     REG_DT = Column(DateTime, default=datetime.utcnow, nullable=False, comment='등록일')
     MOD_DT = Column(DateTime, comment='수정일')
 

@@ -2,7 +2,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from services.StockService import get_stock_info
 from api.LocalStockApi import get_stock_data
 from crud.StockCrud import update_stock, insert_bulk_stock_hstr
-from crud.SwingCrud import insert_swing, select_swing, select_swing_account, list_all_swing, update_swing, delete_swing
+from crud.SwingCrud import insert_swing, select_swing, select_swing_account, list_day_swing, update_swing, delete_swing
 from model.schemas.SwingModel import SwingCreate
 import datetime
 import asyncio
@@ -44,8 +44,8 @@ async def get_swing_account_no(db: AsyncSession, user_id: str, account_no: str):
 
 
 # 모든 등록된 스윙 조회
-async def get_all_swing(db: AsyncSession):
-    return await list_all_swing(db)
+async def get_day_swing(db: AsyncSession):
+    return await list_day_swing(db)
 
 
 # 스윙 전략 삭제
@@ -71,7 +71,7 @@ async def fetch_and_store_3_years_data(db: AsyncSession, user_id: str, code: str
 
         # Bulk insert 저장
         # response 데이터를 List[dict] 형태로 변환하여 한번에 insert
-        cnt = await insert_bulk_stock_hstr(db, data)
+        cnt = await insert_bulk_stock_hstr(db, response)
         total_cnt += cnt
 
         current_date = next_date

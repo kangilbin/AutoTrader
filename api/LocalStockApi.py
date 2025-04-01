@@ -330,8 +330,12 @@ async def get_inquire_daily_ccld_obj(user_id:str, inqr_strt_dt=None, inqr_end_dt
     return await fetch("POST", api_url, json=body, headers=headers)
 
 
-async def get_target_price(code: str, user_id: str):
-    user_data, access_data = await user(user_id)
+async def get_target_price(code: str):
+    redis = await get_redis()
+    access_data = await redis.hgetall("mgnt_access_token")
+
+    if not access_data:
+        access_data = await oauth_token("mgnt", "Y", get_env("API_KEY"), get_env("SECRET_KEY"))
 
     path = 'uapi/domestic-stock/v1/quotations/inquire-daily-price'
     api_url = f"{access_data.get('api_url')}/{path}"

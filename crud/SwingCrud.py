@@ -49,7 +49,7 @@ async def select_swing_account(db: AsyncSession, user_id, account_no: str):
 
 
 # 모든 스윙 조회(사용중)
-async def list_all_swing(db: AsyncSession):
+async def list_day_swing(db: AsyncSession):
     try:
         query = text("SELECT ST.*, U.API_KEY, U.SECRET_KEY "
                      "FROM SWING_TRADE ST "
