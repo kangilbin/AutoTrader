@@ -7,7 +7,7 @@ from module.AESCrypto import decrypt
 from module.DBConnection import get_db
 from services.StockService import get_avg_stock_price
 from services.SwingService import get_day_swing
-
+import pandas as pd
 
 async def trade_job():
     db = await get_db()
@@ -18,10 +18,21 @@ async def trade_job():
         print("#################스윙 시작################")
         print(swing.SWING_ID, swing.STOCK_CODE, decrypt(swing.APP_KEY), decrypt(swing.SECRET_KEY))
 
-        # 이평선 계산
+        # 1. 이평선 조회
         avg = await get_avg_stock_price(db, swing.STOCK_CODE, swing.SHORT_TERM, swing.MEDIUM_TERM, swing.LONG_TERM)
 
-        # 매수 or 매매 조건 확인
+        # 2. 주 지표(이평선, MACD, RSI) 매매 매도 타점 확인
+        if swing.CROSS_TYPE == "R":
+            if avg["short_avg"] > avg["medium_avg"] and avg["medium_avg"] > avg["long_avg"]:
+                # 매수 조건
+                print("매수 조건 충족")
+                api_url = f"https://api.example.com/buy?code={swing.STOCK_CODE}&amount={swing.SWING_AMOUNT}"
+            elif avg["short_avg"] < avg["medium_avg"] and avg["medium_avg"] < avg["long_avg"]:
+                # 매도 조건
+                print("매도 조건 충족")
+                api_url = f"https://api.example.com/sell?code={swing.STOCK_CODE}&amount={swing.SWING_AMOUNT}"
+
+        # 3. 보조 지표 (ADX, OBV) 필터링
 
         # 매수 or 매매 실행
 
@@ -57,3 +68,37 @@ async def collect_and_insert_stock_data(db, code):
     response = await get_target_price(code)
     response.set("STOCK_CODE", code)
     await insert_bulk_stock_hstr(db, response)
+
+
+def detect_trend_change(stock_data: dict) -> dict:
+    """
+    단장중 -> 정배열 전환 및 정배열 완성 시점 판별
+    """
+    if not stock_data:
+        return {"error": "No data available"}
+
+    today_short = stock_data["today_short_ma"]
+    today_mid = stock_data["today_mid_ma"]
+    today_long = stock_data["today_long_ma"]
+
+    yesterday_short = stock_data["yesterday_short_ma"]
+    yesterday_mid = stock_data["yesterday_mid_ma"]
+    yesterday_long = stock_data["yesterday_long_ma"]
+
+    result = {
+        "date": stock_data["today_date"],
+        "is_trend_change": False,  # 단장중 -> 정배열 전환 여부
+        "is_complete_trend": False  # 정배열 완성 여부
+    }
+
+    # 단장중 -> 정배열 전환 판별
+    if yesterday_short < yesterday_mid or yesterday_mid < yesterday_long:
+        if today_short > today_mid and today_mid > today_long:
+            result["is_trend_change"] = True
+
+    # 정배열 완성 판별 (중기선이 장기선을 상향 돌파)
+    if yesterday_mid < yesterday_long and today_mid > today_long:
+        result["is_complete_trend"] = True
+
+    return result
+

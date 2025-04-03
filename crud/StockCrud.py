@@ -66,6 +66,7 @@ async def select_stock_hstr(db: AsyncSession, code: str, short_term: int, medium
         query = text(f"""
             WITH stock_data AS (
                 SELECT
+                    STCK_BSOP_DATE,  -- 날짜 컬럼 포함
                     AVG(stock_price) OVER (
                         PARTITION BY ST_CODE
                         ORDER BY STCK_BSOP_DATE
@@ -85,12 +86,21 @@ async def select_stock_hstr(db: AsyncSession, code: str, short_term: int, medium
                 WHERE ST_CODE = :st_code
             )
             SELECT
-                short_ma, mid_ma, long_ma
-            FROM stock_data
-            WHERE short_ma IS NOT NULL
-                AND mid_ma IS NOT NULL
-                AND long_ma IS NOT NULL
-            ORDER BY STCK_BSOP_DATE DESC
+                sd_today.STCK_BSOP_DATE AS today_date,
+                sd_today.short_ma AS today_short_ma,
+                sd_today.mid_ma AS today_mid_ma,
+                sd_today.long_ma AS today_long_ma,
+                sd_yesterday.STCK_BSOP_DATE AS yesterday_date,
+                sd_yesterday.short_ma AS yesterday_short_ma,
+                sd_yesterday.mid_ma AS yesterday_mid_ma,
+                sd_yesterday.long_ma AS yesterday_long_ma
+            FROM stock_data sd_today
+            LEFT JOIN stock_data sd_yesterday 
+                ON sd_today.STCK_BSOP_DATE - 1 = sd_yesterday.STCK_BSOP_DATE  -- 어제 데이터 가져오기
+            WHERE sd_today.short_ma IS NOT NULL
+                AND sd_today.mid_ma IS NOT NULL
+                AND sd_today.long_ma IS NOT NULL
+            ORDER BY sd_today.STCK_BSOP_DATE DESC
         """)
         result = await db.execute(query, {
             "st_code": code,
