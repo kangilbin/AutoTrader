@@ -29,3 +29,10 @@ class StockHstrCreate(BaseModel):
     TRADE_QTY: int
     REG_DT: Optional[str] = None
     MOD_DT: Optional[str] = None
+
+
+class StockHstrResponse(StockHstrCreate):
+
+    class Config:
+        orm_mode = True
+

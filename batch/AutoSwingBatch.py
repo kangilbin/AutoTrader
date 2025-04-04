@@ -1,13 +1,12 @@
 import asyncio
 import logging
-
+import pandas as pd
 from api.LocalStockApi import get_target_price
 from crud.StockCrud import insert_bulk_stock_hstr
 from module.AESCrypto import decrypt
 from module.DBConnection import get_db
-from services.StockService import get_avg_stock_price
+from services.StockService import get_day_stock_price
 from services.SwingService import get_day_swing
-import pandas as pd
 
 async def trade_job():
     db = await get_db()
@@ -19,18 +18,12 @@ async def trade_job():
         print(swing.SWING_ID, swing.STOCK_CODE, decrypt(swing.APP_KEY), decrypt(swing.SECRET_KEY))
 
         # 1. 이평선 조회
-        avg = await get_avg_stock_price(db, swing.STOCK_CODE, swing.SHORT_TERM, swing.MEDIUM_TERM, swing.LONG_TERM)
+        price_days = await get_day_stock_price(db, swing.ST_CODE, swing.LONG_TERM)
+        df = pd.DataFrame([price_day.__dict__ for price_day in price_days])
+        df = df.drop(columns=["_sa_instance_state"], errors="ignore")
 
         # 2. 주 지표(이평선, MACD, RSI) 매매 매도 타점 확인
-        if swing.CROSS_TYPE == "R":
-            if avg["short_avg"] > avg["medium_avg"] and avg["medium_avg"] > avg["long_avg"]:
-                # 매수 조건
-                print("매수 조건 충족")
-                api_url = f"https://api.example.com/buy?code={swing.STOCK_CODE}&amount={swing.SWING_AMOUNT}"
-            elif avg["short_avg"] < avg["medium_avg"] and avg["medium_avg"] < avg["long_avg"]:
-                # 매도 조건
-                print("매도 조건 충족")
-                api_url = f"https://api.example.com/sell?code={swing.STOCK_CODE}&amount={swing.SWING_AMOUNT}"
+        # 2-1. 단기 이평선, 중기 이평선, 장기 이평선
 
         # 3. 보조 지표 (ADX, OBV) 필터링
 
@@ -70,35 +63,38 @@ async def collect_and_insert_stock_data(db, code):
     await insert_bulk_stock_hstr(db, response)
 
 
-def detect_trend_change(stock_data: dict) -> dict:
+# 지수 이동 평균(EMA) 계산 함수
+def ema(series: pd.Series, period: int) -> pd.Series:
+    return series.ewm(span=period, adjust=False).mean()
+
+
+# 상대 강도 지수(RSI) 계산 함수
+def rsi(series: pd.Series, period: int = 14) -> pd.Series:
+    delta = series.diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
+    rs = gain / loss
+    return 100 - (100 / (1 + rs))
+
+def detect_trend_change(df: pd.DataFrame, short_line: int, long_line: int) -> pd.DataFrame:
     """
-    단장중 -> 정배열 전환 및 정배열 완성 시점 판별
+    이평선 매매 타점
     """
-    if not stock_data:
-        return {"error": "No data available"}
+    df["ema_short"] = ema(df["STCK_CLPR"], short_line)
+    df["ema_long"] = ema(df["STCK_CLPR"], long_line)
 
-    today_short = stock_data["today_short_ma"]
-    today_mid = stock_data["today_mid_ma"]
-    today_long = stock_data["today_long_ma"]
+    # MACD(short_line,long_line) 계산
+    df["macd"] = df["ema_short"] - df["ema_long"]
+    df["signal"] = ema(df["macd"], 9)  # MACD의 9일 시그널선
 
-    yesterday_short = stock_data["yesterday_short_ma"]
-    yesterday_mid = stock_data["yesterday_mid_ma"]
-    yesterday_long = stock_data["yesterday_long_ma"]
+    # 지수 이평선 : EMA(ema_short) > EMA(ema_long) 골든크로스 발생 체크
+    df["ema_golden_cross"] = (df["ema_short"] > df["ema_long"]) & (df["ema_short"].shift(1) <= df["ema_long"].shift(1))
 
-    result = {
-        "date": stock_data["today_date"],
-        "is_trend_change": False,  # 단장중 -> 정배열 전환 여부
-        "is_complete_trend": False  # 정배열 완성 여부
-    }
+    # MACD(ema_short,ema_long) 골든크로스 발생 체크
+    df["macd_golden_cross"] = (df["macd"] > df["signal"]) & (df["macd"].shift(1) <= df["signal"].shift(1))
 
-    # 단장중 -> 정배열 전환 판별
-    if yesterday_short < yesterday_mid or yesterday_mid < yesterday_long:
-        if today_short > today_mid and today_mid > today_long:
-            result["is_trend_change"] = True
+    # 매수 타점 (EMA 골든크로스 & MACD 골든크로스 동시 발생)
+    df["buy_signal"] = df["ema_golden_cross"] & df["macd_golden_cross"]
 
-    # 정배열 완성 판별 (중기선이 장기선을 상향 돌파)
-    if yesterday_mid < yesterday_long and today_mid > today_long:
-        result["is_complete_trend"] = True
-
-    return result
+    return df
 
