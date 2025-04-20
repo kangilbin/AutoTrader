@@ -1,0 +1,24 @@
+[project]
+name = "auto-trader"
+version = "0.1.0"
+description = "FastAPI project"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi[standard]>=0.110.0",
+    "pydantic", # 최신 안정 버전
+    "starlette",
+    "greenlet",
+    "uvicorn", # 최신 안정 버전
+    "sqlalchemy", # 최신 안정 버전 (SQLAlchemy 2.x)
+    "apscheduler", # 최신 안정 버전
+    "fastapi-jwt-auth", # 최신 안정 버전
+    "redis", # 최신 안정 버전
+    "python-dotenv", # 최신 안정 버전
+    "cryptography", # 최신 안정 버전
+    "httpx", # 최신 안정 버전
+    "bcrypt", # 최신 안정 버전
+    "websockets", # 최신 안정 버전
+    "pandas",
+    "asyncmy",
+]
