@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import pandas as pd
+import numpy as np
 from api.LocalStockApi import get_target_price
 from crud.StockCrud import insert_bulk_stock_hstr
 from module.AESCrypto import decrypt
@@ -24,6 +25,19 @@ async def trade_job():
 
         # 2. 주 지표(이평선, MACD, RSI) 매매 매도 타점 확인
         # 2-1. 단기 이평선, 중기 이평선, 장기 이평선
+        if swing.SIGNAL == "0": # 첫 매수
+            detect_cell_change(df, swing.SHORT_TERM, swing.MEDIUM_TERM)
+            # SIGNAL 1로 변경
+        elif swing.SIGNAL == "1": # 첫 매수 후 추가 매수
+            detect_cell_change(df, swing.MEDIUM_TERM, swing.LONG_TERM)
+            # SIGNAL 2로 변경
+        elif swing.SIGNAL == "2": # 첫 매도
+            detect_buy_signal(df, swing.SHORT_TERM, swing.MEDIUM_TERM)
+            # SIGNAL 3으로 변경
+        else: # 전부 매도
+            detect_buy_signal(df, swing.MEDIUM_TERM, swing.LONG_TERM)
+            # SIGNAL 0로 변경
+
 
         # 3. 보조 지표 (ADX, OBV) 필터링
 
@@ -71,30 +85,72 @@ def ema(series: pd.Series, period: int) -> pd.Series:
 # 상대 강도 지수(RSI) 계산 함수
 def rsi(series: pd.Series, period: int = 14) -> pd.Series:
     delta = series.diff()
-    gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
-    rs = gain / loss
+    gain = delta.where(delta > 0, 0)
+    loss = -delta.where(delta < 0, 0)
+
+    avg_gain = gain.ewm(span=period, adjust=False).mean()
+    avg_loss = loss.ewm(span=period, adjust=False).mean()
+
+    rs = avg_gain / avg_loss.replace(0, np.nan)  # 0 나누기 방지
     return 100 - (100 / (1 + rs))
 
-def detect_trend_change(df: pd.DataFrame, short_line: int, long_line: int) -> pd.DataFrame:
+
+def detect_cell_change(df: pd.DataFrame, sig,short_line: int, medium_line,long_line: int) -> pd.DataFrame:
     """
-    이평선 매매 타점
+    매매 타점
+    """
+    df["ema_short"] = ema(df["STCK_CLPR"], short_line)
+    df["ema_medium"] = ema(df["STCK_CLPR"], medium_line)
+    df["ema_long"] = ema(df["STCK_CLPR"], long_line)
+
+    # MACD(short_line,long_line) 계산
+    df["macd"] = df["ema_short"] - df["ema_medium"]
+    df["signal"] = ema(df["macd"], 9)  # MACD의 9일 시그널선
+
+    # RSI 계산
+    df["rsi"] = rsi(df["STCK_CLPR"])
+
+
+    # 골든크로스 발생 체크
+    df["ema_golden_cross"] = (df["ema_short"] > df["ema_medium"]) & (df["ema_short"].shift(1) <= df["ema_medium"].shift(1))
+    df["macd_golden_cross"] = (df["macd"] > df["signal"]) & (df["macd"].shift(1) <= df["signal"].shift(1))
+    df["rsi_oversold"] = (df["rsi"] < 30)  # RSI 과매도(30 이하)
+
+    # 매수 타점 (EMA 골든크로스 & MACD 골든크로스 & RSI 과매도)
+    df["buy_signal"] = df["ema_golden_cross"] & df["macd_golden_cross"] & df["rsi_oversold"]
+
+    # 데드크로스 발생 체크
+    df["ema_dead_cross"] = (df["ema_short"] < df["ema_medium"]) & (df["ema_short"].shift(1) >= df["ema_medium"].shift(1))
+    df["macd_dead_cross"] = (df["macd"] < df["signal"]) & (df["macd"].shift(1) >= df["signal"].shift(1))
+    df["rsi_overbought"] = (df["rsi"] > 70)  # RSI 과매수(70 이상)
+
+    # 매도 타점 (EMA 데드크로스 & MACD 데드크로스 & RSI 과매수)
+    df["sell_signal"] = df["ema_dead_cross"] & df["macd_dead_cross"] & df["rsi_overbought"]
+
+    return df
+
+
+def detect_buy_signal(df: pd.DataFrame, short_line: int, long_line: int) -> pd.DataFrame:
+    """
+    매도 타점
     """
     df["ema_short"] = ema(df["STCK_CLPR"], short_line)
     df["ema_long"] = ema(df["STCK_CLPR"], long_line)
 
-    # MACD(short_line,long_line) 계산
+    # MACD(short_line, long_line) 계산
     df["macd"] = df["ema_short"] - df["ema_long"]
     df["signal"] = ema(df["macd"], 9)  # MACD의 9일 시그널선
 
-    # 지수 이평선 : EMA(ema_short) > EMA(ema_long) 골든크로스 발생 체크
-    df["ema_golden_cross"] = (df["ema_short"] > df["ema_long"]) & (df["ema_short"].shift(1) <= df["ema_long"].shift(1))
+    # RSI 계산
+    df["rsi"] = rsi(df["STCK_CLPR"])
 
-    # MACD(ema_short,ema_long) 골든크로스 발생 체크
-    df["macd_golden_cross"] = (df["macd"] > df["signal"]) & (df["macd"].shift(1) <= df["signal"].shift(1))
+    # 데드크로스 발생 체크
+    df["ema_dead_cross"] = (df["ema_short"] < df["ema_long"]) & (df["ema_short"].shift(1) >= df["ema_long"].shift(1))
+    df["macd_dead_cross"] = (df["macd"] < df["signal"]) & (df["macd"].shift(1) >= df["signal"].shift(1))
+    df["rsi_overbought"] = (df["rsi"] > 70)  # RSI 과매수(70 이상)
 
-    # 매수 타점 (EMA 골든크로스 & MACD 골든크로스 동시 발생)
-    df["buy_signal"] = df["ema_golden_cross"] & df["macd_golden_cross"]
+    # 매도 타점 (EMA 데드크로스 & MACD 데드크로스 & RSI 과매수)
+    df["sell_signal"] = df["ema_dead_cross"] & df["macd_dead_cross"] & df["rsi_overbought"]
 
     return df
 
