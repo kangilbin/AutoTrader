@@ -123,43 +123,34 @@ def adx(df):
     df = df.copy()
     df['prev_close'] = df['STCK_CLPR'].shift(1)
 
-    tr1 = df['high'] - df['low']
+    # TR 계산
+    tr1 = df['STCK_HGPR'] - df['STCK_LWPR']
     tr2 = abs(df['STCK_HGPR'] - df['prev_close'])
-    tr3 = abs(df['low'] - df['prev_close'])
+    tr3 = abs(df['STCK_LWPR'] - df['prev_close'])
     df['TR'] = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
 
-    df['TR'] = pd.DataFrame({
-        'TR1': df['STCK_HGPR'] - df['STCK_LWPR'],
-        'TR2': abs(df['STCK_HGPR'] - df['STCK_CLPR'].shift(1)),
-        'TR3': abs(df['STCK_LWPR'] - df['STCK_CLPR'].shift(1))
-    }).max(axis=1)
-
     # +DM, -DM 계산
-    df['+DM'] = df['high'] - df['high'].shift(1)
-    df['-DM'] = df['low'].shift(1) - df['low']
-
-    df['+DM'] = df['+DM'].where(df['+DM'] > 0, 0)
-    df['-DM'] = df['-DM'].where(df['-DM'] > 0, 0)
+    df['+DM'] = np.where((df['STCK_HGPR'] - STCK_HGPR['high'].shift(1)) > (df['STCK_LWPR'].shift(1) - df['STCK_LWPR']),
+                         np.maximum(df['high'] - df['high'].shift(1), 0), 0)
+    df['-DM'] = np.where((df['STCK_LWPR'].shift(1) - df['STCK_LWPR']) > (df['STCK_HGPR'] - df['STCK_HGPR'].shift(1)),
+                         np.maximum(df['STCK_LWPR'].shift(1) - df['STCK_LWPR'], 0), 0)
 
     # 14일 이동평균 계산
-    df['+DM_avg'] = df['+DM'].rolling(window=period).sum()
-    df['-DM_avg'] = df['-DM'].rolling(window=period).sum()
-    df['TR_avg'] = df['TR'].rolling(window=period).sum()
+    tr_n = df['TR'].rolling().sum()
+    plus_dm_n = df['+DM'].rolling().sum()
+    minus_dm_n = df['-DM'].rolling().sum()
 
-    # +DI, -DI 계산
-    df['+DI'] = 100 * df['+DM_avg'] / df['TR_avg']
-    df['-DI'] = 100 * df['-DM_avg'] / df['TR_avg']
+    plus_di = 100 * (plus_dm_n / tr_n)
+    minus_di = 100 * (minus_dm_n / tr_n)
+    dx = 100 * abs(plus_di - minus_di) / (plus_di + minus_di)
+    adx = dx.rolling().mean()
 
+    return adx.iloc[-1]  # 마지막 ADX 값 반환
 
-    # DX 계산
-    df['DX'] = 100 * abs(df['+DI'] - df['-DI']) / (df['+DI'] + df['-DI'])
-
-    # ADX 계산
-    df['adx'] = df['DX'].rolling(window=period).mean()
-
-    return df['adx']
-
-
+def obv(df):
+    df['obv'] = np.where(df['close'] > df['close'].shift(1), df['volume'],
+                         np.where(df['close'] < df['close'].shift(1), -df['volume'], 0))
+    return df['obv'].cumsum()
 
 def sell_or_buy(df: pd.DataFrame, short_line: int, mid_line: int, long_line: int):
     """
@@ -173,6 +164,8 @@ def sell_or_buy(df: pd.DataFrame, short_line: int, mid_line: int, long_line: int
     #초단타 → (5, 13, 6) 중장기 → (20, 50, 15)
     df['macd'] = ema(df['STCK_CLPR'], 12) - ema(df['STCK_CLPR'], 26)
     df['signal'] = ema(df['macd'], 9)
+    df['adx'] = adx(df.tail(15))
+    df['obv'] = obv(df)
 
     # 매수 조건
     # 단기-중기
