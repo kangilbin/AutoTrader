@@ -25,46 +25,53 @@ async def trade_job():
         new_row = pd.DataFrame([["01231230","2025-08-03", 15000, 17000, 13000, 14000, 200000]], columns=["ST_CODE", "STCK_BSOP_DATE", "STCK_OPRC", "STCK_HGPR", "STCK_LWPR", "STCK_CLPR", "ACML_VOL"])
         df = pd.concat([df, new_row], ignore_index=True)
 
-        first_buy_signal, second_buy_signal, first_sell_signal, second_sell_signal = sell_or_buy(df, swing.SHORT_TERM, swing.MEDIUM_TERM, swing.LONG_TERM)
-        if swing.SIGNAL == "0": # 최초 상태
-            # 단기-중기 매수 신호 발생
-            if first_buy_signal:
-                # 매수 신호 발생
-                print("단기-중기 매수 신호 발생")
-                # 매수 로직 실행
-                # swing.SIGNAL = "1"
-        elif swing.SIGNAL == "1": # 첫 매수 후
-            if second_buy_signal:
-                # 매수 신호 발생
-                print("중기-장기 매수 신호 발생")
-                # 매수 로직 실행
-                # swing.SIGNAL = "2"
-            elif first_sell_signal | second_sell_signal:
-                # 매도 신호 발생
-                print("단기-중기 매도 신호 발생")
-                # 매도 로직 실행
-                # 첫 매수 후 매도 신호 발생하면 전량 매도
-                # swing.SIGNAL = "0" 초기화
-        elif swing.SIGNAL == "2": # 두 번째 매수 후
-            if first_sell_signal:
-                # 매도 신호 발생
-                print("단기-중기 매도 신호 발생")
-                # 매도 로직 실행
-                # 두 번째 매수 후 매도 신호 발생하면 전량 매도
-                # swing.SIGNAL = "3"
-            elif second_sell_signal:
-                # 매도 신호 발생
-                print("중기-장기 매도 신호 발생")
-                # 매도 로직 실행
-                # 발생하면 전량 매도
-                # swing.SIGNAL = "0" 초기화
-        elif swing.SIGNAL == "3": # 두 번째 매도 후
-            if second_sell_signal:
-                # 매도 신호 발생
-                print("중기-장기 매도 신호 발생")
-                # 매도 로직 실행
-                # 발생하면 전량 매도
-                # swing.SIGNAL = "0" 초기화
+        first_buy_signal, second_buy_signal, first_sell_signal, second_sell_signal, stop_loss_signal = sell_or_buy(df, swing.SHORT_TERM, swing.MEDIUM_TERM, swing.LONG_TERM, swing.SWING_AMOUNT, 0.05)
+
+        if stop_loss_signal:
+            # 손절 신호 발생
+            print("손절 신호 발생")
+            # 매도 로직 실행
+            # swing.SIGNAL = "0" 초기화
+        else:
+            if swing.SIGNAL == "0": # 최초 상태
+                # 단기-중기 매수 신호 발생
+                if first_buy_signal:
+                    # 매수 신호 발생
+                    print("단기-중기 매수 신호 발생")
+                    # 매수 로직 실행
+                    # swing.SIGNAL = "1"
+            elif swing.SIGNAL == "1": # 첫 매수 후
+                if second_buy_signal:
+                    # 매수 신호 발생
+                    print("중기-장기 매수 신호 발생")
+                    # 매수 로직 실행
+                    # swing.SIGNAL = "2"
+                elif first_sell_signal | second_sell_signal:
+                    # 매도 신호 발생
+                    print("단기-중기 매도 신호 발생")
+                    # 매도 로직 실행
+                    # 첫 매수 후 매도 신호 발생하면 전량 매도
+                    # swing.SIGNAL = "0" 초기화
+            elif swing.SIGNAL == "2": # 두 번째 매수 후
+                if first_sell_signal:
+                    # 매도 신호 발생
+                    print("단기-중기 매도 신호 발생")
+                    # 매도 로직 실행
+                    # 두 번째 매수 후 매도 신호 발생하면 전량 매도
+                    # swing.SIGNAL = "3"
+                elif second_sell_signal:
+                    # 매도 신호 발생
+                    print("중기-장기 매도 신호 발생")
+                    # 매도 로직 실행
+                    # 발생하면 전량 매도
+                    # swing.SIGNAL = "0" 초기화
+            elif swing.SIGNAL == "3": # 두 번째 매도 후
+                if second_sell_signal:
+                    # 매도 신호 발생
+                    print("중기-장기 매도 신호 발생")
+                    # 매도 로직 실행
+                    # 발생하면 전량 매도
+                    # swing.SIGNAL = "0" 초기화
 
 
         # 3. 보조 지표 (ADX, OBV) 필터링
@@ -163,7 +170,7 @@ def obv(df):
                          np.where(df['STCK_CLPR'] < df['STCK_CLPR'].shift(1), -df['ACML_VOL'], 0))
     return pd.Series(obv_val, index=df.index).cumsum()
 
-def sell_or_buy(df: pd.DataFrame, short_line: int, mid_line: int, long_line: int) -> tuple:
+def sell_or_buy(df: pd.DataFrame, short_line: int, mid_line: int, long_line: int, buy_price: float = None, stop_loss_rate: float = -0.05) -> tuple:
     """
     타점
     """
@@ -197,9 +204,10 @@ def sell_or_buy(df: pd.DataFrame, short_line: int, mid_line: int, long_line: int
     # 단기-중기
     first_buy_cond1 = (ema_short.iloc[-1] > ema_mid.iloc[-1]) & (ema_short.iloc[-2] <= ema_mid.iloc[-2])
     first_buy_cond2 = (rsi_now > 30) & (rsi_prev <= 30)
-    first_buy_signal1 = first_buy_cond1 & first_buy_cond2  & first_adx_buy_cond & first_obv_buy_cond
-    first_buy_signal2 = first_ema_buy_cond & rsi_strong_buy_cond & first_adx_buy_cond
-    first_buy_signal = first_buy_signal1 | first_buy_signal2
+    first_buy_signal1 = first_buy_cond1 & first_buy_cond2 & first_adx_buy_cond & first_obv_buy_cond
+    # first_buy_signal2 = first_ema_buy_cond & rsi_strong_buy_cond & first_adx_buy_cond 급등 신호
+    # first_buy_signal = first_buy_signal1 | first_buy_signal2
+    first_buy_signal = first_buy_signal1
 
     # 중기-장기
     second_buy_cond1 = (ema_mid.iloc[-1] > ema_long.iloc[-1]) & (ema_mid.iloc[-2] <= ema_long.iloc[-2])
@@ -211,17 +219,22 @@ def sell_or_buy(df: pd.DataFrame, short_line: int, mid_line: int, long_line: int
     first_obv_sell_cond = obv_vals.iloc[-1] < obv_ma3.iloc[-1]
     second_obv_sell_cond = obv_vals.iloc[-1] < obv_ma7.iloc[-1]
 
-    # 단기-중기
+    # 익절 단기-중기
     first_sell_cond1 = (ema_short.iloc[-1] < ema_mid.iloc[-1]) & (ema_short.iloc[-2] >= ema_mid.iloc[-2])
     first_sell_cond2 = (rsi_now < 70) & (rsi_prev >= 70)
     first_sell_signal1 = first_sell_cond1 & first_sell_cond2 & first_adx_sell_cond & first_obv_sell_cond
     first_sell_signal2 = first_ema_sell_cond & rsi_strong_sell_cond
     first_sell_signal = first_sell_signal1 | first_sell_signal2
 
-    # 중기-장기
+    # 익절 중기-장기
     second_sell_cond1 = (ema_mid.iloc[-1] < ema_long.iloc[-1]) & (ema_mid.iloc[-2] >= ema_long.iloc[-2])
     second_sell_cond2 = (rsi_now < 60) & (rsi_prev >= 60)
     second_sell_signal = second_sell_cond1 & second_sell_cond2 & second_adx_sell_cond & second_obv_sell_cond
 
-    return first_buy_signal, second_buy_signal, first_sell_signal, second_sell_signal
+    # 손절 조건
+    stop_loss_signal = False
+    if buy_price is not None:
+        stop_loss_price = buy_price * (1 + stop_loss_rate)
+        stop_loss_signal = df['STCK_CLPR'].iloc[-1] <= stop_loss_price
+    return first_buy_signal, second_buy_signal, first_sell_signal, second_sell_signal, stop_loss_signal
 
