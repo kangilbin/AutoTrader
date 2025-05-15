@@ -77,7 +77,7 @@ class StockHstr(Base):
 
     ST_CODE = Column(String(50), nullable=False, primary_key=True, comment='주식 단축 코드')
     STCK_BSOP_DATE = Column(DateTime, nullable=False, primary_key=True, comment='주식 영업 일자')
-    STCK_OPRC = Column(DECIMAL(15, 2), nullable=False, comment='	주식 시가')
+    STCK_OPRC = Column(DECIMAL(15, 2), nullable=False, comment='주식 시가')
     STCK_HGPR = Column(DECIMAL(15, 2), nullable=False, comment='주식 최고가')
     STCK_LWPR = Column(DECIMAL(15, 2), nullable=False, comment='주식 최저가')
     STCK_CLPR = Column(DECIMAL(15, 2), nullable=False, comment='주식 종가')
