@@ -13,7 +13,8 @@ class User(Base):
     __tablename__ = "USER"
 
     USER_ID = Column(String(50), primary_key=True, comment='사용자 ID')
-    USER_NAME = Column(String(50), index=True, nullable=False, comment='사용자 이름')
+    USER_NAME = Column(String(50), nullable=False, comment='사용자 이름')
+    PHONE = Column(CHAR(11), nullable=False, comment='휴대폰 번호')
     PASSWORD = Column(String(100), nullable=False, comment='비밀 번호')
     REG_DT = Column(DateTime, default=datetime.utcnow, nullable=False, comment='등록일')
     MOD_DT = Column(DateTime, comment='수정일')

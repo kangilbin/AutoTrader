@@ -20,12 +20,12 @@ async def login_user(db, user_id: str, user_pw: str, authorize: AuthJWT):
     if not user_info or not check_password(user_pw, user_info["PASSWORD"]):
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
-    login_token = authorize.create_access_token(subject=user_id)
-    login_refresh_token = authorize.create_refresh_token(subject=user_id)
+    access_token = authorize.create_access_token(subject=user_id)
+    refresh_token = authorize.create_refresh_token(subject=user_id)
 
     await redis.hset(user_id, mapping=user_info)
     await redis.expire(user_id, 3600)
-    return login_token, login_refresh_token
+    return access_token, refresh_token
 
 
 async def duplicate_user(db: AsyncSession, user_id: str):
@@ -41,7 +41,7 @@ async def remove_user(db: AsyncSession, user_id: str):
     await delete_user(db, user_id)
 
 
-async def refresh_token(authorize: AuthJWT):
+async def token_refresh(authorize: AuthJWT):
     # refresh token 검증
     try:
         # refresh token 검증

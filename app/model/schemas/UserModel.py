@@ -6,6 +6,7 @@ from typing import Optional
 class UserCreate(BaseModel):
     USER_ID: str
     USER_NAME: Optional[str] = None
+    PHONE: Optional[str] = None
     PASSWORD: str
     REG_DT: Optional[datetime] = None
     MOD_DT: Optional[datetime] = None

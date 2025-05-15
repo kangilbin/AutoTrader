@@ -19,7 +19,7 @@ from app.services.AccountService import create_account, get_account, get_account
 from app.services.AuthService import create_auth, get_auth_key
 from app.services.StockService import get_stock_initial
 from app.services.SwingService import create_swing
-from app.services.UserService import create_user, login_user, refresh_token, duplicate_user
+from app.services.UserService import create_user, login_user, token_refresh, duplicate_user
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi_jwt_auth.exceptions import JWTDecodeError
 from sqlalchemy.exc import IntegrityError
@@ -97,12 +97,9 @@ async def login(user_data: UserCreate, response: Response, db: AsyncSession = De
     user_pw = user_data.PASSWORD
 
     # 사용자 검증
-    login_token, login_refresh_token = await login_user(db, user_id, user_pw, authorize)
+    access_token, refresh_token = await login_user(db, user_id, user_pw, authorize)
 
-    response.set_cookie(key="login_token", value=login_token, httponly=True)
-    response.set_cookie(key="login_refresh_token", value=login_refresh_token, httponly=True)
-
-    return {"message": "로그인 성공"}
+    return {"message": "로그인 성공", "access_token": access_token, "refresh_token": refresh_token}
 
 
 # ID 중복 검사
@@ -119,21 +116,18 @@ async def check_id(user_id: str, db: AsyncSession = Depends(get_db)):
 
 # 리프레시 토큰을 이용해 새로운 액세스 토큰 발급
 @app.post("/refresh")
-async def refresh(response: Response, authorize: AuthJWT = Depends()):
-    login_token = await refresh_token(authorize)
-    response.set_cookie(key="login_token", value=login_token, httponly=True)
+async def refresh(authorize: AuthJWT = Depends()):
+    access_token = await token_refresh(authorize)
 
-    return {"message": "token 재발급"}
+    return {"message": "token 재발급", "access_token": access_token}
 
 
 # 로그아웃
 @app.post("/logout")
-async def logout(response: Response, authorize: AuthJWT = Depends()):
+async def logout(authorize: AuthJWT = Depends()):
     user_id = authorize.get_jwt_subject()
     redis = await get_redis()
     # 토큰 제거
-    response.delete_cookie("login_refresh_token")
-    response.delete_cookie("login_token")
     await redis.delete(user_id)
 
     return {"message": "로그아웃 성공"}

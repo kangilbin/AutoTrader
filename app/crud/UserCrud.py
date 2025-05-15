@@ -24,7 +24,7 @@ async def select_user(db: AsyncSession, user_id: str):
 async def insert_user(db: AsyncSession, user_data: UserCreate):
     # 새로운 사용자 객체 생성
     try:
-        db_user = User(USER_ID=user_data.USER_ID, USER_NAME=user_data.USER_NAME, PASSWORD=user_data.PASSWORD)
+        db_user = User(USER_ID=user_data.USER_ID, USER_NAME=user_data.USER_NAME, PHONE=user_data.PHONE, PASSWORD=user_data.PASSWORD)
         db.add(db_user)  # 세션에 추가
         await db.commit()  # 비동기 커밋
     except SQLAlchemyError as e:
