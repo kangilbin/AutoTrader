@@ -51,6 +51,6 @@ async def token_refresh(authorize: AuthJWT):
 
     # 새로운 액세스 토큰 발급
     user_id = authorize.get_jwt_subject()
-    login_token = authorize.create_access_token(subject=user_id)
+    access_token = authorize.create_access_token(subject=user_id)
 
-    return login_token
+    return access_token
