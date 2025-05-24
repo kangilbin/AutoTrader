@@ -1,5 +1,5 @@
 import logging
-from fastapi import FastAPI, Response, Request, Depends, HTTPException, WebSocket
+from fastapi import FastAPI, Request, Depends, HTTPException, WebSocket
 from app.api.KISOpenApi import oauth_token
 from app.api.LocalStockApi import get_stock_balance, get_order_cash, get_order_rvsecncl, get_inquire_psbl_rvsecncl_lst
 from app.model.schemas.AccountModel import AccountCreate
@@ -51,7 +51,7 @@ app = FastAPI(lifespan=lifespan)
 @app.middleware("http")
 async def jwt_auth_middleware(request: Request, call_next):
     try:
-        if request.url.path in ["/signup", "/login", "/check_id"]:
+        if request.url.path in ["/signup", "/login", "/check_id", "/refresh"]:
             response = await call_next(request)
             return response
 
@@ -78,27 +78,19 @@ async def jwt_auth_middleware(request: Request, call_next):
 async def signup(user_data: UserCreate, db: AsyncSession = Depends(get_db)):
     try:
         user = await create_user(db, user_data)
-    except IntegrityError as e:
-        error_code = e.orig.args[0] if hasattr(e.orig, "args") else None
-        if error_code == 1062:
-            return {"message": "중복된 데이터입니다.", "code": error_code}
-        else:
-            return {"message": "오류", "error": str(e)}
     except Exception as e:
-        return {"message": "오류", "error": str(e)}
-
+        raise HTTPException(status_code=401, detail=str(e))
     return {"message": "회원 가입 성공", "data": user}
 
 
 # 로그인
 @app.post("/login")
-async def login(user_data: UserCreate, response: Response, db: AsyncSession = Depends(get_db), authorize: AuthJWT = Depends()):
+async def login(user_data: UserCreate, db: AsyncSession = Depends(get_db), authorize: AuthJWT = Depends()):
     user_id = user_data.USER_ID
     user_pw = user_data.PASSWORD
 
     # 사용자 검증
     access_token, refresh_token = await login_user(db, user_id, user_pw, authorize)
-
     return {"message": "로그인 성공", "access_token": access_token, "refresh_token": refresh_token}
 
 
@@ -116,9 +108,9 @@ async def check_id(user_id: str, db: AsyncSession = Depends(get_db)):
 
 # 리프레시 토큰을 이용해 새로운 액세스 토큰 발급
 @app.post("/refresh")
-async def refresh(authorize: AuthJWT = Depends()):
-    access_token = await token_refresh(authorize)
-
+async def refresh(request: Request, authorize: AuthJWT = Depends()):
+    body = await request.json()
+    access_token = await token_refresh(body['refresh_token'], authorize)
     return {"message": "token 재발급", "access_token": access_token}
 
 
@@ -148,7 +140,7 @@ async def auth(auth_data: AuthCreate, db: AsyncSession = Depends(get_db), author
     try:
         await create_auth(db, auth_data)
     except Exception as e:
-        return {"message": "오류", "error": str(e)}
+        raise HTTPException(status_code=401, detail=str(e))
 
     return {"message": "보안 등록 완료"}
 
@@ -156,7 +148,6 @@ async def auth(auth_data: AuthCreate, db: AsyncSession = Depends(get_db), author
 @app.post("/auth/{auth_id}")
 async def auth(auth_id: str, db: AsyncSession = Depends(get_db), authorize: AuthJWT = Depends()):
     user_id = authorize.get_jwt_subject()
-
     await get_auth_key(db, user_id, auth_id)
     return {"message": "보안 등록 완료"}
 

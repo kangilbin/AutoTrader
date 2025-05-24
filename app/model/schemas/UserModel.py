@@ -7,7 +7,7 @@ class UserCreate(BaseModel):
     USER_ID: str
     USER_NAME: Optional[str] = None
     PHONE: Optional[str] = None
-    PASSWORD: str
+    PASSWORD: Optional[str] = None
     REG_DT: Optional[datetime] = None
     MOD_DT: Optional[datetime] = None
 

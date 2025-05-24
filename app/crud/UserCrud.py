@@ -8,15 +8,13 @@ import logging
 
 # 비동기 사용자 조회
 async def select_user(db: AsyncSession, user_id: str):
-    try:
-        query = select(User).filter(
-            and_(User.USER_ID == user_id)
-        )
-        result = await db.execute(query)
-        db_user = result.scalars().first()
-    except SQLAlchemyError as e:
-        logging.error(f"사용자가 존재하지 않습니다. error : {e}", exc_info=True)
-        raise
+    query = select(User).filter(
+        and_(User.USER_ID == user_id)
+    )
+    result = await db.execute(query)
+    db_user = result.scalars().first()
+    if not db_user:
+        return None
     return UserResponse.from_orm(db_user).to_dict()
 
 
