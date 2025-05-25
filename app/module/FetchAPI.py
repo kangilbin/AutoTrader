@@ -18,7 +18,6 @@ async def fetch(method: str, url: str, **kwargs):
             else:
                 raise ValueError("지원하지 않는 HTTP 메서드입니다.")
 
-            response.raise_for_status()  # HTTP 오류 상태 코드 처리
             return response.json()
 
     except httpx.RequestError as e:

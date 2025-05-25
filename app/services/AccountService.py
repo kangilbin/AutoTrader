@@ -33,7 +33,7 @@ async def remove_account(db: AsyncSession, account_id: str):
     await delete_account(db, account_id)
 
 
-async def get_accounts(db: AsyncSession, user_id: str, auth_id: int):
-    return await list_account(db, user_id, auth_id)
+async def get_accounts(db: AsyncSession, user_id: str):
+    return await list_account(db, user_id)
 
 

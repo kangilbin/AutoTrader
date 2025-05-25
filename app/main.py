@@ -16,13 +16,12 @@ from contextlib import asynccontextmanager
 from fastapi_jwt_auth import AuthJWT
 from app.model.schemas.JwtModel import Settings
 from app.services.AccountService import create_account, get_account, get_accounts, remove_account
-from app.services.AuthService import create_auth, get_auth_key
+from app.services.AuthService import create_auth, get_auth_key, get_auth_keys
 from app.services.StockService import get_stock_initial
 from app.services.SwingService import create_swing
 from app.services.UserService import create_user, login_user, token_refresh, duplicate_user
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi_jwt_auth.exceptions import JWTDecodeError
-from sqlalchemy.exc import IntegrityError
 
 logging.basicConfig(level=logging.DEBUG)
 
@@ -125,6 +124,14 @@ async def logout(authorize: AuthJWT = Depends()):
     return {"message": "로그아웃 성공"}
 
 
+# 보안키 목록 조회
+@app.get("/auths")
+async def auth(db: AsyncSession = Depends(get_db), authorize: AuthJWT = Depends()):
+    user_id = authorize.get_jwt_subject()
+    auth_keys = await get_auth_keys(db, user_id)
+    return {"message": "보안키 조회 성공", "data": auth_keys}
+
+
 # 보안키 등록
 @app.post("/auth")
 async def auth(auth_data: AuthCreate, db: AsyncSession = Depends(get_db), authorize: AuthJWT = Depends()):
@@ -135,14 +142,15 @@ async def auth(auth_data: AuthCreate, db: AsyncSession = Depends(get_db), author
 
     token = response.get("access_token")
     if (not token) or (response.get("error_code")):
-        return {"message": response.get("error_description"), "code": response.get("error_code")}
+        raise HTTPException(status_code=403, detail=response.get("error_description"))
 
     try:
-        await create_auth(db, auth_data)
+        auth_data.USER_ID = user_id
+        auth_info = await create_auth(db, auth_data)
     except Exception as e:
         raise HTTPException(status_code=401, detail=str(e))
 
-    return {"message": "보안 등록 완료"}
+    return {"message": "보안 등록 완료", "data": auth_info}
 
 # 보안키 선택
 @app.post("/auth/{auth_id}")
@@ -179,10 +187,9 @@ async def account(account_id: str, db: AsyncSession = Depends(get_db)):
 
 # 계좌 리스트
 @app.get("/accounts")
-async def accounts(request: Request, db: AsyncSession = Depends(get_db), authorize: AuthJWT = Depends()):
+async def accounts(db: AsyncSession = Depends(get_db), authorize: AuthJWT = Depends()):
     user_id = authorize.get_jwt_subject()
-    auth_id = request.get("auth_id")
-    account_list = await get_accounts(db, user_id, auth_id)
+    account_list = await get_accounts(db, user_id)
     return {"message": "계좌 리스트 조회", "data": account_list}
 
 

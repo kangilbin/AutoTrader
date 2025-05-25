@@ -18,9 +18,9 @@ async def select_account(db: AsyncSession, account_id: str):
 
 
 # 계좌 목록
-async def list_account(db: AsyncSession, user_id: str, auth_id: int):
+async def list_account(db: AsyncSession, user_id: str):
     try:
-        query = select(Account).filter(Account.USER_ID == user_id and Account.AUTH_ID == auth_id)
+        query = select(Account).filter(Account.USER_ID == user_id)
         result = await db.execute(query)
     except SQLAlchemyError as e:
         logging.error(f"Database error occurred: {e}", exc_info=True)

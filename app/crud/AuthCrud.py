@@ -23,16 +23,16 @@ async def select_auth(db: AsyncSession, user_id: str, auth_id: str):
 # Auth key 조회(list)
 async def list_auth(db: AsyncSession, user_id: str):
     query = select(Auth).filter(Auth.USER_ID == user_id)
-    result = await db.execute(query)
-    return result.scalars().all()
+    db_auth = await db.execute(query)
+    return db_auth.scalars().all()
 
 
 # Auth key 생성
-async def insert_auth(db: AsyncSession, auth_data: AuthCreate) :
+async def insert_auth(db: AsyncSession, auth_data: AuthCreate,) :
     # 새로운 사용자 객체 생성
     try:
-        db_auth = Auth(USER_ID=auth_data.USER_ID, USER_NAME=auth_data.SIMULATION_YN, API_KEY=auth_data.API_KEY,
-                       SECRET_KEY=auth_data.SECRET_KEY)
+        db_auth = Auth(USER_ID=auth_data.USER_ID, USER_NAME=auth_data.USER_NAME, SIMULATION_YN=auth_data.SIMULATION_YN,
+                       API_KEY=auth_data.API_KEY, SECRET_KEY=auth_data.SECRET_KEY)
         db.add(db_auth)
         await db.commit()
     except SQLAlchemyError as e:

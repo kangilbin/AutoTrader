@@ -31,7 +31,7 @@ async def oauth_token(user_id: str, simulation_yn: str, api_key: str, secret_key
         "access_token": response.get("access_token"),
         "api_key": api_key,
         "secret_key": secret_key,
-        "url": api_url,
+        # "url": api_url,
         "simulation_yn": simulation_yn
     }
     # Redis에 토큰 저장 만료기간(expires_in) 설정
