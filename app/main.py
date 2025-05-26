@@ -138,11 +138,8 @@ async def auth(auth_data: AuthCreate, db: AsyncSession = Depends(get_db), author
     user_id = authorize.get_jwt_subject()
 
     # 디바이스 정보 검증
-    response = await oauth_token(user_id, auth_data.SIMULATION_YN,  auth_data.API_KEY, auth_data.SECRET_KEY)
+    await oauth_token(user_id, auth_data.SIMULATION_YN,  auth_data.API_KEY, auth_data.SECRET_KEY)
 
-    token = response.get("access_token")
-    if (not token) or (response.get("error_code")):
-        raise HTTPException(status_code=403, detail=response.get("error_description"))
 
     try:
         auth_data.USER_ID = user_id

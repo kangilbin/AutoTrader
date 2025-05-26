@@ -1,6 +1,7 @@
 from app.module.Config import get_env
 from app.module.FetchAPI import fetch
 from app.module.RedisConnection import get_redis
+from fastapi import HTTPException
 
 
 async def oauth_token(user_id: str, simulation_yn: str, api_key: str, secret_key: str):
@@ -27,8 +28,13 @@ async def oauth_token(user_id: str, simulation_yn: str, api_key: str, secret_key
     }
 
     response = await fetch("POST", url, json=body)
+    access_token = response.get("access_token")
+
+    if (not access_token) or (response.get("error_code")):
+        raise HTTPException(status_code=403, detail=response.get("error_description"))
+
     data = {
-        "access_token": response.get("access_token"),
+        "access_token": access_token,
         "api_key": api_key,
         "secret_key": secret_key,
         # "url": api_url,

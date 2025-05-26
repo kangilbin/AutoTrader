@@ -44,8 +44,8 @@ class Auth(Base):
     USER_ID = Column(String(50), nullable=False, primary_key=True, comment='사용자 ID')
     AUTH_NAME = Column(String(50), nullable=False, comment='권한 이름')
     SIMULATION_YN = Column(CHAR(1), default='N', nullable=False, comment='모의 투자 여부(Y: 모의투자, N: 실전투자)')
-    API_KEY = Column(String(50), nullable=False, comment='앱키 키')
-    SECRET_KEY = Column(String(50), nullable=False, comment='시크릿 키')
+    API_KEY = Column(String(200), nullable=False, comment='앱키 키')
+    SECRET_KEY = Column(String(350), nullable=False, comment='시크릿 키')
     REG_DT = Column(DateTime, default=datetime.utcnow, nullable=False, comment='등록일')
     MOD_DT = Column(DateTime, comment='수정일')
 

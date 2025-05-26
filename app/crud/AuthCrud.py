@@ -31,7 +31,7 @@ async def list_auth(db: AsyncSession, user_id: str):
 async def insert_auth(db: AsyncSession, auth_data: AuthCreate,) :
     # 새로운 사용자 객체 생성
     try:
-        db_auth = Auth(USER_ID=auth_data.USER_ID, USER_NAME=auth_data.USER_NAME, SIMULATION_YN=auth_data.SIMULATION_YN,
+        db_auth = Auth(USER_ID=auth_data.USER_ID, AUTH_NAME=auth_data.AUTH_NAME, SIMULATION_YN=auth_data.SIMULATION_YN,
                        API_KEY=auth_data.API_KEY, SECRET_KEY=auth_data.SECRET_KEY)
         db.add(db_auth)
         await db.commit()
