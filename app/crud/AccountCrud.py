@@ -1,7 +1,7 @@
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update, delete
+from sqlalchemy import select, update, delete, text
 from app.model.TableCreate import Account
-from app.model.schemas.AccountModel import AccountCreate
+from app.model.schemas.AccountModel import AccountCreate, AccountResponse
 from sqlalchemy.exc import SQLAlchemyError
 import logging
 
@@ -20,8 +20,10 @@ async def select_account(db: AsyncSession, account_id: str):
 # 계좌 목록
 async def list_account(db: AsyncSession, user_id: str):
     try:
-        query = select(Account).filter(Account.USER_ID == user_id)
-        result = await db.execute(query)
+        query = text(f"SELECT AT.ACCOUNT_ID, AT.ACCOUNT_NO, AT.AUTH_ID, AK.SIMULATION_YN from ACCOUNT AT "
+                     f"LEFT JOIN AUTH_KEY AK "
+                     f"ON AT.AUTH_ID = AK.AUTH_ID WHERE USER_ID = :user_id")
+        result = await db.execute(query, {"user_id": user_id})
     except SQLAlchemyError as e:
         logging.error(f"Database error occurred: {e}", exc_info=True)
         raise
@@ -34,12 +36,12 @@ async def insert_account(db: AsyncSession, account_data: AccountCreate):
         db_account = Account(USER_ID=account_data.USER_ID, ACCOUNT_NO=account_data.ACCOUNT_NO, AUTH_ID=account_data.AUTH_ID)
         db.add(db_account)
         await db.commit()
-        await db.refresh(db_account)
     except SQLAlchemyError as e:
         await db.rollback()
         logging.error(f"Database error occurred: {e}", exc_info=True)
         raise
-    return db_account
+    await db.refresh(db_account)
+    return AccountResponse.from_orm(db_account).dict()
 
 
 # 계좌 업데이트

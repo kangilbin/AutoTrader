@@ -162,7 +162,7 @@ async def auth(auth_id: str, db: AsyncSession = Depends(get_db), authorize: Auth
 async def account(account_data: AccountCreate, db: AsyncSession = Depends(get_db), authorize: AuthJWT = Depends()):
     user_id = authorize.get_jwt_subject()
     account_data.USER_ID = user_id
-    await create_account(db, account_data)
+    account_info = await create_account(db, account_data)
 
     return {"message": "계좌 등록 성공"}
 
