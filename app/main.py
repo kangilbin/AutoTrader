@@ -164,7 +164,7 @@ async def account(account_data: AccountCreate, db: AsyncSession = Depends(get_db
     account_data.USER_ID = user_id
     account_info = await create_account(db, account_data)
 
-    return {"message": "계좌 등록 성공"}
+    return {"message": "계좌 등록 성공", "data": account_info}
 
 
 # 계좌 조회
