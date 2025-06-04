@@ -15,5 +15,7 @@ class AccountCreate(BaseModel):
 
 
 class AccountResponse(AccountCreate):
+    SIMULATION_YN: Optional[str] = None
+
     class Config:
         orm_mode = True

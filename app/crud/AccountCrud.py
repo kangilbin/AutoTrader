@@ -22,12 +22,12 @@ async def list_account(db: AsyncSession, user_id: str):
     try:
         query = text(f"SELECT AT.ACCOUNT_ID, AT.ACCOUNT_NO, AT.AUTH_ID, AK.SIMULATION_YN from ACCOUNT AT "
                      f"LEFT JOIN AUTH_KEY AK "
-                     f"ON AT.AUTH_ID = AK.AUTH_ID WHERE USER_ID = :user_id")
-        result = await db.execute(query, {"user_id": user_id})
+                     f"ON AT.AUTH_ID = AK.AUTH_ID WHERE AT.USER_ID = :user_id")
+        rows = await db.execute(query, {"user_id": user_id})
     except SQLAlchemyError as e:
         logging.error(f"Database error occurred: {e}", exc_info=True)
         raise
-    return result.scalars().all()
+    return [AccountResponse.from_orm(row).dict() for row in rows]
 
 
 # 계좌 생성
