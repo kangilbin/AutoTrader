@@ -140,7 +140,6 @@ async def auth(auth_data: AuthCreate, db: AsyncSession = Depends(get_db), author
     # 디바이스 정보 검증
     await oauth_token(user_id, auth_data.SIMULATION_YN,  auth_data.API_KEY, auth_data.SECRET_KEY)
 
-
     try:
         auth_data.USER_ID = user_id
         auth_info = await create_auth(db, auth_data)
@@ -201,8 +200,8 @@ async def stock_balance(authorize: AuthJWT = Depends()):
 
 # 종목 코드 조회
 @app.get("/stock")
-async def stock(name: str, db: AsyncSession = Depends(get_db)):
-    stock_info = await get_stock_initial(db, name)
+async def stock(query: str, db: AsyncSession = Depends(get_db)):
+    stock_info = await get_stock_initial(db, query)
     return {"message": "종목 코드 조회", "data": stock_info}
 
 # 주식 현재가/호가
