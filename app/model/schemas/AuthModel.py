@@ -15,10 +15,9 @@ class AuthCreate(BaseModel):
 
 
 class AuthResponse(AuthCreate):
-
-    class Config:
-        orm_mode = True
-        fields = {
-            "API_KEY": {"exclude": True},
-            "SECRET_KEY": {"exclude": True},
+    model_config = {
+        "from_attributes": True,
+        "json_schema_extra": {
+            "exclude": {"API_KEY", "SECRET_KEY"}
         }
+    }

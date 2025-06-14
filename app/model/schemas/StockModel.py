@@ -16,7 +16,7 @@ class StockCreate(BaseModel):
 class StockResponse(StockCreate):
 
     class Config:
-        orm_mode = True
+        model_config = {"from_attributes": True} 
 
 
 class StockHstrCreate(BaseModel):
@@ -35,5 +35,5 @@ class StockHstrCreate(BaseModel):
 class StockHstrResponse(StockHstrCreate):
 
     class Config:
-        orm_mode = True
+        model_config = {"from_attributes": True} 
 

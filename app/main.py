@@ -13,7 +13,6 @@ from app.module.DBConnection import get_db, Database
 from app.module.KisWebSocket import websocket_endpoint
 from app.module.RedisConnection import get_redis, Redis
 from contextlib import asynccontextmanager
-from fastapi_jwt_auth import AuthJWT
 from app.model.schemas.JwtModel import Settings
 from app.services.AccountService import create_account, get_account, get_accounts, remove_account
 from app.services.AuthService import create_auth, get_auth_key, get_auth_keys
@@ -21,7 +20,7 @@ from app.services.StockService import get_stock_initial
 from app.services.SwingService import create_swing
 from app.services.UserService import create_user, login_user, token_refresh, duplicate_user
 from sqlalchemy.ext.asyncio import AsyncSession
-from fastapi_jwt_auth.exceptions import JWTDecodeError
+from app.module.JwtUtils import verify_token
 
 logging.basicConfig(level=logging.DEBUG)
 
@@ -45,29 +44,32 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
-# 스케줄러 시작
+
+
+async def get_current_user(request: Request) -> str:
+    if request.url.path in ["/signup", "/login", "/check_id", "/refresh"]:
+        return None
+
+    auth_header = request.headers.get("Authorization")
+    if auth_header is None:
+        raise HTTPException(status_code=401, detail="Authorization header missing")
+
+    try:
+        token = auth_header.split(" ")[1]
+        token_data = verify_token(token)
+        if token_data is None:
+            raise HTTPException(status_code=401, detail="Invalid token")
+        return token_data.user_id
+    except Exception as e:
+        raise HTTPException(status_code=401, detail=str(e))
+
 
 @app.middleware("http")
 async def jwt_auth_middleware(request: Request, call_next):
     try:
-        if request.url.path in ["/signup", "/login", "/check_id", "/refresh"]:
-            response = await call_next(request)
-            return response
-
-        # Authorization 헤더에서 토큰 추출
-        auth_header = request.headers.get("Authorization")
-        if auth_header is None:
-            raise HTTPException(status_code=401, detail="Authorization header missing")
-
-        # JWT 토큰 인증
-        authorize = AuthJWT(request)
-        authorize.jwt_required()  # 토큰 검증
-
-    except JWTDecodeError:
-        raise HTTPException(status_code=401, detail="Invalid token")
-    except Exception as e:
-        raise HTTPException(status_code=401, detail=str(e))
-
+        await get_current_user(request)
+    except HTTPException as e:
+        return e
     response = await call_next(request)
     return response
 
