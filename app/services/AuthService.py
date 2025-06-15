@@ -27,7 +27,7 @@ async def get_auth_keys(db: AsyncSession, user_id: str):
 
 
 async def mod_auth_key(db: AsyncSession, auth_data: AuthCreate):
-    auth_data.MOD_DT = datetime.now()
+    auth_data.MOD_DT = datetime.now(datetime.UTC)
     await update_auth(db, auth_data)
 
 

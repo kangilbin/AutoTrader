@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import timedelta
 from pydantic import BaseModel
 from app.module.Config import get_env
 
@@ -16,5 +16,5 @@ class TokenData(BaseModel):
 class Settings(BaseModel):
     jwt_secret_key: str = get_env("JWT_SECRET_KEY")
     jwt_algorithm: str = "HS256"
-    access_token_expire_minutes: int = 30
-    refresh_token_expire_days: int = 7
+    token_access_exp: timedelta = timedelta(minutes=15)
+    token_refresh_exp: timedelta = timedelta(days=7)
