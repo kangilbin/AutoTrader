@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.module.JwtUtils import get_token, TokenData
 from fastapi.security import OAuth2PasswordBearer
 from typing import Annotated
+from app.model.schemas.AuthModel import AuthChoice
 
 
 logging.basicConfig(level=logging.DEBUG)
@@ -148,9 +149,9 @@ async def auth(auth_data: AuthCreate, db: Annotated[AsyncSession, Depends(get_db
     return {"message": "보안 등록 완료", "data": auth_info}
 
 # 보안키 선택
-@app.post("/auth/{auth_id}")
-async def auth(auth_id: str, db: Annotated[AsyncSession, Depends(get_db)], user_id: Annotated[TokenData, Depends(get_token)]):
-    await get_auth_key(db, user_id, auth_id)
+@app.post("/auth/choice")
+async def auth(auth_data: AuthChoice, db: Annotated[AsyncSession, Depends(get_db)], user_id: Annotated[TokenData, Depends(get_token)]):
+    await get_auth_key(db, user_id, auth_data.AUTH_ID, auth_data.ACCOUNT_NO)
     return {"message": "보안 등록 완료"}
 
 
@@ -168,7 +169,6 @@ async def account(account_data: AccountCreate, db: Annotated[AsyncSession, Depen
 async def account(account_id: str, db: Annotated[AsyncSession, Depends(get_db)], user_id: Annotated[TokenData, Depends(get_token)]):
     account_info = await get_account(db, account_id, user_id)
     return {"message": "계좌 조회", "data": account_info}
-
 
 # 계좌 삭제
 @app.delete("/account/{account_id}")
