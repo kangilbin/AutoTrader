@@ -199,8 +199,8 @@ async def stock(query: str, db: Annotated[AsyncSession, Depends(get_db)]):
 
 # 주식 현재가/호가
 @app.websocket("/kis_socket")
-async def kis_websocket(websocket: WebSocket, user_id: Annotated[TokenData, Depends(get_token)]):
-    await websocket_endpoint(websocket, user_id)
+async def kis_websocket(websocket: WebSocket):
+    await websocket_endpoint(websocket)
 
 
 # 주식 매매 or 매도

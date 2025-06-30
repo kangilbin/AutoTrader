@@ -28,13 +28,13 @@ def verify_token(token: str) -> Optional[TokenData]:
     except ExpiredSignatureError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="토큰이 만료되었습니다",
+            detail="토큰이 만료되었습니다.",
             headers={"WWW-Authenticate": "Bearer"},
         )
     except jwt.PyJWTError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="유효하지 않은 토큰입니다",
+            detail="유효하지 않은 토큰입니다.",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
