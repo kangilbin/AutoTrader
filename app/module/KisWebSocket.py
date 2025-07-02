@@ -37,6 +37,12 @@ async def websocket_endpoint(websocket: WebSocket):
 
         api_websocket_url = socket_data.get("url")
         socket_token = socket_data.get("socket_token")
+        
+        # 인증 성공 응답 전송
+        await websocket.send_json({
+            "type": "auth_success",
+            "message": "인증이 성공했습니다"
+        })
 
         async with websockets.connect(api_websocket_url) as api_websocket:
             while True:
@@ -62,7 +68,6 @@ def send_message(data: dict,  socket_token: str):
     # 주식 호가
     # tr_id = 'H0STASP0'
     # tr_type = '1'
-    stockcode = '005930'    # 테스트용 임시 종목 설정, 삼성전자
     custtype = 'P'    # 고객구분, P: 개인, I: 기관
     senddata = json.dumps({
         "header": {
@@ -74,7 +79,7 @@ def send_message(data: dict,  socket_token: str):
         "body": {
             "input": {
                 "tr_id": data['tr_id'],
-                "tr_key": stockcode
+                "tr_key": data['st_code']
             }
         }
     })
