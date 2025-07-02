@@ -1,16 +1,14 @@
-import os
 import base64
-from dotenv import load_dotenv
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.backends import default_backend
+from app.module.Config import get_env
+import os
 
 ########### AES 암복호화 ###########
 
-# .env 파일 로드
-load_dotenv()
 
 # 환경변수에서 시크릿 키 불러오기
-SECRET_KEY = os.getenv("AES_SECRET_KEY")
+SECRET_KEY = get_env("AES_SECRET_KEY")
 if not SECRET_KEY:
     raise ValueError("SECRET_KEY가 설정되지 않았습니다! .env 파일을 확인하세요.")
 

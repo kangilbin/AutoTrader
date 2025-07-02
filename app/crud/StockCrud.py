@@ -10,12 +10,25 @@ import logging
 # 초성 검색
 async def select_stock_initial(db: AsyncSession, initial: str):
     try:
-        query = text(f"SELECT * FROM STOCK_INFO WHERE MATCH(NAME) AGAINST(:initial IN BOOLEAN MODE)")
-        result = await db.execute(query, {"initial": initial + "*"})
+        query = text("""
+                    SELECT *
+                    FROM STOCK_INFO
+                    WHERE NAME RLIKE make_search_pattern(:initial)
+                    ORDER BY
+                        CASE
+                            WHEN REGEXP_INSTR(NAME, make_search_pattern(:initial)) = 1 THEN 1
+                            WHEN REGEXP_INSTR(NAME, make_search_pattern(:initial)) > 1 THEN 2
+                            ELSE 3
+                            END,
+                        REGEXP_INSTR(NAME, make_search_pattern(:initial)),
+                        NAME
+                    LIMIT 20
+                """)
+        rows = await db.execute(query, {"initial": initial})
     except SQLAlchemyError as e:
         logging.error(f"Database error occurred: {e}", exc_info=True)
         raise
-    return [StockResponse.model_validate(row).model_dump() for row in result]
+    return [StockResponse.model_validate(row).model_dump() for row in rows]
 
 
 

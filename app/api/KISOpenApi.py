@@ -14,6 +14,14 @@ async def oauth_token(user_id: str, simulation_yn: str, api_key: str, secret_key
     :param secret_key: 앱 시크키
     :return:
     """
+    redis = await get_redis()
+    access_data = await redis.hgetall(f"{user_id}_access_token")
+    if access_data:
+        if access_data.get("api_key") == api_key and access_data.get("secret_key") == secret_key:
+            return access_data
+        else:
+            await redis.delete(f"{user_id}_access_token")
+
     path = "oauth2/tokenP"
     if simulation_yn == "Y":
         api_url = get_env("DEV_API_URL")
@@ -40,8 +48,6 @@ async def oauth_token(user_id: str, simulation_yn: str, api_key: str, secret_key
         "simulation_yn": simulation_yn
     }
     # Redis에 토큰 저장 만료기간(expires_in) 설정
-    # await get_redis().set(f"{user_id}_access_token", response.get("access_token"), ex=response.get("expires_in"))
-    redis = await get_redis()
     await redis.hset(f"{user_id}_access_token", mapping=data)
     await redis.expire(f"{user_id}_access_token", response.get("expires_in"))
     return data
