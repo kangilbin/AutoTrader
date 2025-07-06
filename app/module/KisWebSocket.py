@@ -11,34 +11,44 @@ from fastapi import WebSocketDisconnect
 
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
+    logging.info("=== 웹소켓 연결 수락됨 ===")
     
     try:
         # 첫 메시지로 인증 토큰 받기
+        logging.info("=== 인증 메시지 대기 중 ===")
         auth_message = await websocket.receive_json()
+        logging.info("=== 인증 메시지 수신 완료 ===")
         
         if auth_message.get("type") != "auth" or not auth_message.get("token"):
+            logging.error("=== 인증 토큰 누락 ===")
             await websocket.close(code=401, reason="인증 토큰이 필요합니다")
             return
         
         # 토큰 검증
         token_data = verify_token(auth_message.get("token"))
         if not token_data:
+            logging.error("=== 유효하지 않은 토큰 ===")
             await websocket.close(code=401, reason="유효하지 않은 토큰입니다")
             return
         
+        logging.info(f"=== 토큰 검증 성공: user_id={token_data.user_id} ===")
         user_id = token_data.user_id
         redis = await get_redis()
 
         # API 서버 연결 정보 가져오기
         socket_data = await redis.hgetall(f"{user_id}_socket_token")
         if not socket_data or not socket_data.get("url") or not socket_data.get("socket_token"):
+            logging.info("=== API 서버 연결 정보 새로 생성 ===")
             socket_data = await get_approval(user_id)
 
         api_websocket_url = socket_data.get("url")
         socket_token = socket_data.get("socket_token")
+        logging.info(f"=== API 서버 URL: {api_websocket_url} ===")
 
         # API 서버와 연결
+        logging.info("=== API 서버 연결 시도 중 ===")
         api_websocket = await websockets.connect(api_websocket_url)
+        logging.info("=== API 서버 연결 성공 ===")
         
         # 연결 성공 메시지 전송
         await websocket.send_json({
@@ -46,6 +56,7 @@ async def websocket_endpoint(websocket: WebSocket):
             "status": "connected",
             "message": "API 서버와 연결되었습니다."
         })
+        logging.info("=== 클라이언트에 연결 성공 메시지 전송 완료 ===")
 
         # 두 개의 태스크를 동시에 실행: 클라이언트 ↔ API 서버 중계
         client_to_api_task = asyncio.create_task(
@@ -54,74 +65,80 @@ async def websocket_endpoint(websocket: WebSocket):
         api_to_client_task = asyncio.create_task(
             forward_api_to_client(websocket, api_websocket)
         )
+        logging.info("=== 양방향 통신 태스크 시작 ===")
 
         # 두 태스크 중 하나라도 완료되면 종료
-        pending = await asyncio.wait(
+        done, pending = await asyncio.wait(
             [client_to_api_task, api_to_client_task],
             return_when=asyncio.FIRST_COMPLETED
         )
+        
+        # 어떤 태스크가 완료되었는지 확인
+        for task in done:
+            try:
+                task.result()  # 예외가 있다면 여기서 발생
+            except WebSocketDisconnect as e:
+                logging.info(f"=== 웹소켓 연결 종료: {e.code} - {e.reason} ===")
+            except Exception as e:
+                logging.error(f"=== 태스크 실행 중 예외 발생: {e} ===")
 
         # 남은 태스크들 취소
         for task in pending:
             task.cancel()
+            logging.info("=== 남은 태스크 취소됨 ===")
 
+    except WebSocketDisconnect as e:
+        logging.info(f"=== 웹소켓 연결 종료: {e.code} - {e.reason} ===")
     except Exception as e:
-        logging.error(f"WebSocket Error: {e}")
+        logging.error(f"=== 웹소켓 엔드포인트 오류: {e} ===")
         await websocket.close(code=1000, reason=str(e))
     finally:
+        logging.info("=== 웹소켓 엔드포인트 정리 중 ===")
         if 'api_websocket' in locals():
             await api_websocket.close()
+            logging.info("=== API 서버 연결 종료 ===")
 
 
 async def forward_client_to_api(client_websocket: WebSocket, api_websocket, socket_token: str):
     """클라이언트에서 API 서버로 메시지 전달"""
-    message_count = 0
     try:
         while True:
-            message_count += 1
-            # 클라이언트 메시지 수신
-            logging.info(f"=== 메시지 #{message_count} 수신 대기 중 ===")
             data = await client_websocket.receive_json()
-            logging.info(f"=== 메시지 #{message_count} 수신 완료: {data} ===")
             
             # 데이터 검증
             if not validate_message_data(data):
-                logging.warning(f"=== 메시지 #{message_count} 유효하지 않음: {data} ===")
                 continue
             
             # API 서버로 메시지 전달
             formatted_message = send_message(data, socket_token)
-            logging.info(f"=== 메시지 #{message_count} API 서버 전송 시작: {formatted_message[:100]}... ===")
             await api_websocket.send(formatted_message)
-            logging.info(f"=== 메시지 #{message_count} API 서버 전송 완료 ===")
             
     except WebSocketDisconnect:
-        # 정상적인 연결 종료
         logging.info("클라이언트 웹소켓 연결이 종료되었습니다.")
         raise
     except Exception as e:
         logging.error(f"Client to API forwarding error: {e}")
-        logging.error(f"API websocket state: {api_websocket.state}")
         raise
 
 
 async def forward_api_to_client(client_websocket: WebSocket, api_websocket):
     """API 서버에서 클라이언트로 메시지 전달"""
+    response_count = 0
     try:
         while True:
+            response_count += 1
+            
             # API 서버 응답 수신
             response = await api_websocket.recv()
-            
+                
             # 클라이언트로 전달
             await client_websocket.send_text(response)
             
     except WebSocketDisconnect:
-        # 정상적인 연결 종료
         logging.info("클라이언트 웹소켓 연결이 종료되었습니다.")
         raise
     except Exception as e:
         logging.error(f"API to Client forwarding error: {e}")
-        logging.error(f"API websocket state: {api_websocket.state}")
         raise
 
 
@@ -152,6 +169,18 @@ def send_message(data: dict, socket_token: str):
     if not all([tr_type, tr_id, stockcode]):
         raise ValueError("필수 필드가 비어있습니다")
     
-    senddata = '{"header":{"approval_key":"' + socket_token + '","custtype":"' + custtype + '","tr_type":"' + tr_type + '","content-type":"utf-8"},"body":{"input":{"tr_id":"' + tr_id + '","tr_key":"' + stockcode + '"}}}'
-    
-    return senddata
+    senddata = {
+        "header": {
+            "approval_key": socket_token,
+            "custtype": custtype,
+            "tr_type": tr_type,
+            "content-type": "utf-8"
+        },
+        "body": {
+            "input": {
+                "tr_id": tr_id,
+                "tr_key": stockcode
+            }
+        }
+    }
+    return json.dumps(senddata)

@@ -1,19 +1,26 @@
 # from base64 import b64decode
-# from Crypto.Cipher import AES
-# from Crypto.Util.Padding import unpad
+# from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+# from cryptography.hazmat.backends import default_backend
+# from cryptography.hazmat.primitives import padding
 
-#
+
 # # AES256 복호화(DECODE)
-# async def aes_cbc_base64_dec(key, iv, cipher_text):
+# def aes_cbc_base64_dec(key, iv, cipher_text):
 #     """
 #     :param key:  str type AES256 secret key value
 #     :param iv: str type AES256 Initialize Vector
 #     :param cipher_text: Base64 encoded AES256 str
 #     :return: Base64-AES256 decodec str
 #     """
-#     cipher = AES.new(key.encode('utf-8'), AES.MODE_CBC, iv.encode('utf-8'))
-#     return bytes.decode(unpad(cipher.decrypt(b64decode(cipher_text)), AES.block_size))
-#
+#     cipher = Cipher(algorithms.AES(key.encode('utf-8')), modes.CBC(iv.encode('utf-8')), backend=default_backend())
+#     decryptor = cipher.decryptor()
+#     decrypted_data = decryptor.update(b64decode(cipher_text)) + decryptor.finalize()
+    
+#     unpadder = padding.PKCS7(128).unpadder()
+#     unpadded_data = unpadder.update(decrypted_data) + unpadder.finalize()
+    
+#     return unpadded_data.decode('utf-8')
+
 #
 # # 주식체결가
 # async def stockspurchase(data_cnt, data):
