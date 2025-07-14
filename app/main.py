@@ -1,7 +1,7 @@
 import logging
 from fastapi import FastAPI, Request, Depends, HTTPException, WebSocket
 from app.api.KISOpenApi import oauth_token
-from app.api.LocalStockApi import get_stock_balance, get_order_cash, get_order_rvsecncl, get_inquire_psbl_rvsecncl_lst
+from app.api.LocalStockApi import get_stock_balance, get_order_cash, get_order_rvsecncl, get_inquire_psbl_rvsecncl_lst, get_inquire_asking_price
 from app.model.schemas.AccountModel import AccountCreate
 from app.model.schemas.AuthModel import AuthCreate
 from app.model.schemas.ModOrderModel import ModOrder
@@ -233,6 +233,12 @@ async def swing_create(swing: SwingCreate, db: Annotated[AsyncSession, Depends(g
     response = await create_swing(db, swing)
     return {"message": "정정 완료", "data": response}
 
+
+# 주식 호가 조회
+@app.get("/asking_price")
+async def asking_price(st_code: str, user_id: Annotated[TokenData, Depends(get_token)]):
+    response = await get_inquire_asking_price(user_id, st_code)
+    return {"message": "주식 호가 조회", "data": response}
 
 # 재무제표
 # import dart_fss as dart

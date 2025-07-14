@@ -57,7 +57,12 @@ async def get_stock_balance(user_id: str):
     user_data, access_data = await user(user_id)
 
     path = "/uapi/domestic-stock/v1/trading/inquire-balance"
-    api_url = f"{access_data.get('api_url')}/{path}"
+    if access_data.get("simulation_yn") == "Y":
+        url = get_env("DEV_API_URL")
+    else:
+        url = get_env("REAL_API_URL")
+
+    api_url = f"{url}/{path}"
 
     if access_data.get("simulation_yn") == "Y":
         # [모의투자]
@@ -98,9 +103,12 @@ async def get_order_cash(user_id: str, order: OrderModel):
     :return:
     """
     user_data, access_data = await user(user_id)
-
+    if access_data.get("simulation_yn") == "Y":
+        url = get_env("DEV_API_URL")
+    else:
+        url = get_env("REAL_API_URL")
     path = "/uapi/domestic-stock/v1/trading/order-cash"
-    api_url = f"{access_data.get('api_url')}/{path}"
+    api_url = f"{url}/{path}"
 
     if order.ORD_DV == "buy":
         if access_data.get("simulation_yn") == "Y":
@@ -204,9 +212,12 @@ async def get_order_rvsecncl(user_id:str, order: ModOrderModel):
     :return:
     """
     user_data, access_data = await user(user_id)
-
+    if access_data.get("simulation_yn") == "Y":
+        url = get_env("DEV_API_URL")
+    else:
+        url = get_env("REAL_API_URL")
     path = "/uapi/domestic-stock/v1/trading/order-rvsecncl"
-    api_url = f"{access_data.get('api_url')}/{path}"
+    api_url = f"{url}/{path}"
     if access_data.get("simulation_yn") == "Y":
         # [모의투자]
         tr_id = "VTTC0803U"
@@ -283,9 +294,13 @@ async def get_inquire_daily_ccld_obj(user_id:str, inqr_strt_dt=None, inqr_end_dt
     :return:
     """
     user_data, access_data = await user(user_id)
+    if access_data.get("simulation_yn") == "Y":
+        url = get_env("DEV_API_URL")
+    else:
+        url = get_env("REAL_API_URL")
 
     path = '/uapi/domestic-stock/v1/trading/inquire-daily-ccld'
-    api_url = f"{access_data.get('api_url')}/{path}"
+    api_url = f"{url}/{path}"
 
     if inqr_strt_dt is None:
         inqr_strt_dt = datetime.today().strftime("%Y%m%d")   # 시작일자 값이 없으면 현재일자
@@ -337,8 +352,13 @@ async def get_target_price(code: str):
     if not access_data:
         access_data = await oauth_token("mgnt", "Y", get_env("API_KEY"), get_env("SECRET_KEY"))
 
+    if access_data.get("simulation_yn") == "Y":
+        url = get_env("DEV_API_URL")
+    else:
+        url = get_env("REAL_API_URL")
+    
     path = 'uapi/domestic-stock/v1/quotations/inquire-daily-price'
-    api_url = f"{access_data.get('api_url')}/{path}"
+    api_url = f"{url}/{path}"
 
     headers = {
         "authorization": f"Bearer {access_data.get('access_token')}",
@@ -372,8 +392,12 @@ async def get_stock_data(user_id: str, code: str, start_date: str, end_date: str
     FID_ORG_ADJ_PRC	수정주가 원주가 가격 여부	String	Y	10	0:수정주가 1:원주가
     """
     user_data, access_data = await user(user_id)
+    if access_data.get("simulation_yn") == "Y":
+        url = get_env("DEV_API_URL")
+    else:
+        url = get_env("REAL_API_URL")
     path = "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice"
-    api_url = f"{access_data.get('api_url')}/{path}"
+    api_url = f"{url}/{path}"
 
     headers = {
         "authorization": f"Bearer {access_data.get('access_token')}",
@@ -390,6 +414,33 @@ async def get_stock_data(user_id: str, code: str, start_date: str, end_date: str
         "FID_INPUT_DATE_2": end_date,
         "FID_PERIOD_DIV_CODE": "D",
         "FID_ORG_ADJ_PRC": "0"
+    }
+
+    return await fetch("GET", api_url, params=params, headers=headers)
+
+async def get_inquire_asking_price(user_id: str, code: str):
+    """"
+    주식호가 조회
+    """
+    user_data, access_data = await user(user_id)
+    path = "/uapi/domestic-stock/v1/quotations/inquire-asking-price-exp-ccn"
+    if access_data.get("simulation_yn") == "Y":
+        url = get_env("DEV_API_URL")
+    else:
+        url = get_env("REAL_API_URL")
+    api_url = f"{url}/{path}"
+
+    headers = {
+        "authorization": f"Bearer {access_data.get('access_token')}",
+        "appkey": access_data.get("api_key"),
+        "appsecret": access_data.get("secret_key"),
+        "tr_id": "FHKST01010200",
+        "custtype": "P",
+    }
+
+    params = {
+        "FID_COND_MRKT_DIV_CODE": "J",
+        "FID_INPUT_ISCD": code,
     }
 
     return await fetch("GET", api_url, params=params, headers=headers)
