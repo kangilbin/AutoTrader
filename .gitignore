@@ -6,3 +6,4 @@ test_main.py
 __pycache__/
 *.pyc
 auto_trader.egg-info/
+app/batch/AutoSwingBatch.py

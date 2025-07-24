@@ -15,7 +15,7 @@ async def select_user(db: AsyncSession, user_id: str):
     db_user = result.scalars().first()
     if not db_user:
         return None
-    return UserResponse.from_orm(db_user).to_dict()
+    return UserResponse.model_validate(db_user).model_dump()
 
 
 # 사용자 생성
@@ -31,7 +31,7 @@ async def insert_user(db: AsyncSession, user_data: UserCreate):
         raise
 
     await db.refresh(db_user)  # 새로 추가된 사용자 객체 리프레시
-    return UserResponse.from_orm(db_user).to_dict()
+    return UserResponse.model_validate(db_user).model_dump()
 
 
 # 사용자 업데이트

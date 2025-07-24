@@ -21,7 +21,7 @@ async def insert_swing(db: AsyncSession, swing_data: SwingCreate):
         await db.rollback()
         logging.error(f"Database error occurred: {e}", exc_info=True)
         raise
-    return SwingResponse.from_orm(swing_info)
+    return SwingResponse.model_validate(swing_info).model_dump()
 
 
 # 스윙 조회

@@ -26,7 +26,7 @@ async def select_stock(db: AsyncSession, code: str) -> StockResponse:
     except SQLAlchemyError as e:
         logging.error(f"Database error occurred: {e}", exc_info=True)
         raise
-    return StockResponse.from_orm(db_user)
+    return StockResponse.model_validate(db_user).model_dump()
 
 
 # 종목 update

@@ -17,7 +17,7 @@ async def select_auth(db: AsyncSession, user_id: str, auth_id: str):
     except SQLAlchemyError as e:
         logging.error(f"Database error occurred: {e}", exc_info=True)
         raise
-    return AuthResponse.from_orm(db_auth).dict()
+    return AuthResponse.model_validate(db_auth).model_dump()
 
 
 # Auth key 조회(list)
@@ -41,7 +41,7 @@ async def insert_auth(db: AsyncSession, auth_data: AuthCreate,) :
         raise e
 
     await db.refresh(db_auth)
-    return AuthResponse.from_orm(db_auth).dict()
+    return AuthResponse.model_validate(db_auth).model_dump()
 
 
 # Auth key 업데이트
