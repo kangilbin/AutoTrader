@@ -93,11 +93,10 @@ class Swing(Base):
     """
     __tablename__ = "SWING_TRADE"
 
-    SWING_ID = Column(Integer, Sequence('swing_id_seq'), primary_key=True, comment='스윙 ID')
+    ST_CODE = Column(String(50), nullable=False, primary_key=True, comment='주식 단축 코드')
     USER_ID = Column(String(50), nullable=False, primary_key=True, comment='사용자 ID')
     ACCOUNT_NO = Column(String(50), nullable=False, primary_key=True, comment='계좌 번호')
-    ST_CODE = Column(String(50), nullable=False, comment='주식 단축 코드')
-    USE_YN = Column(CHAR(1), nullable=False, comment='사용 여부')
+    USE_YN = Column(CHAR(1), nullable=False, default='Y', comment='사용 여부')
     SWING_AMOUNT = Column(DECIMAL(15, 2), nullable=False, comment='초기 투자금')
     SWING_TYPE = Column(CHAR(1), nullable=False, comment='스윙 타입 (D: 일봉, M: 분봉)')
     SHORT_TERM = Column(Integer, nullable=False, comment='단기 이평선')
@@ -105,7 +104,7 @@ class Swing(Base):
     LONG_TERM = Column(Integer, nullable=False, comment='장기 이평선')
     BUY_RATIO = Column(Integer, nullable=False, comment='매수 비율')
     SELL_RATIO = Column(Integer, nullable=False, comment='매도 비율')
-    CROSS_TYPE = Column(CHAR(1), nullable=False, comment='크로스 타입 (R: 추세 반전, S: 강한 추세)')
+    # CROSS_TYPE = Column(CHAR(1), nullable=False, comment='크로스 타입 (R: 추세 반전, S: 강한 추세)')
     REG_DT = Column(DateTime, default=datetime.now(KST), nullable=False, comment='등록일')
     MOD_DT = Column(DateTime, comment='수정일')
 
