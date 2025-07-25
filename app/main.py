@@ -104,9 +104,6 @@ async def check_id(user_id: str, db: Annotated[AsyncSession, Depends(get_db)]):
 
 
 
-
-
-
 # 리프레시 토큰을 이용해 새로운 액세스 토큰 발급
 @app.post("/refresh")
 async def refresh(request: Request):
@@ -197,11 +194,6 @@ async def stock(query: str, db: Annotated[AsyncSession, Depends(get_db)]):
     stock_info = await get_stock_initial(db, query)
     return {"message": "종목 코드 조회", "data": stock_info}
 
-# 주식 현재가/호가
-@app.websocket("/kis_socket")
-async def kis_websocket(websocket: WebSocket):
-    await websocket_endpoint(websocket)
-
 
 # 주식 매매 or 매도
 @app.post("/order")
@@ -235,7 +227,7 @@ async def swing_create(swing: SwingCreate, db: Annotated[AsyncSession, Depends(g
 
 
 # 주식 호가 조회
-@app.get("/asking_price")
+@app.get("/stock/price")
 async def asking_price(st_code: str, user_id: Annotated[TokenData, Depends(get_token)]):
     response = await get_inquire_asking_price(user_id, st_code)
     return {"message": "주식 호가 조회", "data": response}
