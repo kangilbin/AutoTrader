@@ -16,7 +16,7 @@ async def get_stock_info(db: AsyncSession, stock_code: str) -> StockResponse:
 
 # 종목 수정
 async def mod_stock(db: AsyncSession, stock_data: StockCreate):
-    stock_data.MOD_DT = datetime.now()
+    stock_data.MOD_DT = datetime.now(datetime.UTC)
     return await update_stock(db, stock_data)
 
 

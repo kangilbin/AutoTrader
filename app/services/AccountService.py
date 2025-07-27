@@ -24,7 +24,7 @@ async def get_account(db: AsyncSession, account_id: str, user_id: str):
 
 # 계좌 수정
 async def mod_account(db: AsyncSession, account_data: AccountCreate, account_id: str):
-    account_data.MOD_DT = datetime.now()
+    account_data.MOD_DT = datetime.now(datetime.UTC)
     await update_account(db, account_data, account_id)
 
 

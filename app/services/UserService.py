@@ -24,11 +24,9 @@ async def login_user(db, user_id: str, user_pw: str):
     
 
     # 리프레시 토큰 만료 시간 설정
-    expire = datetime.now() + timedelta(days=settings.refresh_token_expire_days)
-    
     redis = await get_redis()
     await redis.hset(user_id, mapping={refresh_token: refresh_token, "USER_NAME": user_info["USER_NAME"], "PHONE": user_info["PHONE"]})
-    await redis.expire(user_id, int(expire.timestamp()))  # 남은 시간을 초로 계산
+    await redis.expire(user_id, settings.token_refresh_exp)
 
     return access_token, refresh_token
 
@@ -38,7 +36,7 @@ async def duplicate_user(db: AsyncSession, user_id: str):
 
 
 async def mod_user(db: AsyncSession, user_data: UserCreate):
-    user_data.MOD_DT = datetime.now()
+    user_data.MOD_DT = datetime.now(datetime.UTC)
     await update_user(db, user_data)
 
 
@@ -54,10 +52,10 @@ async def token_refresh(refresh_token: str):
     
     user_id = token_data.user_id
     redis = await get_redis()
-    user_info = await redis.hget(user_id)
+    user_info = await redis.hgetall(user_id)
     
     # 새로운 액세스 토큰 발급
-    access_token = create_access_token(subject=user_id, user_claims={user_info.get("USER_NAME"), user_info.get("PHONE")})
+    access_token = create_access_token(user_id, user_info={"USER_NAME": user_info.get("USER_NAME"), "PHONE": user_info.get("PHONE")})
 
     return access_token
 

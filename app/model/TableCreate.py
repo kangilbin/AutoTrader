@@ -1,10 +1,9 @@
 from sqlalchemy.orm import declarative_base
 from sqlalchemy import Integer, Sequence, CHAR, Column, String, DateTime, Index, DECIMAL
 from datetime import datetime
-
+from app.prop.constants import KST
 
 Base = declarative_base()
-
 
 class User(Base):
     """"
@@ -16,7 +15,7 @@ class User(Base):
     USER_NAME = Column(String(50), nullable=False, comment='사용자 이름')
     PHONE = Column(CHAR(11), nullable=False, comment='휴대폰 번호')
     PASSWORD = Column(String(100), nullable=False, comment='비밀 번호')
-    REG_DT = Column(DateTime, default=datetime.now, nullable=False, comment='등록일')
+    REG_DT = Column(DateTime, default=datetime.now(KST), nullable=False, comment='등록일')
     MOD_DT = Column(DateTime, comment='수정일')
 
 
@@ -30,7 +29,7 @@ class Account(Base):
     USER_ID = Column(String(50), nullable=False, primary_key=True, comment='사용자 ID')
     ACCOUNT_NO = Column(String(10), nullable=False, comment='계좌 번호')
     AUTH_ID = Column(Integer, nullable=False, comment='권한 ID')
-    REG_DT = Column(DateTime, default=datetime.now, nullable=False, comment='등록일')
+    REG_DT = Column(DateTime, default=datetime.now(KST), nullable=False, comment='등록일')
     MOD_DT = Column(DateTime, comment='수정일')
 
 
@@ -46,7 +45,7 @@ class Auth(Base):
     SIMULATION_YN = Column(CHAR(1), default='N', nullable=False, comment='모의 투자 여부(Y: 모의투자, N: 실전투자)')
     API_KEY = Column(String(200), nullable=False, comment='앱키 키')
     SECRET_KEY = Column(String(350), nullable=False, comment='시크릿 키')
-    REG_DT = Column(DateTime, default=datetime.now, nullable=False, comment='등록일')
+    REG_DT = Column(DateTime, default=datetime.now(KST), nullable=False, comment='등록일')
     MOD_DT = Column(DateTime, comment='수정일')
 
 
@@ -61,7 +60,7 @@ class Stock(Base):
     NAME = Column(String(100), nullable=False, comment='종목명', index=True)
     DATA_YN = Column(CHAR(1), nullable=False, default='N', comment='데이터 적재 여부', index=True)
     DEL_YN = Column(CHAR(1), nullable=False, default='N', comment='상장 폐지 여부')
-    REG_DT = Column(DateTime, default=datetime.now, nullable=False, comment='등록일')
+    REG_DT = Column(DateTime, default=datetime.now(KST), nullable=False, comment='등록일')
     MOD_DT = Column(DateTime, comment='수정일')
 
     __table_args__ = (
@@ -83,7 +82,7 @@ class StockHstr(Base):
     STCK_LWPR = Column(DECIMAL(15, 2), nullable=False, comment='주식 최저가')
     STCK_CLPR = Column(DECIMAL(15, 2), nullable=False, comment='주식 종가')
     ACML_VOL = Column(Integer, nullable=False, comment='누적 거래량')
-    REG_DT = Column(DateTime, default=datetime.now, nullable=False, comment='등록일')
+    REG_DT = Column(DateTime, default=datetime.now(KST), nullable=False, comment='등록일')
     MOD_DT = Column(DateTime, comment='수정일')
 
 
@@ -107,7 +106,7 @@ class Swing(Base):
     BUY_RATIO = Column(Integer, nullable=False, comment='매수 비율')
     SELL_RATIO = Column(Integer, nullable=False, comment='매도 비율')
     CROSS_TYPE = Column(CHAR(1), nullable=False, comment='크로스 타입 (R: 추세 반전, S: 강한 추세)')
-    REG_DT = Column(DateTime, default=datetime.now, nullable=False, comment='등록일')
+    REG_DT = Column(DateTime, default=datetime.now(KST), nullable=False, comment='등록일')
     MOD_DT = Column(DateTime, comment='수정일')
 
 
@@ -124,5 +123,5 @@ class TradeHistory(Base):
     TRADE_PRICE = Column(DECIMAL(15, 2), nullable=False, comment='거래 가격')
     TRADE_QTY = Column(Integer, nullable=False, comment='거래 수량')
     TRADE_AMOUNT = Column(DECIMAL(15, 2), nullable=False, comment='거래 금액')
-    REG_DT = Column(DateTime, default=datetime.now, nullable=False, comment='등록일')
+    REG_DT = Column(DateTime, default=datetime.now(KST), nullable=False, comment='등록일')
 

@@ -29,7 +29,7 @@ async def create_swing(db: AsyncSession, swing_data: SwingCreate):
 
 # 스윙 전략 수정
 async def mod_swing(db: AsyncSession, swing_data: SwingCreate):
-    swing_data.MOD_DT = datetime.datetime.now()
+    swing_data.MOD_DT = datetime.datetime.now(datetime.UTC)
     return await update_swing(db, swing_data)
 
 

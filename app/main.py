@@ -19,7 +19,7 @@ from app.services.StockService import get_stock_initial
 from app.services.SwingService import create_swing
 from app.services.UserService import create_user, login_user, token_refresh, duplicate_user
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.module.JwtUtils import verify_token, get_token, TokenData
+from app.module.JwtUtils import get_token, TokenData
 from fastapi.security import OAuth2PasswordBearer
 from typing import Annotated
 
@@ -172,7 +172,7 @@ async def account(account_id: str, db: Annotated[AsyncSession, Depends(get_db)],
 
 # 계좌 삭제
 @app.delete("/account/{account_id}")
-async def account(account_id: str):
+async def account(account_id: str, db: Annotated[AsyncSession, Depends(get_db)], user_id: Annotated[TokenData, Depends(get_token)]):
     await remove_account(db, account_id)
     return {"message": "계좌 삭제 성공"}
 
@@ -193,8 +193,8 @@ async def stock_balance(db: Annotated[AsyncSession, Depends(get_db)], user_id: A
 
 # 종목 코드 조회
 @app.get("/stock")
-async def stock(name: str, db: Annotated[AsyncSession, Depends(get_db)]):
-    stock_info = await get_stock_initial(db, name)
+async def stock(query: str, db: Annotated[AsyncSession, Depends(get_db)]):
+    stock_info = await get_stock_initial(db, query)
     return {"message": "종목 코드 조회", "data": stock_info}
 
 # 주식 현재가/호가

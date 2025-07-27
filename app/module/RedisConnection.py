@@ -1,6 +1,6 @@
 import redis.asyncio as aioredis
 from typing import Optional
-import os
+from app.module.Config import get_env
 
 
 class Redis:
@@ -10,8 +10,13 @@ class Redis:
     async def connect(cls) -> aioredis.Redis:
         """Redis 커넥션을 싱글톤으로 초기화하고 반환"""
         if cls._instance is None:
-            redis_url = os.getenv("REDIS_URL")
-            cls._instance = await aioredis.from_url(redis_url, decode_responses=True)
+            redis_url = get_env("REDIS_URL")
+            redis_password = get_env("REDIS_PASSWORD")
+            cls._instance = await aioredis.from_url(
+                redis_url,
+                password=redis_password,
+                decode_responses=True
+            )
             await cls._instance.ping()  # 연결 테스트
         return cls._instance
 
