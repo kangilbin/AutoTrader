@@ -416,7 +416,36 @@ async def get_stock_data(user_id: str, code: str, start_date: str, end_date: str
         "FID_ORG_ADJ_PRC": "0"
     }
 
-    return await fetch("GET", api_url, params=params, headers=headers)
+    response = await fetch("GET", api_url, params=params, headers=headers)
+    
+    # API 응답 데이터의 키를 대문자로 변경하고 st_code 추가
+    if response and "output2" in response:
+        for item in response["output2"]:
+            # 필요한 컬럼만 필터링하여 대문자로 변경
+            converted_item = {}
+            
+            # 테이블에 있는 컬럼만 매핑
+            column_mapping = {
+                'stck_oprc': 'STCK_OPRC',
+                'stck_hgpr': 'STCK_HGPR', 
+                'stck_lwpr': 'STCK_LWPR',
+                'stck_clpr': 'STCK_CLPR',
+                'acml_vol': 'ACML_VOL',
+                'stck_bsop_date': 'STCK_BSOP_DATE'
+            }
+            
+            for api_key, db_key in column_mapping.items():
+                if api_key in item:
+                    converted_item[db_key] = item[api_key]
+            
+            # st_code 추가
+            converted_item["ST_CODE"] = code
+            
+            # 원본 아이템을 변환된 아이템으로 교체
+            item.clear()
+            item.update(converted_item)
+    
+    return response
 
 async def get_inquire_asking_price(user_id: str, code: str):
     """"
