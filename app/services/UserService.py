@@ -52,7 +52,11 @@ async def token_refresh(refresh_token: str):
     
     user_id = token_data.user_id
     redis = await get_redis()
+    
+    # Redis에서 저장된 사용자 정보를 한 번에 가져와서 검증
     user_info = await redis.hgetall(user_id)
+    if not user_info or user_info.get(refresh_token) != refresh_token:
+        raise HTTPException(status_code=401, detail="유효하지 않은 리프레시 토큰입니다.")
     
     # 새로운 액세스 토큰 발급
     access_token = create_access_token(user_id, user_info={"USER_NAME": user_info.get("USER_NAME"), "PHONE": user_info.get("PHONE")})
