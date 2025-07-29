@@ -4,7 +4,7 @@ from app.crud.UserCrud import insert_user, select_user, update_user, delete_user
 from app.model.schemas.UserModel import UserCreate, UserResponse
 from app.module.HashCrypto import hash_password, check_password
 from app.module.RedisConnection import get_redis
-from datetime import datetime, timedelta
+from datetime import datetime
 from app.module.JwtUtils import create_access_token, create_refresh_token, verify_token, settings
 
 async def create_user(db: AsyncSession, user_data: UserCreate) -> UserResponse:
@@ -25,7 +25,7 @@ async def login_user(db, user_id: str, user_pw: str):
 
     # 리프레시 토큰 만료 시간 설정
     redis = await get_redis()
-    await redis.hset(user_id, mapping={refresh_token: refresh_token, "USER_NAME": user_info["USER_NAME"], "PHONE": user_info["PHONE"]})
+    await redis.hset(user_id, mapping={"refresh_token": refresh_token, "USER_NAME": user_info["USER_NAME"], "PHONE": user_info["PHONE"]})
     await redis.expire(user_id, settings.token_refresh_exp)
 
     return access_token, refresh_token

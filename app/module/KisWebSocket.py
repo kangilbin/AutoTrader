@@ -3,18 +3,34 @@ import logging
 from fastapi import WebSocket
 from app.api.KISOpenApi import get_approval
 from app.module.RedisConnection import get_redis
+from app.module.JwtUtils import verify_token
 import websockets
 
 connected_clients = {}
 
 
-async def websocket_endpoint(websocket: WebSocket, user_id: str):
+async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
-    redis = await get_redis()
-
-    connected_clients[user_id] = websocket  # 연결된 클라이언트 저장
-
+    
     try:
+        # 첫 메시지로 인증 토큰 받기
+        auth_message = await websocket.receive_json()
+        
+        if auth_message.get("type") != "auth" or not auth_message.get("token"):
+            await websocket.close(code=401, reason="인증 토큰이 필요합니다")
+            return
+        
+        # 토큰 검증
+        token_data = verify_token(auth_message["token"])
+        if not token_data:
+            await websocket.close(code=401, reason="유효하지 않은 토큰입니다")
+            return
+        
+        user_id = token_data.user_id
+        redis = await get_redis()
+
+        connected_clients[user_id] = websocket  # 연결된 클라이언트 저장
+
         socket_data = await redis.hgetall(f"{user_id}_socket_token")
         if not socket_data or not socket_data.get("url") or not socket_data.get("socket_token"):
             socket_data = await get_approval(user_id)
@@ -35,8 +51,10 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
                 await websocket.send_text(response)
     except Exception as e:
         logging.error(f"Error: {e}")
+        await websocket.close(code=4001, reason=str(e))
     finally:
-        connected_clients.pop(user_id, None)
+        if 'user_id' in locals():
+            connected_clients.pop(user_id, None)
 
 
 # 클라이언트 메시지 포맷

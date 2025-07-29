@@ -27,7 +27,7 @@ async def list_account(db: AsyncSession, user_id: str):
     except SQLAlchemyError as e:
         logging.error(f"Database error occurred: {e}", exc_info=True)
         raise
-    return [AccountResponse.model_validate(row).dict() for row in rows]
+    return [AccountResponse.model_validate(row).model_dump() for row in rows]
 
 
 # 계좌 생성
@@ -41,7 +41,7 @@ async def insert_account(db: AsyncSession, account_data: AccountCreate):
         logging.error(f"Database error occurred: {e}", exc_info=True)
         raise
     await db.refresh(db_account)
-    return AccountResponse.model_validate(db_account).dict()
+    return AccountResponse.model_validate(db_account).model_dump()
 
 
 # 계좌 업데이트

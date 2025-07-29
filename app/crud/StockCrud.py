@@ -15,7 +15,8 @@ async def select_stock_initial(db: AsyncSession, initial: str):
     except SQLAlchemyError as e:
         logging.error(f"Database error occurred: {e}", exc_info=True)
         raise
-    return result.scalars().all()
+    return [StockResponse.model_validate(row).model_dump() for row in result]
+
 
 
 async def select_stock(db: AsyncSession, code: str) -> StockResponse:
@@ -73,5 +74,4 @@ async def select_stock_hstr(db: AsyncSession, code: str, long_term: int):
     except SQLAlchemyError as e:
         logging.error(f"Database error occurred: {e}", exc_info=True)
         raise
-    return result.scalars().all()
-
+    return [StockResponse.model_validate(row).model_dump() for row in result]

@@ -52,21 +52,31 @@ async def oauth_token(user_id: str, simulation_yn: str, api_key: str, secret_key
 # 접속키의 유효기간은 24시간이지만, 접속키는 세션 연결 시 초기 1회만 사용하기 때문에 접속키 인증 후에는 세션종료되지 않는 이상
 # 접속키 신규 발급받지 않으셔도 365일 내내 웹소켓 데이터 수신하실 수 있습니다.
 async def get_approval(user_id: str):
-    user_auth = await get_redis().hgetall(f"{user_id}_access_token")
+    redis = await get_redis()
+    user_auth = await redis.hgetall(f"{user_id}_access_token")
+    
+    if not user_auth:
+        raise HTTPException(status_code=401, detail="사용자 인증 정보가 없습니다.")
+    
     if user_auth.get("simulation_yn") == "Y":
-        socket_url = get_env("REAL_SOCKET_URL")
-    else:
+        url = get_env("DEV_API_URL")
         socket_url = get_env("DEV_SOCKET_URL")
+    else:
+        url = get_env("REAL_API_URL")
+        socket_url = get_env("REAL_SOCKET_URL")
 
     path = "oauth2/Approval"
-    api_url = f"{user_auth.get('url')}/{path}"
+    api_url = f"{url}/{path}"
 
     body = {
         "grant_type": "client_credentials",
         "appkey": user_auth.get('api_key'),
-        "appsecret": user_auth.get('secret_key')
+        "secretkey": user_auth.get('secret_key')
     }
     response = await fetch("POST", api_url, json=body)
+    if not response.get("approval_key") or response.get("approval_key") is None:
+        raise HTTPException(status_code=401, detail=response.get('error_code'))
+    
     data = {
         "socket_token": response.get("approval_key"),
         "url": socket_url
