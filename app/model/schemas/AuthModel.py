@@ -13,6 +13,9 @@ class AuthCreate(BaseModel):
     REG_DT: Optional[datetime] = None
     MOD_DT: Optional[datetime] = None
 
+class AuthChoice(BaseModel):
+    AUTH_ID: Optional[int] = None
+    ACCOUNT_NO: Optional[int] = None
 
 class AuthResponse(AuthCreate):
     model_config = {

@@ -6,6 +6,7 @@ from app.crud.AuthCrud import insert_auth, select_auth, delete_auth, list_auth, 
 from app.model.schemas.AuthModel import AuthCreate, AuthResponse
 from app.module.AESCrypto import encrypt
 from datetime import datetime
+from app.module.RedisConnection import get_redis
 
 
 async def create_auth(db: AsyncSession, auth_data: AuthCreate) -> AuthResponse:
@@ -14,7 +15,10 @@ async def create_auth(db: AsyncSession, auth_data: AuthCreate) -> AuthResponse:
     return await insert_auth(db, auth_data)
 
 
-async def get_auth_key(db: AsyncSession, user_id: str, auth_id: str):
+async def get_auth_key(db: AsyncSession, user_id: str, auth_id: str, account_no: str):
+    redis = await get_redis()
+    await redis.hset(user_id, "ACCOUNT_NO", account_no)
+
     auth_key = select_auth(db, user_id, auth_id)
     auth_key_json = json.loads(auth_key)
     await oauth_token(user_id, auth_key_json.SIMULATION_YN,  auth_key_json.API_KEY, auth_key_json.SECRET_KEY)
