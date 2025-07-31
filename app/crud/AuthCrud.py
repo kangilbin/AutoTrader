@@ -7,17 +7,16 @@ from sqlalchemy.exc import SQLAlchemyError
 
 
 # Auth key 조회
-async def select_auth(db: AsyncSession, user_id: str, auth_id: str):
+async def select_auth(db: AsyncSession, user_id: str, auth_id: int):
     try:
         query = select(Auth).filter(
             and_(Auth.USER_ID == user_id, Auth.AUTH_ID == auth_id)
         )
         result = await db.execute(query)
-        db_auth = result.scalars().first()
     except SQLAlchemyError as e:
         logging.error(f"Database error occurred: {e}", exc_info=True)
         raise
-    return AuthResponse.model_validate(db_auth).model_dump()
+    return AuthResponse.model_validate(result.scalars().first()).model_dump()
 
 
 # Auth key 조회(list)
