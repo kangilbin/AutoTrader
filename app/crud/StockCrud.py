@@ -49,7 +49,7 @@ async def update_stock(db: AsyncSession, stock_data: StockCreate):
         query = (
             update(Stock)
             .filter(Stock.ST_CODE == stock_data.ST_CODE)
-            .values(**stock_data.dict())
+            .values(**stock_data.model_dump())
             .execution_options(synchronize_session=False)
         )
         await db.execute(query)
