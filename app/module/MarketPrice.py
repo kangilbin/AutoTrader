@@ -52,48 +52,106 @@
 
 # 주식 호가
 async def stockhoka(data):
+    """
+    주식 호가 데이터를 딕셔너리 형태로 변환
+    TypeScript StockPriceResponse 타입에 맞춰 구성
+    0|H0STASP0|001|005930^140013^0^66000^66100^66200^66300^66400^66500^66600^66700^66800^66900^65900^65800^65700^65600^65500^65400^65300^65200^65100^65000^28408^123373^53451^107830^76471^84039^45688^52373^61717^49894^74727^111951^100474^132318^158455^81601^117285^105583^122745^208814^683244^1213953^0^0^0^0^211181^-66000^5^-100.00^5531414^-30000^0^0^0^0^65950^4927^2'
+    """
     recvvalue = data.split('^')  # 수신데이터를 split '^'
-
-    # print("유가증권 단축 종목코드 [" + recvvalue[0] + "]")
-    # print("영업시간 [" + recvvalue[1] + "]" + "시간구분코드 [" + recvvalue[2] + "]")
-    # print("======================================")
-    # print("매도호가10 [%s]    잔량10 [%s]" % (recvvalue[12], recvvalue[32]))
-    # print("매도호가09 [%s]    잔량09 [%s]" % (recvvalue[11], recvvalue[31]))
-    # print("매도호가08 [%s]    잔량08 [%s]" % (recvvalue[10], recvvalue[30]))
-    # print("매도호가07 [%s]    잔량07 [%s]" % (recvvalue[9], recvvalue[29]))
-    # print("매도호가06 [%s]    잔량06 [%s]" % (recvvalue[8], recvvalue[28]))
-    # print("매도호가05 [%s]    잔량05 [%s]" % (recvvalue[7], recvvalue[27]))
-    # print("매도호가04 [%s]    잔량04 [%s]" % (recvvalue[6], recvvalue[26]))
-    # print("매도호가03 [%s]    잔량03 [%s]" % (recvvalue[5], recvvalue[25]))
-    # print("매도호가02 [%s]    잔량02 [%s]" % (recvvalue[4], recvvalue[24]))
-    # print("매도호가01 [%s]    잔량01 [%s]" % (recvvalue[3], recvvalue[23]))
-    # print("--------------------------------------")
-    # print("매수호가01 [%s]    잔량01 [%s]" % (recvvalue[13], recvvalue[33]))
-    # print("매수호가02 [%s]    잔량02 [%s]" % (recvvalue[14], recvvalue[34]))
-    # print("매수호가03 [%s]    잔량03 [%s]" % (recvvalue[15], recvvalue[35]))
-    # print("매수호가04 [%s]    잔량04 [%s]" % (recvvalue[16], recvvalue[36]))
-    # print("매수호가05 [%s]    잔량05 [%s]" % (recvvalue[17], recvvalue[37]))
-    # print("매수호가06 [%s]    잔량06 [%s]" % (recvvalue[18], recvvalue[38]))
-    # print("매수호가07 [%s]    잔량07 [%s]" % (recvvalue[19], recvvalue[39]))
-    # print("매수호가08 [%s]    잔량08 [%s]" % (recvvalue[20], recvvalue[40]))
-    # print("매수호가09 [%s]    잔량09 [%s]" % (recvvalue[21], recvvalue[41]))
-    # print("매수호가10 [%s]    잔량10 [%s]" % (recvvalue[22], recvvalue[42]))
-    # print("======================================")
-    # print("총매도호가 잔량        [%s]" % (recvvalue[43]))
-    # print("총매도호가 잔량 증감   [%s]" % (recvvalue[54]))
-    # print("총매수호가 잔량        [%s]" % (recvvalue[44]))
-    # print("총매수호가 잔량 증감   [%s]" % (recvvalue[55]))
-    # print("시간외 총매도호가 잔량 [%s]" % (recvvalue[45]))
-    # print("시간외 총매수호가 증감 [%s]" % (recvvalue[46]))
-    # print("시간외 총매도호가 잔량 [%s]" % (recvvalue[56]))
-    # print("시간외 총매수호가 증감 [%s]" % (recvvalue[57]))
-    # print("예상 체결가            [%s]" % (recvvalue[47]))
-    # print("예상 체결량            [%s]" % (recvvalue[48]))
-    # print("예상 거래량            [%s]" % (recvvalue[49]))
-    # print("예상체결 대비          [%s]" % (recvvalue[50]))
-    # print("부호                   [%s]" % (recvvalue[51]))
-    # print("예상체결 전일대비율    [%s]" % (recvvalue[52]))
-    # print("누적거래량             [%s]" % (recvvalue[53]))
-    # print("주식매매 구분코드      [%s]" % (recvvalue[58]))
-
-    return recvvalue
+    
+    # output1 구성 (호가 정보)
+    output1 = {
+        "aspr_acpt_hour": recvvalue[1],  # 호가 접수 시간
+        
+        # 매도호가 1~10 (역순으로 저장됨)
+        "askp1": recvvalue[3],
+        "askp2": recvvalue[4], 
+        "askp3": recvvalue[5],
+        "askp4": recvvalue[6],
+        "askp5": recvvalue[7],
+        "askp6": recvvalue[8],
+        "askp7": recvvalue[9],
+        "askp8": recvvalue[10],
+        "askp9": recvvalue[11],
+        "askp10": recvvalue[12],
+        
+        # 매수호가 1~10
+        "bidp1": recvvalue[13],
+        "bidp2": recvvalue[14],
+        "bidp3": recvvalue[15],
+        "bidp4": recvvalue[16],
+        "bidp5": recvvalue[17],
+        "bidp6": recvvalue[18],
+        "bidp7": recvvalue[19],
+        "bidp8": recvvalue[20],
+        "bidp9": recvvalue[21],
+        "bidp10": recvvalue[22],
+        
+        # 매도호가 잔량 1~10 (역순으로 저장됨)
+        "askp_rsqn1": recvvalue[23],
+        "askp_rsqn2": recvvalue[24],
+        "askp_rsqn3": recvvalue[25],
+        "askp_rsqn4": recvvalue[26],
+        "askp_rsqn5": recvvalue[27],
+        "askp_rsqn6": recvvalue[28],
+        "askp_rsqn7": recvvalue[29],
+        "askp_rsqn8": recvvalue[30],
+        "askp_rsqn9": recvvalue[31],
+        "askp_rsqn10": recvvalue[32],
+        
+        # 매수호가 잔량 1~10
+        "bidp_rsqn1": recvvalue[33],
+        "bidp_rsqn2": recvvalue[34],
+        "bidp_rsqn3": recvvalue[35],
+        "bidp_rsqn4": recvvalue[36],
+        "bidp_rsqn5": recvvalue[37],
+        "bidp_rsqn6": recvvalue[38],
+        "bidp_rsqn7": recvvalue[39],
+        "bidp_rsqn8": recvvalue[40],
+        "bidp_rsqn9": recvvalue[41],
+        "bidp_rsqn10": recvvalue[42],
+        
+        # 총 잔량 및 증감
+        "total_askp_rsqn": recvvalue[43],      # 총 매도호가 잔량
+        "total_bidp_rsqn": recvvalue[44],      # 총 매수호가 잔량
+        "total_askp_rsqn_icdc": recvvalue[54], # 총 매도호가 잔량 증감
+        "total_bidp_rsqn_icdc": recvvalue[55], # 총 매수호가 잔량 증감
+        
+        # 시간외 관련
+        "ovtm_total_askp_icdc": recvvalue[45], # 시간외 총 매도호가 증감
+        "ovtm_total_bidp_icdc": recvvalue[46], # 시간외 총 매수호가 증감
+        "ovtm_total_askp_rsqn": recvvalue[56], # 시간외 총 매도호가 잔량
+        "ovtm_total_bidp_rsqn": recvvalue[57], # 시간외 총 매수호가 잔량
+        
+        # 기타
+        "ntby_aspr_rsqn": recvvalue[79],       # 순매수 호가 잔량
+        "new_mkop_cls_code": recvvalue[58]     # 신 장운영 구분 코드
+    }
+    
+    # output2 구성 (가격 정보)
+    output2 = {
+        "antc_mkop_cls_code": recvvalue[2],    # 예상 장운영 구분 코드
+        "stck_prpr": recvvalue[80],            # 주식 현재가
+        "stck_oprc": recvvalue[81],            # 주식 시가
+        "stck_hgpr": recvvalue[82],            # 주식 최고가
+        "stck_lwpr": recvvalue[83],            # 주식 최저가
+        "stck_sdpr": recvvalue[84],            # 주식 기준가
+        "antc_cnpr": recvvalue[47],            # 예상 체결가
+        "antc_cntg_vrss_sign": recvvalue[51],  # 예상 체결 대비 부호
+        "antc_cntg_vrss": recvvalue[50],       # 예상 체결 대비
+        "antc_cntg_prdy_ctrt": recvvalue[52],  # 예상 체결 전일 대비율
+        "antc_vol": recvvalue[49],             # 예상 거래량
+        "stck_shrn_iscd": recvvalue[0],        # 주식 단축 종목코드
+        "vi_cls_code": recvvalue[85]           # VI적용구분코드
+    }
+    
+    # 최종 응답 구조
+    response = {
+        "rt_cd": "0",  # 성공 시 "0"
+        "msg_cd": "MCA00000",  # 성공 시 "MCA00000"
+        "msg1": "정상처리 되었습니다",
+        "output1": output1,
+        "output2": output2
+    }
+    
+    return response
