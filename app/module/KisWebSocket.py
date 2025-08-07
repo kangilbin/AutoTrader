@@ -7,6 +7,12 @@ from app.module.RedisConnection import get_redis
 from app.module.JwtUtils import verify_token
 import websockets
 from fastapi import WebSocketDisconnect
+from app.module.MarketPrice import stockhoka
+
+# 웹소켓 관련 로그 레벨 설정
+logging.getLogger('websockets').setLevel(logging.INFO)
+logging.getLogger('websockets.client').setLevel(logging.INFO)
+logging.getLogger('websockets.server').setLevel(logging.INFO)
 
 
 async def websocket_endpoint(websocket: WebSocket):
@@ -15,9 +21,7 @@ async def websocket_endpoint(websocket: WebSocket):
     
     try:
         # 첫 메시지로 인증 토큰 받기
-        logging.info("=== 인증 메시지 대기 중 ===")
         auth_message = await websocket.receive_json()
-        logging.info("=== 인증 메시지 수신 완료 ===")
         
         if auth_message.get("type") != "auth" or not auth_message.get("token"):
             logging.error("=== 인증 토큰 누락 ===")
@@ -38,17 +42,13 @@ async def websocket_endpoint(websocket: WebSocket):
         # API 서버 연결 정보 가져오기
         socket_data = await redis.hgetall(f"{user_id}_socket_token")
         if not socket_data or not socket_data.get("url") or not socket_data.get("socket_token"):
-            logging.info("=== API 서버 연결 정보 새로 생성 ===")
             socket_data = await get_approval(user_id)
 
         api_websocket_url = socket_data.get("url")
         socket_token = socket_data.get("socket_token")
-        logging.info(f"=== API 서버 URL: {api_websocket_url} ===")
 
         # API 서버와 연결
-        logging.info("=== API 서버 연결 시도 중 ===")
         api_websocket = await websockets.connect(api_websocket_url)
-        logging.info("=== API 서버 연결 성공 ===")
         
         # 연결 성공 메시지 전송
         await websocket.send_json({
@@ -56,7 +56,6 @@ async def websocket_endpoint(websocket: WebSocket):
             "status": "connected",
             "message": "API 서버와 연결되었습니다."
         })
-        logging.info("=== 클라이언트에 연결 성공 메시지 전송 완료 ===")
 
         # 두 개의 태스크를 동시에 실행: 클라이언트 ↔ API 서버 중계
         client_to_api_task = asyncio.create_task(
@@ -65,7 +64,6 @@ async def websocket_endpoint(websocket: WebSocket):
         api_to_client_task = asyncio.create_task(
             forward_api_to_client(websocket, api_websocket)
         )
-        logging.info("=== 양방향 통신 태스크 시작 ===")
 
         # 두 태스크 중 하나라도 완료되면 종료
         done, pending = await asyncio.wait(
@@ -114,7 +112,6 @@ async def forward_client_to_api(client_websocket: WebSocket, api_websocket, sock
             await api_websocket.send(formatted_message)
             
     except WebSocketDisconnect:
-        logging.info("클라이언트 웹소켓 연결이 종료되었습니다.")
         raise
     except Exception as e:
         logging.error(f"Client to API forwarding error: {e}")
@@ -123,19 +120,28 @@ async def forward_client_to_api(client_websocket: WebSocket, api_websocket, sock
 
 async def forward_api_to_client(client_websocket: WebSocket, api_websocket):
     """API 서버에서 클라이언트로 메시지 전달"""
-    response_count = 0
     try:
         while True:
-            response_count += 1
-            
             # API 서버 응답 수신
             response = await api_websocket.recv()
-                
-            # 클라이언트로 전달
-            await client_websocket.send_text(response)
+            
+            # 응답 데이터 처리
+            try:
+                # 응답이 H0STASP0 (주식 호가) 형태인지 확인
+                if response.startswith("0|H0STASP0|"):
+                    # stockhoka 함수로 데이터 변환
+                    
+                    processed_data = await stockhoka(response)
+                    await client_websocket.send_json(processed_data)
+                else:
+                    # 다른 형태의 응답은 그대로 전달
+                    await client_websocket.send_text(response)
+            except Exception as e:
+                logging.error(f"응답 데이터 처리 오류: {e}")
+                # 오류 발생 시 원본 데이터 전달
+                await client_websocket.send_text(response)
             
     except WebSocketDisconnect:
-        logging.info("클라이언트 웹소켓 연결이 종료되었습니다.")
         raise
     except Exception as e:
         logging.error(f"API to Client forwarding error: {e}")
@@ -148,11 +154,9 @@ def validate_message_data(data: dict) -> bool:
     
     for field in required_fields:
         if field not in data:
-            logging.error(f"필수 필드 누락: {field}")
             return False
         
         if not data[field] or data[field] == "" or data[field] is None:
-            logging.error(f"필드 값이 비어있음: {field} = {data[field]}")
             return False
     
     return True
