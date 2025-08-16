@@ -10,10 +10,10 @@ import logging
 async def insert_swing(db: AsyncSession, swing_data: SwingCreate):
     try:
         # 새로운 사용자 객체 생성
-        swing_info = Swing(ACCOUNT_NO=swing_data.ACCOUNT_NO, USER_ID=swing_data.USER_ID, ST_CODE=swing_data.ST_CODE, USE_YN=swing_data.USE_YN,
+        swing_info = Swing(ACCOUNT_NO=swing_data.ACCOUNT_NO, USER_ID=swing_data.USER_ID, ST_CODE=swing_data.ST_CODE,
                         SWING_AMOUNT=swing_data.SWING_AMOUNT, SWING_TYPE=swing_data.SWING_TYPE, SHORT_TERM=swing_data.SHORT_TERM,
                         MEDIUM_TERM=swing_data.MEDIUM_TERM, LONG_TERM=swing_data.LONG_TERM, BUY_RATIO=swing_data.BUY_RATIO,
-                        SELL_RATIO=swing_data.SELL_RATIO, CROSS_TYPE=swing_data.CROSS_TYPE)
+                        SELL_RATIO=swing_data.SELL_RATIO)
         db.add(swing_info)
         await db.commit()
         await db.refresh(swing_info)
