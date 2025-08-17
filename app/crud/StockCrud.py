@@ -5,7 +5,7 @@ from app.model.schemas.StockModel import StockResponse, StockCreate
 from sqlalchemy.exc import SQLAlchemyError
 from typing import List
 import logging
-
+from sqlalchemy.dialects.mysql import insert as mysql_insert
 
 # 초성 검색
 async def select_stock_initial(db: AsyncSession, initial: str):
@@ -44,12 +44,12 @@ async def select_stock(db: AsyncSession, code: str) -> StockResponse:
 
 
 # 종목 update
-async def update_stock(db: AsyncSession, stock_data: StockCreate):
+async def update_stock(db: AsyncSession, stock_data: dict):
     try:
         query = (
             update(Stock)
-            .filter(Stock.ST_CODE == stock_data.ST_CODE)
-            .values(**stock_data.model_dump())
+            .filter(Stock.ST_CODE == stock_data['ST_CODE'])
+            .values(**stock_data)
             .execution_options(synchronize_session=False)
         )
         await db.execute(query)
@@ -62,11 +62,28 @@ async def update_stock(db: AsyncSession, stock_data: StockCreate):
 
 
 # 주식 일별 데이터 적재
-async def insert_bulk_stock_hstr(db: AsyncSession, stock_hstr_data: List[dict]) -> int:
+async def insert_bulk_stock_hstr(db: AsyncSession, stock_hstr_data: List[dict], st_code: str = None) -> int:
     try:
-        query = insert(StockHstr).values(stock_hstr_data)
-        await db.execute(query)
+        # INSERT IGNORE를 사용하여 중복 데이터 무시
+        
+        
+        # MySQL의 INSERT IGNORE 사용
+        query = mysql_insert(StockHstr).values(stock_hstr_data)
+        query = query.on_duplicate_key_update(
+            STCK_OPRC=query.inserted.STCK_OPRC,
+            STCK_HGPR=query.inserted.STCK_HGPR,
+            STCK_LWPR=query.inserted.STCK_LWPR,
+            STCK_CLPR=query.inserted.STCK_CLPR,
+            ACML_VOL=query.inserted.ACML_VOL,
+            MOD_DT=query.inserted.REG_DT
+        )
+        
+        result = await db.execute(query)
         await db.commit()
+        
+        # 실제 삽입된 행 수 반환
+        return result.rowcount
+        
     except SQLAlchemyError as e:
         await db.rollback()
         logging.error(f"Database error occurred: {e}", exc_info=True)
@@ -79,7 +96,7 @@ async def select_stock_hstr(db: AsyncSession, code: str, long_term: int):
     try:
         query = (
             select(StockHstr)
-            .filter(StockHstr.USER_ID == code)
+            .filter(StockHstr.ST_CODE == code)
             .order_by(StockHstr.STCK_BSOP_DATE.desc())
             .limit(long_term * 3)
         )
