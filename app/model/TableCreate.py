@@ -102,6 +102,7 @@ class Swing(Base):
     LONG_TERM = Column(Integer, nullable=False, comment='장기 이평선')
     BUY_RATIO = Column(Integer, nullable=False, comment='매수 비율')
     SELL_RATIO = Column(Integer, nullable=False, comment='매도 비율')
+    RSI_PERIOD = Column(Integer, nullable=False, comment='RSI 기간')
     # CROSS_TYPE = Column(CHAR(1), nullable=False, comment='크로스 타입 (R: 추세 반전, S: 강한 추세)')
     REG_DT = Column(DateTime, default=datetime.now(UTC), nullable=False, comment='등록일')
     MOD_DT = Column(DateTime, comment='수정일')
