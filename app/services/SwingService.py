@@ -1,15 +1,12 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.services.StockService import get_stock_info
-from app.api.LocalStockApi import get_stock_data
-from app.crud.StockCrud import update_stock, insert_bulk_stock_hstr
+from app.crud.StockCrud import update_stock
 from app.crud.SwingCrud import insert_swing, select_swing, select_swing_account, list_day_swing, update_swing, delete_swing
 from app.model.schemas.SwingModel import SwingCreate
+from app.batch.StockDataBatch import fetch_and_store_3_years_data, get_batch_status as get_stock_batch_status
 from datetime import datetime, UTC
-from dateutil.relativedelta import relativedelta
 import asyncio
 import logging
-
-MAX_ITEMS_PER_REQUEST = 100
 
 
 # 스윙 전략 등록
@@ -21,9 +18,10 @@ async def create_swing(db: AsyncSession, swing_data: SwingCreate):
 
     # 데이터 적재 여부
     if stock_data["DATA_YN"] == 'N':
-        # 3년 데이터 적재
-        await fetch_and_store_3_years_data(db, swing_data.USER_ID, swing_data.ST_CODE)
-
+        # 3년 데이터 적재를 백그라운드에서 실행 (DB 세션은 배치 함수 내에서 생성)
+        asyncio.create_task(fetch_and_store_3_years_data(swing_data.USER_ID, swing_data.ST_CODE, stock_data))
+        
+        # 스톡 데이터 상태를 즉시 업데이트 (백그라운드 작업 시작을 표시)
         stock_data["MOD_DT"] = datetime.now(UTC)
         await update_stock(db, stock_data)
 
@@ -54,28 +52,19 @@ async def remove_swing(db: AsyncSession, swing_id: int):
     return await delete_swing(db, swing_id)
 
 
-# 3년 데이터 적재
-async def fetch_and_store_3_years_data(db: AsyncSession, user_id: str, code: str):
-    total_cnt = 0
-    end_date = datetime.now(UTC).date()  # 오늘 날짜
-    start_date = end_date - relativedelta(years=3)  # 3년 전 날짜
-    current_date = start_date
+# 배치 작업 상태 조회
+async def get_batch_status(db: AsyncSession, code: str):
+    """
+    배치 작업의 현재 상태를 조회하는 함수
+    
+    Args:
+        db: 데이터베이스 세션
+        code: 주식 코드
+    
+    Returns:
+        dict: 배치 작업 상태 정보
+    """
+    return await get_stock_batch_status(db, code)
 
-    while current_date < end_date:
-        next_date = current_date + relativedelta(days=MAX_ITEMS_PER_REQUEST)
-        if next_date > end_date:
-            next_date = end_date
 
 
-        response = await get_stock_data(user_id, code, current_date.strftime('%Y%m%d'), next_date.strftime('%Y%m%d'))
-
-        # Bulk insert 저장
-        # response 데이터를 List[dict] 형태로 변환하여 한번에 insert
-        cnt = await insert_bulk_stock_hstr(db, response["output2"])
-        total_cnt += cnt
-
-        current_date = next_date
-
-        await asyncio.sleep(1)  # API 서버 부하 방지
-
-    logging.debug(f"Stock data inserted: {total_cnt}")

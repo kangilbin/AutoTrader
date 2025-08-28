@@ -1,5 +1,5 @@
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import text, update, select, insert
+from sqlalchemy import text, update, select
 from app.model.TableCreate import Stock, StockHstr
 from app.model.schemas.StockModel import StockResponse, StockCreate
 from sqlalchemy.exc import SQLAlchemyError
@@ -81,8 +81,8 @@ async def insert_bulk_stock_hstr(db: AsyncSession, stock_hstr_data: List[dict], 
         result = await db.execute(query)
         await db.commit()
         
-        # 실제 삽입된 행 수 반환
-        return result.rowcount
+        # 입력된 데이터 개수 반환 (실제 삽입 여부와 관계없이)
+        return len(stock_hstr_data)
         
     except SQLAlchemyError as e:
         await db.rollback()
