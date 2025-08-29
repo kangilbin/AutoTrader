@@ -17,10 +17,10 @@ async def create_swing(db: AsyncSession, swing_data: SwingCreate):
     stock_data = await get_stock_info(db, swing_data.ST_CODE)
 
     # 데이터 적재 여부
-    if stock_data["DATA_YN"] == 'N':
-        # 3년 데이터 적재를 백그라운드에서 실행 (DB 세션은 배치 함수 내에서 생성)
+    if stock_data["DATA_YN"] != 'Y':
+        # 3년 데이터 적재를 백그라운드에서 실행 (기존 DB 세션 전달)
         asyncio.create_task(fetch_and_store_3_years_data(swing_data.USER_ID, swing_data.ST_CODE, stock_data))
-        
+
         # 스톡 데이터 상태를 즉시 업데이트 (백그라운드 작업 시작을 표시)
         stock_data["MOD_DT"] = datetime.now(UTC)
         await update_stock(db, stock_data)
