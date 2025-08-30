@@ -6,7 +6,6 @@ from app.model.schemas.SwingModel import SwingCreate
 from app.batch.StockDataBatch import fetch_and_store_3_years_data, get_batch_status as get_stock_batch_status
 from datetime import datetime, UTC
 import asyncio
-import logging
 
 
 # 스윙 전략 등록
