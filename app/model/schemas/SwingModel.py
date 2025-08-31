@@ -15,6 +15,7 @@ class SwingCreate(BaseModel):
     LONG_TERM: Optional[int] = None
     BUY_RATIO: Optional[int] = None
     SELL_RATIO: Optional[int] = None
+    RSI_PERIOD: Optional[int] = None
     # CROSS_TYPE: Optional[str] = None
     REG_DT: Optional[datetime] = None
     MOD_DT: Optional[datetime] = None
