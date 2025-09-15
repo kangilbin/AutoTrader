@@ -6,6 +6,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from typing import List
 import logging
 from sqlalchemy.dialects.mysql import insert as mysql_insert
+from datetime import datetime
 
 # 초성 검색
 async def select_stock_initial(db: AsyncSession, initial: str):
@@ -92,13 +93,13 @@ async def insert_bulk_stock_hstr(db: AsyncSession, stock_hstr_data: List[dict], 
 
 
 # 이평선 데이터 조회
-async def select_stock_hstr(db: AsyncSession, code: str, long_term: int):
+async def select_stock_hstr(db: AsyncSession, code: str, start_date: datetime):
     try:
         query = (
             select(StockHstr)
             .filter(StockHstr.ST_CODE == code)
-            .order_by(StockHstr.STCK_BSOP_DATE.desc())
-            .limit(long_term * 3)
+            .filter(StockHstr.STCK_BSOP_DATE >= start_date)
+            .order_by(StockHstr.STCK_BSOP_DATE.asc())
         )
         result = await db.execute(query)
     except SQLAlchemyError as e:

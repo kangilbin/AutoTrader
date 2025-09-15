@@ -21,5 +21,5 @@ async def mod_stock(db: AsyncSession, stock_data: StockCreate):
 
 
 # 이평선 데이터 조회
-async def get_day_stock_price(db: AsyncSession, code: str, long_term: int):
-    return await select_stock_hstr(db, code, long_term)
+async def get_day_stock_price(db: AsyncSession, code: str, start_date: datetime):
+    return await select_stock_hstr(db, code, start_date)
