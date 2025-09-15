@@ -15,7 +15,7 @@ from contextlib import asynccontextmanager
 from app.services.AccountService import create_account, get_account, get_accounts, remove_account
 from app.services.AuthService import create_auth, get_auth_key, get_auth_keys
 from app.services.StockService import get_stock_initial
-from app.services.SwingService import create_swing
+from app.services.SwingService import create_swing, backtest_swing
 from app.services.UserService import create_user, login_user, token_refresh, duplicate_user
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.module.JwtUtils import get_token, TokenData
@@ -231,6 +231,16 @@ async def swing_create(swing: SwingCreate, db: Annotated[AsyncSession, Depends(g
 async def asking_price(st_code: str, user_id: Annotated[TokenData, Depends(get_token)]):
     response = await get_inquire_asking_price(user_id, st_code)
     return {"message": "주식 호가 조회", "data": response}
+
+# 백 테스팅
+@app.post("/backtesting")
+async def backtest(swing: SwingCreate, db: Annotated[AsyncSession, Depends(get_db)], user_id: Annotated[TokenData, Depends(get_token)]):
+    """
+    스윙 전략 백테스팅 (현재 기준 1년 전까지)
+    """
+    swing.USER_ID = user_id
+    response = await backtest_swing(db, swing)
+    return response
 
 # 재무제표
 # import dart_fss as dart
