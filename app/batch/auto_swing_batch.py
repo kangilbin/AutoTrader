@@ -25,7 +25,7 @@ async def trade_job():
         new_row = pd.DataFrame([["01231230","2025-08-03", 15000, 17000, 13000, 14000, 200000]], columns=["ST_CODE", "STCK_BSOP_DATE", "STCK_OPRC", "STCK_HGPR", "STCK_LWPR", "STCK_CLPR", "ACML_VOL"])
         df = pd.concat([df, new_row], ignore_index=True)
 
-        first_buy_signal, second_buy_signal, first_sell_signal, second_sell_signal, stop_loss_signal = sell_or_buy(df, swing.SHORT_TERM, swing.MEDIUM_TERM, swing.LONG_TERM, swing.SWING_AMOUNT, 0.05)
+        first_buy_signal, second_buy_signal, first_sell_signal, second_sell_signal, stop_loss_signal = sell_or_buy(df, swing.SHORT_TERM, swing.MEDIUM_TERM, swing.LONG_TERM, swing.SWING_AMOUNT, swing.RSI_PERIOD,0.05)
 
         if stop_loss_signal:
             # 손절 신호 발생
