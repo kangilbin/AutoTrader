@@ -1,10 +1,15 @@
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.batch.tech_analysis import sell_or_buy
 from app.services.StockService import get_stock_info
 from app.crud.StockCrud import update_stock
 from app.crud.SwingCrud import insert_swing, select_swing, select_swing_account, list_day_swing, update_swing, delete_swing
 from app.model.schemas.SwingModel import SwingCreate
 from app.batch.StockDataBatch import fetch_and_store_3_years_data, get_batch_status as get_stock_batch_status
 from datetime import datetime, UTC
+from app.services.StockService import get_day_stock_price
+from datetime import date
+import pandas as pd
 import asyncio
 
 
@@ -79,10 +84,7 @@ async def backtest_swing(db: AsyncSession, swing_data: SwingCreate):
     Returns:
         dict: 백테스팅 결과
     """
-    from app.batch.AutoSwingBatch import sell_or_buy
-    from app.services.StockService import get_day_stock_price
-    from datetime import date
-    import pandas as pd
+
     
     try:
         # 필수 필드 검증
