@@ -1,6 +1,6 @@
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.crud.StockCrud import select_stock_initial, select_stock, update_stock, select_stock_hstr
-from app.model.schemas.StockModel import StockResponse, StockCreate
+from app.crud.stock_crud import select_stock_initial, select_stock, update_stock, select_stock_hstr
+from app.model.schemas.stock_model import StockResponse, StockCreate
 from datetime import datetime
 
 

@@ -1,6 +1,6 @@
 from datetime import timedelta
 from pydantic import BaseModel
-from app.module.Config import get_env
+from app.module.config import get_env
 
 
 class Token(BaseModel):

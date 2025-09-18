@@ -1,6 +1,6 @@
 import redis.asyncio as aioredis
 from typing import Optional
-from app.module.Config import get_env
+from app.module.config import get_env
 
 
 class Redis:

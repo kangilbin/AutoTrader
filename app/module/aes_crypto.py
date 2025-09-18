@@ -1,7 +1,7 @@
 import base64
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.backends import default_backend
-from app.module.Config import get_env
+from app.module.config import get_env
 import os
 
 ########### AES 암복호화 ###########
