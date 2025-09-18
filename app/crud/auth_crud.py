@@ -1,7 +1,7 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, delete, and_
-from app.model.TableCreate import Auth
-from app.model.schemas.AuthModel import AuthCreate, AuthResponse
+from app.model.table_create import Auth
+from app.model.schemas.auth_model import AuthCreate, AuthResponse
 import logging
 from sqlalchemy.exc import SQLAlchemyError
 

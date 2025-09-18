@@ -1,7 +1,7 @@
 from sqlalchemy import MetaData
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
-from app.model.TableCreate import Base
+from app.model.table_create import Base
 import os
 
 

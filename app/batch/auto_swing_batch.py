@@ -1,13 +1,13 @@
 import asyncio
 import logging
 import pandas as pd
-from app.api.LocalStockApi import get_target_price
+from app.api.local_stock_api import get_target_price
 from app.batch.tech_analysis import sell_or_buy
-from app.crud.StockCrud import insert_bulk_stock_hstr
-from app.module.AESCrypto import decrypt
-from app.module.DBConnection import get_db
-from app.services.StockService import get_day_stock_price
-from app.services.SwingService import get_day_swing
+from app.crud.stock_crud import insert_bulk_stock_hstr
+from app.module.aes_crypto import decrypt
+from app.module.db_connection import get_db
+from app.services.stock_service import get_day_stock_price
+from app.services.swing_service import get_day_swing
 
 async def trade_job():
     db = await get_db()
