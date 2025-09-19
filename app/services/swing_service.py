@@ -127,6 +127,8 @@ async def backtest_swing(db: AsyncSession, swing_data: SwingCreate):
         # 백테스팅 실행
         trades = []
         portfolio_values = []
+        status = "0"
+        total_capital = initial_capital #  총금액 기준 고정 (각 차수 매수는 총금액 * BUY_RATIO)
 
         # 날짜별로 순회하며 백테스팅 실행
         for i in range(len(eval_df)):
@@ -146,37 +148,42 @@ async def backtest_swing(db: AsyncSession, swing_data: SwingCreate):
             current_price = current_data['STCK_CLPR'].iloc[-1]
             current_date = current_data.index[-1] if hasattr(current_data.index, 'iloc') else i
 
-            # 매수 신호 처리
-            if first_buy_signal and initial_capital > 0:
-                buy_amount = initial_capital * sell_ratio
+            # 1차 매수
+            if first_buy_signal and status == "0" and initial_capital > 0:
+                buy_amount = total_capital * buy_ratio
                 buy_quantity = int(buy_amount / current_price)
+                executed_amount = buy_quantity * current_price
                 if buy_quantity > 0:
-                    initial_capital -= buy_quantity * current_price
+                    initial_capital -= executed_amount
                     trades.append({
                         'date': current_date,
                         'action': 'BUY',
                         'quantity': buy_quantity,
                         'price': current_price,
-                        'amount': buy_amount,
-                        'reason': '1차 매수 신호'
+                        'amount': executed_amount,
+                        'reason': '1차 매수 신호',
                     })
-
-            if second_buy_signal and initial_capital > 0:
-                buy_amount = initial_capital * buy_ratio
+                    status = "1"
+            # 2차 매수
+            elif second_buy_signal and status == "1" and initial_capital > 0:
+                buy_amount = min(total_capital * buy_ratio, initial_capital)
                 buy_quantity = int(buy_amount / current_price)
-                if buy_quantity > 0:
-                    initial_capital -= buy_amount
+                executed_amount = buy_quantity * current_price
+
+                if buy_quantity > 0 and executed_amount > 0:
+                    initial_capital -= executed_amount
                     trades.append({
                         'date': current_date,
                         'action': 'BUY',
                         'quantity': buy_quantity,
                         'price': current_price,
-                        'amount': buy_amount,
+                        'amount': executed_amount,
                         'reason': '2차 매수 신호'
                     })
+                    status = "2"
 
             # 매도 신호 처리
-            if first_sell_signal or second_sell_signal or stop_loss_signal:
+            elif first_sell_signal or second_sell_signal or stop_loss_signal:
                 # 보유 주식 수량 계산 (매수 수량 - 매도 수량)
                 total_bought = sum([trade['quantity'] for trade in trades if trade['action'] == 'BUY'])
                 total_sold = sum([trade['quantity'] for trade in trades if trade['action'] == 'SELL'])
