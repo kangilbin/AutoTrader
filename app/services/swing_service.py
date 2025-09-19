@@ -1,13 +1,13 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.batch.tech_analysis import sell_or_buy
-from app.services.StockService import get_stock_info
-from app.crud.StockCrud import update_stock
-from app.crud.SwingCrud import insert_swing, select_swing, select_swing_account, list_day_swing, update_swing, delete_swing
-from app.model.schemas.SwingModel import SwingCreate
-from app.batch.StockDataBatch import fetch_and_store_3_years_data, get_batch_status as get_stock_batch_status
+from app.services.stock_service import get_stock_info
+from app.crud.stock_crud import update_stock
+from app.crud.swing_crud import insert_swing, select_swing, select_swing_account, list_day_swing, update_swing, delete_swing
+from app.model.schemas.swing_model import SwingCreate
+from app.batch.stock_data_batch import fetch_and_store_3_years_data, get_batch_status as get_stock_batch_status
 from datetime import datetime, UTC
-from app.services.StockService import get_day_stock_price
+from app.services.stock_service import get_day_stock_price
 from datetime import date
 import pandas as pd
 import asyncio
@@ -96,17 +96,17 @@ async def backtest_swing(db: AsyncSession, swing_data: SwingCreate):
             }
         
         # 기본값 설정
-        short_term = swing_data.SHORT_TERM if swing_data.SHORT_TERM else 5
-        medium_term = swing_data.MEDIUM_TERM if swing_data.MEDIUM_TERM else 20
-        long_term = swing_data.LONG_TERM if swing_data.LONG_TERM else 60
-        initial_capital = swing_data.SWING_AMOUNT if swing_data.SWING_AMOUNT else 10000000
+        short_term = swing_data.SHORT_TERM
+        medium_term = swing_data.MEDIUM_TERM
+        long_term = swing_data.LONG_TERM
+        initial_capital = swing_data.SWING_AMOUNT
         
         # 현재 날짜 기준으로 1년 전까지 설정
         end_date = date.today()
         start_date = date(end_date.year - 1, end_date.month, end_date.day)
         
         # 1년치 주가 데이터 조회 (365일)
-        price_days = await get_day_stock_price(db, swing_data.ST_CODE, 365)
+        price_days = await get_day_stock_price(db, swing_data.ST_CODE, start_date)
         
         if not price_days:
             return {
