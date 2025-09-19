@@ -33,8 +33,6 @@ async def fetch_and_store_3_years_data(user_id: str, code: str, stock_data: dict
             await update_stock(db, stock_data)
             logging.info(f"Started background data fetch for {code}")
 
-            start_time = time.time()
-            total_cnt = 0
             end_date = datetime.now(UTC).date()
             start_date = end_date - relativedelta(years=3)
             current_date = start_date
@@ -97,12 +95,6 @@ async def fetch_and_store_3_years_data(user_id: str, code: str, stock_data: dict
                         logging.error(f"DB insert failed for batch {i+1}: {db_error}")
                 else:
                     failed_tasks += 1
-
-            total_time = time.time() - start_time
-            logging.info(f"Completed data fetch for {code}")
-            logging.info(f"Total time: {total_time:.2f}s ({total_time/60:.2f}min)")
-            logging.info(f"Successful: {successful_tasks}, Failed: {failed_tasks}")
-            logging.info(f"Total records: {total_cnt}, RPS: {total_cnt / total_time:.2f}")
 
             # 상태 업데이트: 완료
             stock_data["DATA_YN"] = 'Y'
