@@ -1,6 +1,6 @@
-from app.module.Config import get_env
-from app.module.FetchAPI import fetch
-from app.module.RedisConnection import get_redis
+from app.module.config import get_env
+from app.module.fetch_api import fetch
+from app.module.redis_connection import get_redis
 from fastapi import HTTPException
 
 

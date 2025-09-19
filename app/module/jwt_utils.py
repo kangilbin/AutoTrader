@@ -4,7 +4,7 @@ import jwt
 from jwt.exceptions import ExpiredSignatureError
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from app.model.schemas.JwtModel import Settings, TokenData
+from app.model.schemas.jwt_model import Settings, TokenData
 
 settings = Settings()
 security = HTTPBearer()
