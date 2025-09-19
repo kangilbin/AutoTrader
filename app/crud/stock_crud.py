@@ -1,7 +1,7 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text, update, select
 from app.model.table_create import Stock, StockHstr
-from app.model.schemas.stock_model import StockResponse, StockCreate
+from app.model.schemas.stock_model import StockResponse, StockCreate, StockHstrResponse
 from sqlalchemy.exc import SQLAlchemyError
 from typing import List
 import logging
@@ -33,7 +33,7 @@ async def select_stock_initial(db: AsyncSession, initial: str):
 
 
 
-async def select_stock(db: AsyncSession, code: str) -> StockResponse:
+async def select_stock(db: AsyncSession, code: str):
     try:
         query = select(Stock).filter(Stock.ST_CODE == code)
         result = await db.execute(query)
@@ -105,4 +105,4 @@ async def select_stock_hstr(db: AsyncSession, code: str, start_date: datetime):
     except SQLAlchemyError as e:
         logging.error(f"Database error occurred: {e}", exc_info=True)
         raise
-    return [StockResponse.model_validate(row).model_dump() for row in result]
+    return [StockHstrResponse.model_validate(row).model_dump() for row in result]
