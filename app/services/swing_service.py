@@ -6,9 +6,8 @@ from app.crud.stock_crud import update_stock
 from app.crud.swing_crud import insert_swing, select_swing, select_swing_account, list_day_swing, update_swing, delete_swing
 from app.model.schemas.swing_model import SwingCreate
 from app.batch.stock_data_batch import fetch_and_store_3_years_data, get_batch_status as get_stock_batch_status
-from datetime import datetime, UTC
+from datetime import datetime, UTC, timedelta
 from app.services.stock_service import get_day_stock_price
-from datetime import date
 import pandas as pd
 import asyncio
 
@@ -100,11 +99,14 @@ async def backtest_swing(db: AsyncSession, swing_data: SwingCreate):
         medium_term = swing_data.MEDIUM_TERM
         long_term = swing_data.LONG_TERM
         initial_capital = swing_data.SWING_AMOUNT
+        ris_period = swing_data.RSI_PERIOD
+        buy_ratio = swing_data.BUY_RATIO / 100
+        sell_ratio = swing_data.SELL_RATIO / 100
         
         # 현재 날짜 기준으로 1년 전까지 설정
-        end_date = date.today()
-        start_date = date(end_date.year - 1, end_date.month, end_date.day)
-        
+        end_date =  datetime.now(UTC)
+        start_date = end_date - timedelta(days=365)
+
         # 1년치 주가 데이터 조회 (365일)
         price_days = await get_day_stock_price(db, swing_data.ST_CODE, start_date)
         
@@ -130,7 +132,6 @@ async def backtest_swing(db: AsyncSession, swing_data: SwingCreate):
             df['ACML_VOL'] = df['TRADE_QTY']
         
         # 백테스팅 실행
-        current_capital = initial_capital
         trades = []
         portfolio_values = []
         
@@ -141,13 +142,13 @@ async def backtest_swing(db: AsyncSession, swing_data: SwingCreate):
                 
             current_data = df.iloc[:i+1]
             
-            # AutoSwingBatch의 sell_or_buy 함수 사용
             first_buy_signal, second_buy_signal, first_sell_signal, second_sell_signal, stop_loss_signal = sell_or_buy(
                 current_data, 
                 short_term, 
                 medium_term, 
                 long_term, 
-                current_capital, 
+                initial_capital,
+                ris_period,
                 0.05
             )
             
@@ -155,11 +156,11 @@ async def backtest_swing(db: AsyncSession, swing_data: SwingCreate):
             current_date = current_data.index[-1] if hasattr(current_data.index, 'iloc') else i
             
             # 매수 신호 처리
-            if first_buy_signal and current_capital > 0:
-                buy_amount = current_capital * 0.5  # 50% 매수
+            if first_buy_signal and initial_capital > 0:
+                buy_amount = initial_capital * sell_ratio
                 buy_quantity = int(buy_amount / current_price)
                 if buy_quantity > 0:
-                    current_capital -= buy_amount
+                    initial_capital -= buy_amount
                     trades.append({
                         'date': current_date,
                         'action': 'BUY',
@@ -169,11 +170,11 @@ async def backtest_swing(db: AsyncSession, swing_data: SwingCreate):
                         'reason': '1차 매수 신호'
                     })
             
-            if second_buy_signal and current_capital > 0:
-                buy_amount = current_capital * 0.5  # 50% 매수
+            if second_buy_signal and initial_capital > 0:
+                buy_amount = initial_capital * buy_ratio
                 buy_quantity = int(buy_amount / current_price)
                 if buy_quantity > 0:
-                    current_capital -= buy_amount
+                    initial_capital -= buy_amount
                     trades.append({
                         'date': current_date,
                         'action': 'BUY',
@@ -189,7 +190,7 @@ async def backtest_swing(db: AsyncSession, swing_data: SwingCreate):
                 total_quantity = sum([trade['quantity'] for trade in trades if trade['action'] == 'BUY'])
                 if total_quantity > 0:
                     sell_amount = total_quantity * current_price
-                    current_capital += sell_amount
+                    initial_capital += sell_amount
                     trades.append({
                         'date': current_date,
                         'action': 'SELL',
@@ -200,15 +201,15 @@ async def backtest_swing(db: AsyncSession, swing_data: SwingCreate):
                     })
             
             # 포트폴리오 가치 기록
-            portfolio_value = current_capital
+            portfolio_value = initial_capital
             portfolio_values.append({
                 'date': current_date,
                 'value': portfolio_value,
-                'cash': current_capital
+                'cash': initial_capital
             })
         
         # 결과 계산
-        final_capital = current_capital
+        final_capital = initial_capital
         total_return = (final_capital - initial_capital) / initial_capital if initial_capital > 0 else 0
         
         return {

@@ -59,9 +59,22 @@ def obv(df):
                          np.where(df['STCK_CLPR'] < df['STCK_CLPR'].shift(1), -df['ACML_VOL'], 0))
     return pd.Series(obv_val, index=df.index).cumsum()
 
-def sell_or_buy(df: pd.DataFrame, short_line: int, mid_line: int, long_line: int, buy_price: float = None, stop_loss_rate: float = -0.05) -> tuple:
+def sell_or_buy(df: pd.DataFrame, short_line: int, mid_line: int, long_line: int, buy_price: float = None,
+                rsi_period: int = 14, stop_loss_rate: float = -0.05) -> tuple:
     """
-    타점
+    매수/매도 신호를 검출하는 함수
+
+    Args:
+        df (pd.DataFrame): 주가 데이터
+        short_line (int): 단기 이동평균선 기간 
+        mid_line (int): 중기 이동평균선 기간
+        long_line (int): 장기 이동평균선 기간
+        buy_price (float, optional): 매수 가격. Defaults to None.
+        rsi_period (int, optional): RSI 계산 기간. Defaults to 14.
+        stop_loss_rate (float, optional): 손절 비율. Defaults to -0.05.
+
+    Returns:
+        tuple: (매수신호1, 매수신호2, 매도신호1, 매도신호2, 손절신호)
     """
     ema_short = ema(df['STCK_CLPR'], short_line)
     ema_mid = ema(df['STCK_CLPR'], mid_line)
@@ -70,13 +83,13 @@ def sell_or_buy(df: pd.DataFrame, short_line: int, mid_line: int, long_line: int
     first_ema_gap_prev = ema_mid.iloc[-3] - ema_short.iloc[-3]
 
     # 이평선 수렴(1% 이하로 수렴)
-    first_ema_buy_cond = first_ema_gap_now < first_ema_gap_prev and first_ema_gap_now < ema_mid.iloc[-1] * 0.01 and ema_short.iloc[-1] > ema_mid.iloc[-1]
+    #first_ema_buy_cond = first_ema_gap_now < first_ema_gap_prev and first_ema_gap_now < ema_mid.iloc[-1] * 0.01 and ema_short.iloc[-1] > ema_mid.iloc[-1]
     first_ema_sell_cond = first_ema_gap_now > first_ema_gap_prev and first_ema_gap_now < ema_mid.iloc[-1] * 0.01 and ema_short.iloc[-1] < ema_mid.iloc[-1]
 
-    rsi_vals = rsi(df['STCK_CLPR'])
+    rsi_vals = rsi(df['STCK_CLPR'], rsi_period)
     rsi_now, rsi_prev = rsi_vals.iloc[-1], rsi_vals.iloc[-2]
     rsi_diff = rsi_now - rsi_prev
-    rsi_strong_buy_cond = rsi_diff > 5 and rsi_prev < 30 and rsi_now > 30 # RSI가 급격히 반등할 때
+    #rsi_strong_buy_cond = rsi_diff > 5 and rsi_prev < 30 and rsi_now > 30 # RSI가 급격히 반등할 때
     rsi_strong_sell_cond = rsi_diff < -5 and rsi_prev > 70 and rsi_now < 70 # RSI가 급격히 하락할 때
 
 
