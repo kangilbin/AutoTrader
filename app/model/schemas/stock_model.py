@@ -25,14 +25,13 @@ class StockResponse(StockCreate):
 
 
 class StockHstrCreate(BaseModel):
-    ST_CODE: str
-    HSTR_DT: str
-    DATE: str
-    OPEN_PRICE: float
-    HIGH_PRICE: float
-    LOW_PRICE: float
-    CLOSE_PRICE: float
-    TRADE_QTY: int
+    ST_CODE: Optional[str] = None
+    STCK_BSOP_DATE: Optional[str] = None
+    STCK_OPRC: Optional[int] = None
+    STCK_HGPR: Optional[int] = None
+    STCK_LWPR: Optional[int] = None
+    STCK_CLPR: Optional[int] = None
+    ACML_VOL: Optional[int] = None
     REG_DT: Optional[datetime] = None
     MOD_DT: Optional[datetime] = None
 

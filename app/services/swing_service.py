@@ -1,12 +1,12 @@
+from dateutil.relativedelta import relativedelta
 from sqlalchemy.ext.asyncio import AsyncSession
-
 from app.batch.tech_analysis import sell_or_buy
 from app.services.stock_service import get_stock_info
 from app.crud.stock_crud import update_stock
 from app.crud.swing_crud import insert_swing, select_swing, select_swing_account, list_day_swing, update_swing, delete_swing
 from app.model.schemas.swing_model import SwingCreate
 from app.batch.stock_data_batch import fetch_and_store_3_years_data, get_batch_status as get_stock_batch_status
-from datetime import datetime, UTC, timedelta
+from datetime import datetime, UTC
 from app.services.stock_service import get_day_stock_price
 import pandas as pd
 import asyncio
@@ -103,13 +103,16 @@ async def backtest_swing(db: AsyncSession, swing_data: SwingCreate):
         buy_ratio = swing_data.BUY_RATIO / 100
         sell_ratio = swing_data.SELL_RATIO / 100
         
-        # 현재 날짜 기준으로 1년 전까지 설정
         end_date =  datetime.now(UTC)
-        start_date = end_date - timedelta(days=365)
+        start_date = end_date - relativedelta(years=3)
 
-        # 1년치 주가 데이터 조회 (365일)
+        # 실제 백테스팅은 1년치만 실행
+        eval_start = end_date - relativedelta(years=1)
+
+
+        # 3년치 주가 데이터 조회
         price_days = await get_day_stock_price(db, swing_data.ST_CODE, start_date)
-        
+
         if not price_days:
             return {
                 "success": False,
@@ -118,49 +121,37 @@ async def backtest_swing(db: AsyncSession, swing_data: SwingCreate):
             }
         
         # DataFrame으로 변환
-        df = pd.DataFrame([price_day.__dict__ for price_day in price_days])
-        df = df.drop(columns=["_sa_instance_state"], errors="ignore")
-        
-        # 컬럼명을 AutoSwingBatch 형식으로 변환
-        if 'CLOSE_PRICE' in df.columns:
-            df['STCK_CLPR'] = df['CLOSE_PRICE']
-        if 'HIGH_PRICE' in df.columns:
-            df['STCK_HGPR'] = df['HIGH_PRICE']
-        if 'LOW_PRICE' in df.columns:
-            df['STCK_LWPR'] = df['LOW_PRICE']
-        if 'TRADE_QTY' in df.columns:
-            df['ACML_VOL'] = df['TRADE_QTY']
-        
+        df = pd.DataFrame(price_days)
+        eval_df = df[df["STCK_BSOP_DATE"] >= eval_start].copy()
+
         # 백테스팅 실행
         trades = []
         portfolio_values = []
-        
+
         # 날짜별로 순회하며 백테스팅 실행
-        for i in range(len(df)):
-            if i < long_term:  # 충분한 데이터가 있을 때까지 스킵
-                continue
-                
-            current_data = df.iloc[:i+1]
-            
+        for i in range(len(eval_df)):
+            full_idx = df.index.get_loc(eval_df.index[i])
+            current_data = df.iloc[: full_idx + 1]
+
             first_buy_signal, second_buy_signal, first_sell_signal, second_sell_signal, stop_loss_signal = sell_or_buy(
-                current_data, 
-                short_term, 
-                medium_term, 
-                long_term, 
+                current_data,
+                short_term,
+                medium_term,
+                long_term,
                 initial_capital,
                 ris_period,
                 0.05
             )
-            
+
             current_price = current_data['STCK_CLPR'].iloc[-1]
             current_date = current_data.index[-1] if hasattr(current_data.index, 'iloc') else i
-            
+
             # 매수 신호 처리
             if first_buy_signal and initial_capital > 0:
                 buy_amount = initial_capital * sell_ratio
                 buy_quantity = int(buy_amount / current_price)
                 if buy_quantity > 0:
-                    initial_capital -= buy_amount
+                    initial_capital -= buy_quantity * current_price
                     trades.append({
                         'date': current_date,
                         'action': 'BUY',
@@ -169,7 +160,7 @@ async def backtest_swing(db: AsyncSession, swing_data: SwingCreate):
                         'amount': buy_amount,
                         'reason': '1차 매수 신호'
                     })
-            
+
             if second_buy_signal and initial_capital > 0:
                 buy_amount = initial_capital * buy_ratio
                 buy_quantity = int(buy_amount / current_price)
@@ -183,23 +174,54 @@ async def backtest_swing(db: AsyncSession, swing_data: SwingCreate):
                         'amount': buy_amount,
                         'reason': '2차 매수 신호'
                     })
-            
-            # 매도 신호 처리 (간단한 구현)
+
+            # 매도 신호 처리
             if first_sell_signal or second_sell_signal or stop_loss_signal:
-                # 모든 보유 주식을 매도한다고 가정
-                total_quantity = sum([trade['quantity'] for trade in trades if trade['action'] == 'BUY'])
+                # 보유 주식 수량 계산 (매수 수량 - 매도 수량)
+                total_bought = sum([trade['quantity'] for trade in trades if trade['action'] == 'BUY'])
+                total_sold = sum([trade['quantity'] for trade in trades if trade['action'] == 'SELL'])
+                total_quantity = total_bought - total_sold
+
                 if total_quantity > 0:
-                    sell_amount = total_quantity * current_price
-                    initial_capital += sell_amount
-                    trades.append({
-                        'date': current_date,
-                        'action': 'SELL',
-                        'quantity': total_quantity,
-                        'price': current_price,
-                        'amount': sell_amount,
-                        'reason': '매도 신호' if not stop_loss_signal else '손절매'
-                    })
-            
+                    if stop_loss_signal:
+                        # 손절매 - 전량 매도
+                        sell_quantity = total_quantity
+                        sell_amount = sell_quantity * current_price
+                        initial_capital += sell_amount
+                        trades.append({
+                            'date': current_date,
+                            'action': 'SELL',
+                            'quantity': sell_quantity,
+                            'price': current_price,
+                            'amount': sell_amount,
+                            'reason': '손절매'
+                        })
+                    elif first_sell_signal:
+                        # 1차 매도 - 보유 수량의 50% 매도
+                        sell_quantity = total_quantity // 2
+                        sell_amount = sell_quantity * current_price
+                        initial_capital += sell_amount
+                        trades.append({
+                            'date': current_date,
+                            'action': 'SELL',
+                            'quantity': sell_quantity,
+                            'price': current_price,
+                            'amount': sell_amount,
+                            'reason': '1차 매도 신호'
+                        })
+                    elif second_sell_signal:
+                        # 2차 매도 - 남은 수량 전량 매도
+                        sell_quantity = total_quantity
+                        sell_amount = sell_quantity * current_price
+                        initial_capital += sell_amount
+                        trades.append({
+                            'date': current_date,
+                            'action': 'SELL',
+                            'quantity': sell_quantity,
+                            'price': current_price,
+                            'amount': sell_amount,
+                            'reason': '2차 매도 신호'
+                        })
             # 포트폴리오 가치 기록
             portfolio_value = initial_capital
             portfolio_values.append({
