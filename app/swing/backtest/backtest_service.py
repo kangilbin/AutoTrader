@@ -9,12 +9,15 @@ from app.stock.stock_service import get_day_stock_price
 from app.swing.swing_model import SwingCreate
 from app.swing.tech_analysis import sell_or_buy
 from sqlalchemy.ext.asyncio import AsyncSession
+from app.module.redis_connection import get_redis
+import json
 
 
 # ===== 백테스트 잡 실행 환경 =====
 _EXECUTOR = ThreadPoolExecutor(max_workers=min(4, (os.cpu_count() or 2)))
 _BACKTEST_SEMAPHORE = asyncio.Semaphore(2)  # 동시에 실행될 백테스트 개수 제한
 _JOBS: dict[str, dict] = {}  # 인메모리 잡 저장소 (운영에선 Redis/DB 권장)
+
 
 
 def compute_backtest_sync(prices_df: pd.DataFrame, params: dict) -> dict:
@@ -34,7 +37,6 @@ def compute_backtest_sync(prices_df: pd.DataFrame, params: dict) -> dict:
     eval_df = df[df["STCK_BSOP_DATE"] >= eval_start].copy()
 
     trades = []
-    portfolio_values = []
     total_capital = initial_capital  # 총금액 기준 고정
 
     # 포지션 상태 계산(평단/수량)
@@ -129,7 +131,6 @@ def compute_backtest_sync(prices_df: pd.DataFrame, params: dict) -> dict:
                             'price': current_price,
                             'amount': sell_amount,
                             'current_capital': initial_capital,
-                            'avg_buy_price': curr_avg_cost,
                             'realized_pnl': realized_pnl,
                             'realized_pnl_pct': realized_pnl_pct,
                             'reason': '1차 매도 신호'
@@ -147,18 +148,10 @@ def compute_backtest_sync(prices_df: pd.DataFrame, params: dict) -> dict:
                         'price': current_price,
                         'amount': sell_amount,
                         'current_capital': initial_capital,
-                        'avg_buy_price': curr_avg_cost,
                         'realized_pnl': realized_pnl,
                         'realized_pnl_pct': realized_pnl_pct,
                         'reason': '2차 매도 신호 - 전량 매도'
                     })
-
-        # 포트폴리오 가치 기록(현금 기준)
-        portfolio_values.append({
-            'date': current_date,
-            'value': initial_capital,
-            'cash': initial_capital
-        })
 
     final_capital = initial_capital
     total_return = 0.0  # 상세 수익률 집계는 trades 기반으로 별도 계산 가능
@@ -178,7 +171,6 @@ def compute_backtest_sync(prices_df: pd.DataFrame, params: dict) -> dict:
             "LONG_TERM": long_term
         },
         "trades": trades,
-        "portfolio_values": portfolio_values
     }
 
 
@@ -204,9 +196,7 @@ async def start_backtest_job(db: AsyncSession, swing_data: SwingCreate) -> str:
     swing_amount = swing_data.SWING_AMOUNT
     rsi_period = swing_data.RSI_PERIOD
     buy_ratio = swing_data.BUY_RATIO / 100
-    sell_ratio = swing_data.SELL_RATIO / 100  # 기본 50% 부분청산
-
-    end_date = datetime.now(UTC)
+    sell_ratio = swing_data.SELL_RATIO / 100
 
     end_date = datetime.now(UTC)
     start_date = end_date - relativedelta(years=3)
@@ -242,22 +232,69 @@ async def start_backtest_job(db: AsyncSession, swing_data: SwingCreate) -> str:
     }
 
     async def runner():
-        _JOBS[job_id]["status"] = "running"
+        await job_set_status(job_id, "running")
         try:
             result = await compute_backtest_offloaded(prices_df, params)
-            _JOBS[job_id]["result"] = {"success": True, "message": "백테스팅 완료", "data": result}
-            _JOBS[job_id]["status"] = "done"
+            await job_set_result(job_id, result={"success": True, "message": "백테스팅 완료", "data": result})
+            await job_set_status(job_id, "done")
         except Exception as e:
-            _JOBS[job_id]["result"] = {"success": False, "message": f"백테스팅 오류: {str(e)}"}
-            _JOBS[job_id]["error"] = str(e)
-            _JOBS[job_id]["status"] = "error"
+            await job_set_result(job_id, result=None, error=str(e))
+            await job_set_status(job_id, "error")
 
     asyncio.create_task(runner())
     return job_id
 
 
+# Redis 키 유틸
+def job_key(job_id: str) -> str:
+    return f"backtest:{job_id}"
+
+async def job_create(job_id: str) -> None:
+    redis = await get_redis()
+    now = datetime.now(UTC).isoformat()
+    await redis.hset(
+        job_key(job_id),
+        mapping={
+            "status": "queued",
+            "result": "",
+            "error": "",
+            "created_at": now,
+            "updated_at": now,
+        },
+    )
+    # 필요 시 TTL(초) 적용: 24시간
+    await redis.expire(job_key(job_id), 60 * 60 * 24)
+
+async def job_set_status(job_id: str, status: str) -> None:
+    redis = await get_redis()
+    await redis.hset(
+        job_key(job_id),
+        mapping={
+            "status": status,
+            "updated_at": datetime.now(UTC).isoformat(),
+        },
+    )
+
+async def job_set_result(job_id: str, result: dict | None = None, error: str | None = None) -> None:
+    redis = await get_redis()
+    mapping = {"updated_at": datetime.now(UTC).isoformat()}
+    if result is not None:
+        mapping["result"] = json.dumps(result, ensure_ascii=False)
+    if error is not None:
+        mapping["error"] = error
+    await redis.hset(job_key(job_id), mapping=mapping)
+
+
 async def get_backtest_job(job_id: str) -> dict:
-    job = _JOBS.get(job_id)
-    if not job:
+    redis = await get_redis()
+    data = await redis.hgetall(job_key(job_id))
+    if not data:
         return {"status": "not_found", "result": None, "error": "job_id 없음"}
-    return job
+    result = data.get("result")
+    return {
+        "status": data.get("status"),
+        "result": json.loads(result) if result else None,
+        "error": data.get("error") or None,
+        "created_at": data.get("created_at"),
+        "updated_at": data.get("updated_at"),
+    }
