@@ -6,6 +6,7 @@ from app.account.account_model import AccountCreate
 from app.auth.auth_model import AuthCreate
 from app.order.mod_order_model import ModOrder
 from app.order.order_model import Order
+from app.swing.backtest.backtest_service import start_backtest_job, get_backtest_job
 from app.swing.swing_model import SwingCreate
 from app.user.user_model import UserCreate
 from app.module.schedules import schedule_start
@@ -232,15 +233,25 @@ async def asking_price(st_code: str, user_id: Annotated[TokenData, Depends(get_t
     response = await get_inquire_asking_price(user_id, st_code)
     return {"message": "주식 호가 조회", "data": response}
 
-# 백 테스팅
+# 백 테스팅 - 비동기 잡 전환 (job_id 발급)
 @app.post("/backtesting")
 async def backtest(swing: SwingCreate, db: Annotated[AsyncSession, Depends(get_db)], user_id: Annotated[TokenData, Depends(get_token)]):
     """
-    스윙 전략 백테스팅 (현재 기준 1년 전까지)
+    스윙 전략 백테스팅 요청을 백그라운드 잡으로 실행하고 job_id를 반환합니다.
+    결과는 GET /backtesting/{job_id} 로 조회하세요.
     """
     swing.USER_ID = user_id
-    response = await backtest_swing(db, swing)
-    return response
+    try:
+        job_id = await start_backtest_job(db, swing)
+        return {"status": "accepted", "job_id": job_id}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/backtesting/{job_id}")
+async def get_backtest_result(job_id: str):
+    job = await get_backtest_job(job_id)
+    return job
 
 # 재무제표
 # import dart_fss as dart
