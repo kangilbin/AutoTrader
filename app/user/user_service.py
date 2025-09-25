@@ -1,11 +1,11 @@
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.crud.user_crud import insert_user, select_user, update_user, delete_user
-from app.model.schemas.user_model import UserCreate, UserResponse
-from app.module.hash_crypto import hash_password, check_password
+from app.user.user_crud import insert_user, select_user, update_user, delete_user
+from app.user.user_model import UserCreate, UserResponse
+from app.infrastructure.security.hash_crypto import hash_password, check_password
 from app.module.redis_connection import get_redis
 from datetime import datetime
-from app.module.jwt_utils import create_access_token, create_refresh_token, verify_token, settings
+from app.infrastructure.security.jwt_utils import create_access_token, create_refresh_token, verify_token, settings
 
 async def create_user(db: AsyncSession, user_data: UserCreate) -> UserResponse:
     user_data.PASSWORD = hash_password(user_data.PASSWORD)

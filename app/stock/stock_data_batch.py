@@ -1,8 +1,8 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.local_stock_api import get_stock_data
-from app.crud.stock_crud import update_stock, insert_bulk_stock_hstr
-from app.services.stock_service import get_stock_info
-from app.module.db_connection import get_db
+from app.stock.stock_crud import update_stock, insert_bulk_stock_hstr
+from app.stock.stock_service import get_stock_info
+from app.infrastructure.database.db_connection import get_db
 from datetime import datetime, UTC
 from dateutil.relativedelta import relativedelta
 import asyncio

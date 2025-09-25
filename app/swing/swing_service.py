@@ -1,13 +1,13 @@
 from dateutil.relativedelta import relativedelta
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.batch.tech_analysis import sell_or_buy
-from app.services.stock_service import get_stock_info
-from app.crud.stock_crud import update_stock
-from app.crud.swing_crud import insert_swing, select_swing, select_swing_account, list_day_swing, update_swing, delete_swing
-from app.model.schemas.swing_model import SwingCreate
-from app.batch.stock_data_batch import fetch_and_store_3_years_data, get_batch_status as get_stock_batch_status
+from app.swing.tech_analysis import sell_or_buy
+from app.stock.stock_service import get_stock_info
+from app.stock.stock_crud import update_stock
+from app.swing.swing_crud import insert_swing, select_swing, select_swing_account, list_day_swing, update_swing, delete_swing
+from app.swing.swing_model import SwingCreate
+from app.stock.stock_data_batch import fetch_and_store_3_years_data, get_batch_status as get_stock_batch_status
 from datetime import datetime, UTC
-from app.services.stock_service import get_day_stock_price
+from app.stock.stock_service import get_day_stock_price
 import pandas as pd
 import asyncio
 
@@ -127,7 +127,6 @@ async def backtest_swing(db: AsyncSession, swing_data: SwingCreate):
         # 백테스팅 실행
         trades = []
         portfolio_values = []
-        status = "0"
         total_capital = initial_capital #  총금액 기준 고정 (각 차수 매수는 총금액 * BUY_RATIO)
 
         # 날짜별로 순회하며 백테스팅 실행
@@ -140,16 +139,14 @@ async def backtest_swing(db: AsyncSession, swing_data: SwingCreate):
                 short_term,
                 medium_term,
                 long_term,
-                initial_capital,
-                ris_period,
-                0.05
+                ris_period
             )
 
             current_price = current_data['STCK_CLPR'].iloc[-1]
             current_date = current_data.index[-1] if hasattr(current_data.index, 'iloc') else i
 
             # 1차 매수
-            if first_buy_signal and status == "0" and initial_capital > 0:
+            if first_buy_signal and initial_capital > 0:
                 buy_amount = total_capital * buy_ratio
                 buy_quantity = int(buy_amount / current_price)
                 executed_amount = buy_quantity * current_price
@@ -161,11 +158,11 @@ async def backtest_swing(db: AsyncSession, swing_data: SwingCreate):
                         'quantity': buy_quantity,
                         'price': current_price,
                         'amount': executed_amount,
+                        'current_capital': initial_capital,
                         'reason': '1차 매수 신호',
                     })
-                    status = "1"
             # 2차 매수
-            elif second_buy_signal and status == "1" and initial_capital > 0:
+            elif second_buy_signal and initial_capital > 0:
                 buy_amount = min(total_capital * buy_ratio, initial_capital)
                 buy_quantity = int(buy_amount / current_price)
                 executed_amount = buy_quantity * current_price
@@ -178,56 +175,69 @@ async def backtest_swing(db: AsyncSession, swing_data: SwingCreate):
                         'quantity': buy_quantity,
                         'price': current_price,
                         'amount': executed_amount,
+                        'current_capital': initial_capital,
                         'reason': '2차 매수 신호'
                     })
-                    status = "2"
 
             # 매도 신호 처리
-            elif first_sell_signal or second_sell_signal or stop_loss_signal:
+            elif first_sell_signal or second_sell_signal:
                 # 보유 주식 수량 계산 (매수 수량 - 매도 수량)
                 total_bought = sum([trade['quantity'] for trade in trades if trade['action'] == 'BUY'])
                 total_sold = sum([trade['quantity'] for trade in trades if trade['action'] == 'SELL'])
                 total_quantity = total_bought - total_sold
 
                 if total_quantity > 0:
-                    if stop_loss_signal:
-                        # 손절매 - 전량 매도
-                        sell_quantity = total_quantity
+                    # 현재 평균매입가(보유분 기준)
+                    curr_qty, curr_avg_cost = get_position_state(trades)
+
+                    # if stop_loss_signal:
+                        # # 손절 - 전량 매도
+                        # sell_quantity = total_quantity
+                        # sell_amount = sell_quantity * current_price
+                        # initial_capital += sell_amount
+                        # trades.append({
+                        #     'date': current_date,
+                        #     'action': 'SELL',
+                        #     'quantity': sell_quantity,
+                        #     'price': current_price,
+                        #     'amount': sell_amount,
+                        #     'current_capital': initial_capital,
+                        #     'reason': '손절 신호'
+                        # })
+                    if first_sell_signal:
+                        # 1차 매도
+                        sell_quantity = int(total_quantity * sell_ratio)
                         sell_amount = sell_quantity * current_price
                         initial_capital += sell_amount
+                        realized_pnl = (current_price - curr_avg_cost) * sell_quantity # 실현된 수익(손식 or 이익)
+                        realized_pnl_pct = ((current_price / curr_avg_cost) - 1) * 100 if curr_avg_cost > 0 else 0.0
                         trades.append({
                             'date': current_date,
                             'action': 'SELL',
                             'quantity': sell_quantity,
                             'price': current_price,
                             'amount': sell_amount,
-                            'reason': '손절매'
-                        })
-                    elif first_sell_signal:
-                        # 1차 매도 - 보유 수량의 50% 매도
-                        sell_quantity = total_quantity // 2
-                        sell_amount = sell_quantity * current_price
-                        initial_capital += sell_amount
-                        trades.append({
-                            'date': current_date,
-                            'action': 'SELL',
-                            'quantity': sell_quantity,
-                            'price': current_price,
-                            'amount': sell_amount,
+                            'current_capital': initial_capital,
+                            'realized_pnl': realized_pnl,
+                            'realized_pnl_pct': realized_pnl_pct,
                             'reason': '1차 매도 신호'
                         })
                     elif second_sell_signal:
-                        # 2차 매도 - 남은 수량 전량 매도
-                        sell_quantity = total_quantity
-                        sell_amount = sell_quantity * current_price
+                        # 2차 매도 - 2차 매도는 전량 매도
+                        sell_amount = total_quantity * current_price
                         initial_capital += sell_amount
+                        realized_pnl = (current_price - curr_avg_cost) * total_quantity
+                        realized_pnl_pct = ((current_price / curr_avg_cost) - 1) * 100 if curr_avg_cost > 0 else 0.0
                         trades.append({
                             'date': current_date,
                             'action': 'SELL',
-                            'quantity': sell_quantity,
+                            'quantity': total_quantity,
                             'price': current_price,
                             'amount': sell_amount,
-                            'reason': '2차 매도 신호'
+                            'current_capital': initial_capital,
+                            'realized_pnl': realized_pnl,
+                            'realized_pnl_pct': realized_pnl_pct,
+                            'reason': '2차 매도 신호 - 전량 매도'
                         })
             # 포트폴리오 가치 기록
             portfolio_value = initial_capital
@@ -270,3 +280,25 @@ async def backtest_swing(db: AsyncSession, swing_data: SwingCreate):
             "error": str(e)
         }
 
+ # 보유 포지션 상태(수량/평단가) 계산
+def get_position_state(exec_trades):
+    """
+    평균원가 이동법(가중 평균)을 사용하여 현재 보유 수량과 평균매입가를 계산
+    - BUY 시: cost += qty * price, position += qty
+    - SELL 시: cost -= avg_cost * qty, position -= qty
+    """
+    position_qty = 0
+    position_cost = 0.0
+    for t in exec_trades:
+        if t['action'] == 'BUY':
+            position_cost += t['quantity'] * t['price']
+            position_qty += t['quantity']
+        elif t['action'] == 'SELL':
+            if position_qty > 0:
+                avg_cost = position_cost / position_qty
+                sell_qty = t['quantity']
+                # 평균원가 만큼 원가 차감
+                position_cost -= avg_cost * sell_qty
+                position_qty -= sell_qty
+    avg_cost_now = (position_cost / position_qty) if position_qty > 0 else 0.0
+    return position_qty, avg_cost_now

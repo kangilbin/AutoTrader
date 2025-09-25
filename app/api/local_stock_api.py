@@ -1,5 +1,4 @@
 from app.api.kis_open_api import oauth_token
-from app.model.schemas import order_model, mod_order_model
 from app.module.fetch_api import fetch
 from app.module.config import get_env
 from app.module.redis_connection import get_redis

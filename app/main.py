@@ -1,27 +1,27 @@
 import logging
-from fastapi import FastAPI, Request, Depends, HTTPException, WebSocket
+from fastapi import FastAPI, Request, Depends, HTTPException
 from app.api.kis_open_api import oauth_token
 from app.api.local_stock_api import get_stock_balance, get_order_cash, get_order_rvsecncl, get_inquire_psbl_rvsecncl_lst, get_inquire_asking_price
-from app.model.schemas.account_model import AccountCreate
-from app.model.schemas.auth_model import AuthCreate
-from app.model.schemas.mod_order_model import ModOrder
-from app.model.schemas.order_model import Order
-from app.model.schemas.swing_model import SwingCreate
-from app.model.schemas.user_model import UserCreate
+from app.account.account_model import AccountCreate
+from app.auth.auth_model import AuthCreate
+from app.order.mod_order_model import ModOrder
+from app.order.order_model import Order
+from app.swing.swing_model import SwingCreate
+from app.user.user_model import UserCreate
 from app.module.schedules import schedule_start
-from app.module.db_connection import get_db, Database
+from app.infrastructure.database.db_connection import get_db, Database
 from app.module.redis_connection import get_redis, Redis
 from contextlib import asynccontextmanager
-from app.services.account_service import create_account, get_account, get_accounts, remove_account
-from app.services.auth_service import create_auth, get_auth_key, get_auth_keys
-from app.services.stock_service import get_stock_initial
-from app.services.swing_service import create_swing, backtest_swing
-from app.services.user_service import create_user, login_user, token_refresh, duplicate_user
+from app.account.account_service import create_account, get_account, get_accounts, remove_account
+from app.auth.auth_service import create_auth, get_auth_key, get_auth_keys
+from app.stock.stock_service import get_stock_initial
+from app.swing.swing_service import create_swing, backtest_swing
+from app.user.user_service import create_user, login_user, token_refresh, duplicate_user
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.module.jwt_utils import get_token, TokenData
+from app.infrastructure.security.jwt_utils import get_token, TokenData
 from fastapi.security import OAuth2PasswordBearer
 from typing import Annotated
-from app.model.schemas.auth_model import AuthChoice
+from app.auth.auth_model import AuthChoice
 
 
 logging.basicConfig(level=logging.DEBUG)

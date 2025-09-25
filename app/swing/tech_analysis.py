@@ -59,8 +59,7 @@ def obv(df):
                          np.where(df['STCK_CLPR'] < df['STCK_CLPR'].shift(1), -df['ACML_VOL'], 0))
     return pd.Series(obv_val, index=df.index).cumsum()
 
-def sell_or_buy(df: pd.DataFrame, short_line: int, mid_line: int, long_line: int, buy_price: float = None,
-                rsi_period: int = 14, stop_loss_rate: float = -0.05) -> tuple:
+def sell_or_buy(df: pd.DataFrame, short_line: int, mid_line: int, long_line: int, rsi_period: int = 14) -> tuple:
     """
     매수/매도 신호를 검출하는 함수
 
@@ -134,8 +133,8 @@ def sell_or_buy(df: pd.DataFrame, short_line: int, mid_line: int, long_line: int
     second_sell_signal = second_sell_cond1 & second_sell_cond2 & second_adx_sell_cond & second_obv_sell_cond
 
     # 손절 조건
-    stop_loss_signal = False
-    if buy_price is not None:
-        stop_loss_price = buy_price * (1 + stop_loss_rate)
-        stop_loss_signal = df['STCK_CLPR'].iloc[-1] <= stop_loss_price
-    return first_buy_signal, second_buy_signal, first_sell_signal, second_sell_signal, stop_loss_signal
+    # stop_loss_signal = False
+    # if buy_price is not None:
+    #     stop_loss_price = buy_price * (1 + stop_loss_rate)
+    #     stop_loss_signal = df['STCK_CLPR'].iloc[-1] <= stop_loss_price
+    return first_buy_signal, second_buy_signal, first_sell_signal, second_sell_signal

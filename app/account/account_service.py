@@ -1,6 +1,6 @@
 import json
-from app.crud.account_crud import insert_account, select_account, delete_account, list_account, update_account
-from app.model.schemas.account_model import AccountCreate, AccountResponse
+from app.account.account_crud import insert_account, select_account, delete_account, list_account, update_account
+from app.account.account_model import AccountCreate, AccountResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.module.redis_connection import get_redis
 from datetime import datetime
