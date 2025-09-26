@@ -1,27 +1,7 @@
 import pandas as pd
 import numpy as np
+import talib as ta
 
-# 지수 이동 평균(EMA) 계산 함수
-def ema(series: pd.Series, period: int) -> pd.Series:
-    return series.ewm(span=period, adjust=False).mean()
-
-
-# rsi 계산 (모멘텀과 과매도/과매수)
-def rsi(series: pd.Series, period: int = 14) -> pd.Series:
-    delta = series.diff()
-
-    gain = np.where(delta > 0, delta, 0)
-    loss = np.where(delta < 0, -delta, 0)
-
-    gain = pd.Series(gain, index=series.index)
-    loss = pd.Series(loss, index=series.index)
-
-    avg_gain = gain.ewm(span=period, adjust=False).mean()
-    avg_loss = loss.ewm(span=period, adjust=False).mean()
-
-    rs = avg_gain / avg_loss
-    rsi = 100 - (100 / (1 + rs))
-    return rsi
 
 
 # ADX 계산(추세의 강도)
@@ -59,13 +39,13 @@ def obv(df):
                          np.where(df['STCK_CLPR'] < df['STCK_CLPR'].shift(1), -df['ACML_VOL'], 0))
     return pd.Series(obv_val, index=df.index).cumsum()
 
-def sell_or_buy(df: pd.DataFrame, short_line: int, mid_line: int, long_line: int, rsi_period: int = 14) -> tuple:
+def sell_or_buy(df: pd.DataFrame, short_line: int, mid_line: int, long_line: int) -> tuple:
     """
     매수/매도 신호를 검출하는 함수
 
     Args:
         df (pd.DataFrame): 주가 데이터
-        short_line (int): 단기 이동평균선 기간 
+        short_line (int): 단기 이동평균선 기간
         mid_line (int): 중기 이동평균선 기간
         long_line (int): 장기 이동평균선 기간
         buy_price (float, optional): 매수 가격. Defaults to None.
@@ -75,62 +55,82 @@ def sell_or_buy(df: pd.DataFrame, short_line: int, mid_line: int, long_line: int
     Returns:
         tuple: (매수신호1, 매수신호2, 매도신호1, 매도신호2, 손절신호)
     """
-    ema_short = ema(df['STCK_CLPR'], short_line)
-    ema_mid = ema(df['STCK_CLPR'], mid_line)
-    ema_long = ema(df['STCK_CLPR'], long_line)
-    first_ema_gap_now = ema_mid.iloc[-1] - ema_short.iloc[-1]
-    first_ema_gap_prev = ema_mid.iloc[-3] - ema_short.iloc[-3]
+    # numpy 배열로 변환
+    high = df["STCK_HGPR"].values
+    low = df["STCK_LWPR"].values
+    close = df["STCK_CLPR"].values
+    volume = df["ACML_VOL"].values
 
-    # 이평선 수렴(1% 이하로 수렴)
+    # 지수 이동 평균(EMA)
+    df["ema_short"] = ta.EMA(close, short_line)
+    df["ema_mid"] = ta.EMA(close, mid_line)
+    df["ema_long"] = ta.EMA(close, long_line)
+
+    #  DMI (+DI, -DI, ADX)
+    df["plus_di"] = ta.PLUS_DI(high, low, close, timeperiod=14)
+    df["minus_di"] = ta.MINUS_DI(high, low, close, timeperiod=14)
+    df["adx"] = ta.ADX(high, low, close, timeperiod=14)
+
+    # RSI
+    df["rsi"] = ta.RSI(close, timeperiod=14)
+
+    # OBV
+    df["obv"] = ta.OBV(close, volume)
+
+    first_ema_gap_now = abs(df["ema_mid"].iloc[-1] - df["ema_short"].iloc[-1])
+    first_ema_gap_prev = abs(df["ema_mid"].iloc[-2] - df["ema_short"].iloc[-2])
+
+    # 이평선 수렴(1% 이하로 수렴) 매도 신호
     #first_ema_buy_cond = first_ema_gap_now < first_ema_gap_prev and first_ema_gap_now < ema_mid.iloc[-1] * 0.01 and ema_short.iloc[-1] > ema_mid.iloc[-1]
-    first_ema_sell_cond = first_ema_gap_now > first_ema_gap_prev and first_ema_gap_now < ema_mid.iloc[-1] * 0.01 and ema_short.iloc[-1] < ema_mid.iloc[-1]
+    first_ema_sell_cond = (
+            first_ema_gap_now > first_ema_gap_prev and
+            first_ema_gap_now / df["ema_mid"].iloc[-1] < 0.01 and
+            df["ema_short"].iloc[-1] < df["ema_mid"].iloc[-1]
+    )
 
-    rsi_vals = rsi(df['STCK_CLPR'], rsi_period)
-    rsi_now, rsi_prev = rsi_vals.iloc[-1], rsi_vals.iloc[-2]
+    rsi_now, rsi_prev = df["rsi"].iloc[-1], df["rsi"].iloc[-2]
     rsi_diff = rsi_now - rsi_prev
     #rsi_strong_buy_cond = rsi_diff > 5 and rsi_prev < 30 and rsi_now > 30 # RSI가 급격히 반등할 때
-    rsi_strong_sell_cond = rsi_diff < -5 and rsi_prev > 70 and rsi_now < 70 # RSI가 급격히 하락할 때
 
+    # RSI 매도 신호
+    rsi_sell_cond = (
+            rsi_diff < -5 and
+            rsi_prev > 70 and
+            rsi_now < 70
+    )
+    # RSI 매수 신호
+    rsi_buy_cond = (
+            rsi_diff > 5 and  # 오늘 RSI가 전일보다 급등
+            rsi_prev < 30 and  # 전일 RSI가 과매도 구간
+            rsi_now > 30  # 오늘 RSI가 과매도 구간 위로 올라옴
+    )
+    obv_diff = df['obv'].diff()
+    obv_diff_avg = obv_diff.rolling(7).mean()  # 최근 7일 평균 변화량
+    obv_cond = obv_diff.iloc[-1] > obv_diff_avg.iloc[-1] * 1.5  # 평균 대비 1.5배 이상
 
-    plus_di, minus_di, adx_val = adx(df)
-    obv_vals = obv(df)
-    obv_ma3 = obv_vals.rolling(3).mean()
-    obv_ma7 = obv_vals.rolling(7).mean()
+    adx_now = df["adx"].iloc[-1]
+    first_adx_buy_cond = (adx_now> 25) & (df["plus_di"].iloc[-1] > df["minus_di"].iloc[-1])
+    second_adx_buy_cond = (adx_now > 30) & (df["plus_di"].iloc[-1] > df["minus_di"].iloc[-1])
 
-    first_adx_buy_cond = (adx_val.iloc[-1] > 25) & (plus_di > minus_di)
-    second_adx_buy_cond = (adx_val.iloc[-1] > 30) & (plus_di > minus_di)
-    first_obv_buy_cond = obv_vals.iloc[-1] > obv_ma3.iloc[-1]
-    second_obv_buy_cond = obv_vals.iloc[-1] > obv_ma7.iloc[-1]
+    # 매수 단기-중기 (이평선 + RSI + DMI + OBV)
+    first_buy_cond = (df["ema_short"].iloc[-1] > df["ema_mid"].iloc[-1]) & (df["ema_short"].iloc[-2] <=  df["ema_mid"].iloc[-2])
+    first_buy_signal = first_buy_cond & rsi_buy_cond & first_adx_buy_cond & obv_cond
 
-    # 단기-중기
-    first_buy_cond1 = (ema_short.iloc[-1] > ema_mid.iloc[-1]) & (ema_short.iloc[-2] <= ema_mid.iloc[-2])
-    first_buy_cond2 = (rsi_now > 30) & (rsi_prev <= 30)
-    first_buy_signal1 = first_buy_cond1 & first_buy_cond2 & first_adx_buy_cond & first_obv_buy_cond
-    # first_buy_signal2 = first_ema_buy_cond & rsi_strong_buy_cond & first_adx_buy_cond 급등 신호
-    # first_buy_signal = first_buy_signal1 | first_buy_signal2
-    first_buy_signal = first_buy_signal1
+    # 매수 중기-장기 (이평선 + DMI + OBV)
+    second_buy_cond1 = (df["ema_mid"].iloc[-1] > df["ema_long"].iloc[-1]) & (df["ema_long"].iloc[-2] <= df["ema_mid"].iloc[-2])
+    second_buy_signal = second_buy_cond1 & second_adx_buy_cond & obv_cond
 
-    # 중기-장기
-    second_buy_cond1 = (ema_mid.iloc[-1] > ema_long.iloc[-1]) & (ema_mid.iloc[-2] <= ema_long.iloc[-2])
-    second_buy_cond2 = (rsi_now > 40) & (rsi_prev <= 40)
-    second_buy_signal = second_buy_cond1 & second_buy_cond2 & second_adx_buy_cond & second_obv_buy_cond
+    first_adx_sell_cond = (adx_now > 25) & (df["plus_di"].iloc[-1] < df["minus_di"].iloc[-1])
+    second_adx_sell_cond = (adx_now > 30) & (df["plus_di"].iloc[-1] < df["minus_di"].iloc[-1])
 
-    first_adx_sell_cond = (adx_val.iloc[-1] > 25) & (plus_di < minus_di)
-    second_adx_sell_cond = (adx_val.iloc[-1] > 30) & (plus_di < minus_di)
-    first_obv_sell_cond = obv_vals.iloc[-1] < obv_ma3.iloc[-1]
-    second_obv_sell_cond = obv_vals.iloc[-1] < obv_ma7.iloc[-1]
+    # 매도 단기-중기
+    first_sell_cond1 = (df["ema_short"].iloc[-1] < df["ema_mid"].iloc[-1]) & (df["ema_short"].iloc[-2] >= df["ema_mid"].iloc[-2])
+    first_sell_signal = first_sell_cond1 & rsi_sell_cond & first_adx_sell_cond & obv_cond
+    first_sell_signal = first_sell_signal | first_ema_sell_cond
 
-    # 익절 단기-중기
-    first_sell_cond1 = (ema_short.iloc[-1] < ema_mid.iloc[-1]) & (ema_short.iloc[-2] >= ema_mid.iloc[-2])
-    first_sell_cond2 = (rsi_now < 70) & (rsi_prev >= 70)
-    first_sell_signal1 = first_sell_cond1 & first_sell_cond2 & first_adx_sell_cond & first_obv_sell_cond
-    first_sell_signal2 = first_ema_sell_cond & rsi_strong_sell_cond
-    first_sell_signal = first_sell_signal1 | first_sell_signal2
-
-    # 익절 중기-장기
-    second_sell_cond1 = (ema_mid.iloc[-1] < ema_long.iloc[-1]) & (ema_mid.iloc[-2] >= ema_long.iloc[-2])
-    second_sell_cond2 = (rsi_now < 60) & (rsi_prev >= 60)
-    second_sell_signal = second_sell_cond1 & second_sell_cond2 & second_adx_sell_cond & second_obv_sell_cond
+    # 매도 중기-장기
+    second_sell_cond = (df["ema_mid"].iloc[-1] < df["ema_long"].iloc[-1]) & (df["ema_mid"].iloc[-2] >= df["ema_long"].iloc[-2])
+    second_sell_signal = second_sell_cond & second_adx_sell_cond
 
     # 손절 조건
     # stop_loss_signal = False
