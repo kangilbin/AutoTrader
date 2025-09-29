@@ -1,7 +1,7 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text, update, select
-from app.model.table_create import Stock, StockHstr
-from app.model.schemas.stock_model import StockResponse, StockCreate, StockHstrResponse
+from app.infrastructure.database.table_create import Stock, StockHstr
+from app.stock.stock_model import StockResponse, StockHstrResponse
 from sqlalchemy.exc import SQLAlchemyError
 from typing import List
 import logging

@@ -1,7 +1,7 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, delete, text
-from app.model.table_create import Account
-from app.model.schemas.account_model import AccountCreate, AccountResponse
+from app.infrastructure.database.table_create import Account
+from app.account.account_model import AccountCreate, AccountResponse
 from sqlalchemy.exc import SQLAlchemyError
 import logging
 
