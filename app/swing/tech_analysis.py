@@ -3,7 +3,7 @@ import talib as ta
 
 
 
-def ema_swing_signals(df: pd.DataFrame, short_line: int, mid_line: int, long_line: int) -> tuple:
+def ema_swing_signals(df: pd.DataFrame, short_line: int, mid_line: int, long_line: int) -> tuple[bool, bool, bool, bool, bool]:
     """
     스윙 매매 특화 신호 생성:
     - 1차 매수: 단기 > 중기 상태 + (RSI / STOCH K/D / MACD) 컨펌 2/3 + ADX 하한 + OBV 양호
@@ -176,5 +176,134 @@ def ema_swing_signals(df: pd.DataFrame, short_line: int, mid_line: int, long_lin
     highest_n = pd.Series(high, index=df.index).rolling(22, min_periods=1).max().iloc[-1]
     ce_long = highest_n - 2.5 * atr_now if pd.notna(atr_now) else None
     stop_loss_signal = bool(ce_long is not None and close_now < ce_long)
+
+    return first_buy_signal, second_buy_signal, first_sell_signal, second_sell_signal, stop_loss_signal
+
+
+def ichimoku_swing_signals(df: pd.DataFrame) -> tuple[bool, bool, bool, bool, bool]:
+    """
+    일목균형표 기반 신호 생성:
+    - 1차 매수: TK 골든크로스(전환선↑기준선) + 구름 상단 돌파/유지 + 치코우(현재가 > 26봉 전 종가)
+    - 2차 매수: 구름 강세(스팬A>스팬B) + 기준선 위 + (최근 TK 골든크로스 or 구름 재돌파)
+    - 1차 매도: TK 데드크로스 + 전환선 하회 or 구름 하향 압력 초입
+    - 2차 매도: 구름 하단 이탈 or 구름 약세(스팬A<스팬B) + TK 데드크로스
+    - 손절: min(기준선, 구름 하단) - 1.5*ATR(롱 관점)
+    Returns: (buy1, buy2, sell1, sell2, stop_loss)
+    """
+    TENKAN_PERIOD = 9
+    KIJUN_PERIOD = 26
+    SENKOU_B_PERIOD = 52
+    ATR_PERIOD = 14
+
+    if df is None or len(df) == 0:
+        return False, False, False, False, False
+
+    # 날짜 정렬 및 숫자형 보정
+    if "STCK_BSOP_DATE" in df.columns:
+        df = df.sort_values("STCK_BSOP_DATE").reset_index(drop=True)
+    for col in ["STCK_HGPR", "STCK_LWPR", "STCK_CLPR"]:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    high = df["STCK_HGPR"]
+    low = df["STCK_LWPR"]
+    close = df["STCK_CLPR"]
+
+    # 데이터 길이/NaN 가드 (선행스팬 26 시프트 반영)
+    min_needed = max(SENKOU_B_PERIOD, KIJUN_PERIOD, TENKAN_PERIOD) + 26 + 1
+    if len(df) < min_needed:
+        return False, False, False, False, False
+
+    # 전환선(Tenkan), 기준선(Kijun)
+    tenkan_high = high.rolling(TENKAN_PERIOD, min_periods=TENKAN_PERIOD).max()
+    tenkan_low = low.rolling(TENKAN_PERIOD, min_periods=TENKAN_PERIOD).min()
+    tenkan = (tenkan_high + tenkan_low) / 2.0
+
+    kijun_high = high.rolling(KIJUN_PERIOD, min_periods=KIJUN_PERIOD).max()
+    kijun_low = low.rolling(KIJUN_PERIOD, min_periods=KIJUN_PERIOD).min()
+    kijun = (kijun_high + kijun_low) / 2.0
+
+    # 선행스팬 A/B (현재 시점에서 사용 가능하도록 shift(26))
+    senkou_a = ((tenkan + kijun) / 2.0).shift(26)
+    senkou_b_high = high.rolling(SENKOU_B_PERIOD, min_periods=SENKOU_B_PERIOD).max()
+    senkou_b_low = low.rolling(SENKOU_B_PERIOD, min_periods=SENKOU_B_PERIOD).min()
+    senkou_b = ((senkou_b_high + senkou_b_low) / 2.0).shift(26)
+
+    # 치코우는 전형적으로 종가를 -26 시프트하나, 룩어헤드 방지 위해
+    # "현재가 vs 26봉 전 종가" 비교로 동일 의미의 컨펌 사용
+    close_26ago = close.shift(26)
+
+    # ATR (리스크/손절 계산)
+    atr = pd.Series(ta.ATR(high.values, low.values, close.values, timeperiod=ATR_PERIOD), index=df.index)
+
+    # NaN 방지
+    tail_cols = [tenkan, kijun, senkou_a, senkou_b, close_26ago, atr]
+    for s in tail_cols:
+        if pd.isna(s.iloc[-1]) or pd.isna(s.iloc[-2]):
+            return False, False, False, False, False
+    if pd.isna(close.iloc[-1]) or pd.isna(close.iloc[-2]):
+        return False, False, False, False, False
+
+    # 최신/직전 값
+    tenkan_now, tenkan_prev = tenkan.iloc[-1], tenkan.iloc[-2]
+    kijun_now, kijun_prev = kijun.iloc[-1], kijun.iloc[-2]
+    senkou_a_now, senkou_b_now = senkou_a.iloc[-1], senkou_b.iloc[-1]
+    senkou_a_prev, senkou_b_prev = senkou_a.iloc[-2], senkou_b.iloc[-2]
+    close_now, close_prev = close.iloc[-1], close.iloc[-2]
+    close_26ago_now, close_26ago_prev = close_26ago.iloc[-1], close_26ago.iloc[-2]
+    atr_now = atr.iloc[-1]
+
+    # 유틸(교차)
+    def crossed_above(v_now, v_prev, ref_now, ref_prev) -> bool:
+        return (v_prev <= ref_prev) and (v_now > ref_now)
+
+    def crossed_below(v_now, v_prev, ref_now, ref_prev) -> bool:
+        return (v_prev >= ref_prev) and (v_now < ref_now)
+
+    # 상태/레벨
+    tk_bull_cross = crossed_above(tenkan_now, tenkan_prev, kijun_now, kijun_prev)
+    tk_bear_cross = crossed_below(tenkan_now, tenkan_prev, kijun_now, kijun_prev)
+
+    cloud_bull = senkou_a_now > senkou_b_now
+    cloud_bear = senkou_a_now < senkou_b_now
+
+    above_cloud_now = close_now > max(senkou_a_now, senkou_b_now)
+    below_cloud_now = close_now < min(senkou_a_now, senkou_b_now)
+
+    # 구름 상단 재돌파(리테스트) 감지
+    rebreak_up = (close_prev <= max(senkou_a_prev, senkou_b_prev)) and above_cloud_now
+    rebreak_down = (close_prev >= min(senkou_a_prev, senkou_b_prev)) and below_cloud_now
+
+    # 치코우 컨펌(동일 의미 비교)
+    chikou_bull = (pd.notna(close_26ago_now) and close_now > close_26ago_now)
+
+    # 과열 진입 방지(가격이 기준선에서 과도하게 이탈)
+    over_ext_up = (atr_now > 0) and ((close_now - kijun_now) / atr_now > 2.0)
+
+    # === 신호 정의 ===
+    # 1차 매수: TK 골든크로스 + (구름 상단) + 치코우 우위, 과열 아님
+    first_buy_signal = bool(
+        tk_bull_cross and above_cloud_now and chikou_bull and not over_ext_up
+    )
+
+    # 2차 매수: 구름 강세 + 기준선 위 + (최근 TK 골든크로스 or 구름 재돌파), 과열 아님
+    second_buy_signal = bool(
+        cloud_bull and (close_now > kijun_now) and (tk_bull_cross or rebreak_up) and not over_ext_up
+    )
+
+    # 1차 매도: TK 데드크로스 + (전환선 하회 또는 하락 압력 초입)
+    first_sell_signal = bool(
+        tk_bear_cross and ((close_now < tenkan_now) or rebreak_down)
+    )
+
+    # 2차 매도: 구름 하단 이탈 또는 구름 약세 + TK 데드크로스
+    second_sell_signal = bool(
+        (below_cloud_now or cloud_bear) and (tk_bear_cross or rebreak_down)
+    )
+
+    # 손절(롱 관점): min(기준선, 구름 하단) - 1.5*ATR
+    cloud_floor_now = min(senkou_a_now, senkou_b_now)
+    sl_level = min(kijun_now, cloud_floor_now)
+    stop_loss_signal = bool(pd.notna(sl_level) and pd.notna(atr_now) and (close_now < (sl_level - 1.5 * atr_now)))
 
     return first_buy_signal, second_buy_signal, first_sell_signal, second_sell_signal, stop_loss_signal
