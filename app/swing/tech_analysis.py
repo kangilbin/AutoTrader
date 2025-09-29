@@ -1,60 +1,24 @@
 import pandas as pd
-import numpy as np
 import talib as ta
 
 
 
-# ADX 계산(추세의 강도)
-def adx(df, period: int = 14):
-    df = df.copy()
-    df['prev_close'] = df['STCK_CLPR'].shift(1)
-
-    # TR 계산
-    tr1 = df['STCK_HGPR'] - df['STCK_LWPR']
-    tr2 = abs(df['STCK_HGPR'] - df['prev_close'])
-    tr3 = abs(df['STCK_LWPR'] - df['prev_close'])
-    df['TR'] = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
-
-    # +DM, -DM 계산
-    df['+DM'] = np.where((df['STCK_HGPR'] - df['STCK_HGPR'].shift(1)) > (df['STCK_LWPR'].shift(1) - df['STCK_LWPR']),
-                         np.maximum(df['STCK_HGPR'] - df['STCK_HGPR'].shift(1), 0), 0)
-    df['-DM'] = np.where((df['STCK_LWPR'].shift(1) - df['STCK_LWPR']) > (df['STCK_HGPR'] - df['STCK_HGPR'].shift(1)),
-                         np.maximum(df['STCK_LWPR'].shift(1) - df['STCK_LWPR'], 0), 0)
-
-    # 14일 이동평균 계산
-    tr_n = df['TR'].rolling(window=period).sum()
-    plus_dm_n = df['+DM'].rolling(window=period).sum()
-    minus_dm_n = df['-DM'].rolling(window=period).sum()
-
-    plus_di = 100 * (plus_dm_n / tr_n)
-    minus_di = 100 * (minus_dm_n / tr_n)
-    dx = 100 * abs(plus_di - minus_di) / (plus_di + minus_di)
-    adx_val = dx.rolling(window=period).mean()
-
-    return plus_di.iloc[-1], minus_di.iloc[-1], adx_val.iloc[-1]
-
-# OBV 거래량 흐름
-def obv(df):
-    obv_val = np.where(df['STCK_CLPR'] > df['STCK_CLPR'].shift(1), df['ACML_VOL'],
-                         np.where(df['STCK_CLPR'] < df['STCK_CLPR'].shift(1), -df['ACML_VOL'], 0))
-    return pd.Series(obv_val, index=df.index).cumsum()
-
-def sell_or_buy(df: pd.DataFrame, short_line: int, mid_line: int, long_line: int) -> tuple:
+def ema_swing_signals(df: pd.DataFrame, short_line: int, mid_line: int, long_line: int) -> tuple:
     """
-    매수/매도 신호를 검출하는 함수
-
-    Args:
-        df (pd.DataFrame): 주가 데이터
-        short_line (int): 단기 이동평균선 기간
-        mid_line (int): 중기 이동평균선 기간
-        long_line (int): 장기 이동평균선 기간
-        buy_price (float, optional): 매수 가격. Defaults to None.
-        rsi_period (int, optional): RSI 계산 기간. Defaults to 14.
-        stop_loss_rate (float, optional): 손절 비율. Defaults to -0.05.
-
-    Returns:
-        tuple: (매수신호1, 매수신호2, 매도신호1, 매도신호2, 손절신호)
+    스윙 매매 특화 신호 생성:
+    - 1차 매수: 단기 > 중기 상태 + (RSI / STOCH K/D / MACD) 컨펌 2/3 + ADX 하한 + OBV 양호
+    - 2차 매수: 중기 > 장기 상태 + (RSI / STOCH K/D / MACD) 컨펌 2/3 + OBV 양호
+    - 1차/2차 매도: 단<중 / 중<장 상태 + (RSI / STOCH K/D / MACD) 컨펌 2/3 + OBV 약화
+    - 손절: ATR 기반 Chandelier Exit
+    Returns: (buy1, buy2, sell1, sell2, stop_loss)
     """
+    # 날짜 정렬 및 숫자형 보정
+    if "STCK_BSOP_DATE" in df.columns:
+        df = df.sort_values("STCK_BSOP_DATE").reset_index(drop=True)
+    for col in ["STCK_HGPR", "STCK_LWPR", "STCK_CLPR", "ACML_VOL"]:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+
     # numpy 배열로 변환
     high = df["STCK_HGPR"].values
     low = df["STCK_LWPR"].values
@@ -62,79 +26,155 @@ def sell_or_buy(df: pd.DataFrame, short_line: int, mid_line: int, long_line: int
     volume = df["ACML_VOL"].values
 
     # 지수 이동 평균(EMA)
-    df["ema_short"] = ta.EMA(close, short_line)
-    df["ema_mid"] = ta.EMA(close, mid_line)
-    df["ema_long"] = ta.EMA(close, long_line)
+    df["ema_short"] = pd.Series(ta.EMA(close, timeperiod=short_line), index=df.index)
+    df["ema_mid"] = pd.Series(ta.EMA(close, timeperiod=mid_line), index=df.index)
+    df["ema_long"] = pd.Series(ta.EMA(close, timeperiod=long_line), index=df.index)
 
-    #  DMI (+DI, -DI, ADX)
-    df["plus_di"] = ta.PLUS_DI(high, low, close, timeperiod=14)
-    df["minus_di"] = ta.MINUS_DI(high, low, close, timeperiod=14)
-    df["adx"] = ta.ADX(high, low, close, timeperiod=14)
+    # DMI/ADX
+    df["plus_di"] = pd.Series(ta.PLUS_DI(high, low, close, timeperiod=14), index=df.index)
+    df["minus_di"] = pd.Series(ta.MINUS_DI(high, low, close, timeperiod=14), index=df.index)
+    df["adx"] = pd.Series(ta.ADX(high, low, close, timeperiod=14), index=df.index)
 
     # RSI
-    df["rsi"] = ta.RSI(close, timeperiod=14)
+    df["rsi"] = pd.Series(ta.RSI(close, timeperiod=14), index=df.index)
 
-    # OBV
-    df["obv"] = ta.OBV(close, volume)
+    # OBV 및 z-score
+    df["obv"] = pd.Series(ta.OBV(close, volume), index=df.index)
+    epsilon = 1e-9
+    obv_diff = df["obv"].diff()
+    obv_mean = obv_diff.rolling(7, min_periods=3).mean()
+    obv_std = obv_diff.rolling(7, min_periods=3).std().replace(0, epsilon).fillna(epsilon)
+    obv_z = ((obv_diff - obv_mean) / obv_std).fillna(0.0)
+    obv_buy_cond = (obv_diff.iloc[-1] > 0) and (obv_z.iloc[-1] > 1.0)
+    obv_sell_cond = (obv_diff.iloc[-1] < 0) and (obv_z.iloc[-1] < -1.0)
 
-    first_ema_gap_now = abs(df["ema_mid"].iloc[-1] - df["ema_short"].iloc[-1])
-    first_ema_gap_prev = abs(df["ema_mid"].iloc[-2] - df["ema_short"].iloc[-2])
-
-    # 이평선 수렴(1% 이하로 수렴) 매도 신호
-    #first_ema_buy_cond = first_ema_gap_now < first_ema_gap_prev and first_ema_gap_now < ema_mid.iloc[-1] * 0.01 and ema_short.iloc[-1] > ema_mid.iloc[-1]
-    first_ema_sell_cond = (
-            first_ema_gap_now > first_ema_gap_prev and
-            first_ema_gap_now / df["ema_mid"].iloc[-1] < 0.01 and
-            df["ema_short"].iloc[-1] < df["ema_mid"].iloc[-1]
+    # 스토캐스틱
+    slowk_np, slowd_np = ta.STOCH(
+        high, low, close,
+        fastk_period=14, slowk_period=3, slowk_matype=0,
+        slowd_period=3, slowd_matype=0
     )
+    slowk = pd.Series(slowk_np, index=df.index)
+    slowd = pd.Series(slowd_np, index=df.index)
 
+    # MACD
+    macd_np, macd_sig_np, macd_hist_np = ta.MACD(close, fastperiod=12, slowperiod=26, signalperiod=9)
+    df["macd"] = pd.Series(macd_np, index=df.index)
+    df["macd_signal"] = pd.Series(macd_sig_np, index=df.index)
+    df["macd_hist"] = pd.Series(macd_hist_np, index=df.index)
+
+    # ATR
+    df["atr"] = pd.Series(ta.ATR(high, low, close, timeperiod=14), index=df.index)
+
+    # 데이터 길이/NaN 가드
+    min_needed = max(long_line, 26, 22, 14) + 1
+    if len(df) < min_needed:
+        return False, False, False, False, False
+
+    tail2_cols = ["ema_short", "ema_mid", "rsi", "macd", "macd_signal"]
+    tail1_cols = ["ema_long", "adx", "plus_di", "minus_di", "atr"]
+    if df[tail2_cols].iloc[-2:].isna().any().any() or df[tail1_cols].iloc[-1:].isna().any().any():
+        return False, False, False, False, False
+    if pd.isna(slowk.iloc[-1]) or pd.isna(slowd.iloc[-1]) or pd.isna(slowk.iloc[-2]) or pd.isna(slowd.iloc[-2]):
+        return False, False, False, False, False
+
+    # 최신/직전 값
+    ema_s_now, ema_m_now, ema_l_now = df["ema_short"].iloc[-1], df["ema_mid"].iloc[-1], df["ema_long"].iloc[-1]
     rsi_now, rsi_prev = df["rsi"].iloc[-1], df["rsi"].iloc[-2]
-    rsi_diff = rsi_now - rsi_prev
-    #rsi_strong_buy_cond = rsi_diff > 5 and rsi_prev < 30 and rsi_now > 30 # RSI가 급격히 반등할 때
-
-    # RSI 매도 신호
-    rsi_sell_cond = (
-            rsi_diff < -5 and
-            rsi_prev > 70 and
-            rsi_now < 70
-    )
-    # RSI 매수 신호
-    rsi_buy_cond = (
-            rsi_diff > 5 and  # 오늘 RSI가 전일보다 급등
-            rsi_prev < 30 and  # 전일 RSI가 과매도 구간
-            rsi_now > 30  # 오늘 RSI가 과매도 구간 위로 올라옴
-    )
-    obv_diff = df['obv'].diff()
-    obv_diff_avg = obv_diff.rolling(7).mean()  # 최근 7일 평균 변화량
-    obv_cond = obv_diff.iloc[-1] > obv_diff_avg.iloc[-1] * 1.5  # 평균 대비 1.5배 이상
-
     adx_now = df["adx"].iloc[-1]
-    first_adx_buy_cond = (adx_now> 25) & (df["plus_di"].iloc[-1] > df["minus_di"].iloc[-1])
-    second_adx_buy_cond = (adx_now > 30) & (df["plus_di"].iloc[-1] > df["minus_di"].iloc[-1])
+    atr_now = df["atr"].iloc[-1]
+    slowk_now, slowk_prev = slowk.iloc[-1], slowk.iloc[-2]
+    slowd_now, slowd_prev = slowd.iloc[-1], slowd.iloc[-2]
+    macd_now, macd_sig_now = df["macd"].iloc[-1], df["macd_signal"].iloc[-1]
+    macd_prev, macd_sig_prev = df["macd"].iloc[-2], df["macd_signal"].iloc[-2]
+    close_now = close[-1]
 
-    # 매수 단기-중기 (이평선 + RSI + DMI + OBV)
-    first_buy_cond = (df["ema_short"].iloc[-1] > df["ema_mid"].iloc[-1]) & (df["ema_short"].iloc[-2] <=  df["ema_mid"].iloc[-2])
-    first_buy_signal = first_buy_cond & rsi_buy_cond & first_adx_buy_cond & obv_cond
+    # 교차 유틸
+    def crossed_above(v_now, v_prev, ref_now, ref_prev) -> bool:
+        return (v_prev <= ref_prev) and (v_now > ref_now)
 
-    # 매수 중기-장기 (이평선 + DMI + OBV)
-    second_buy_cond1 = (df["ema_mid"].iloc[-1] > df["ema_long"].iloc[-1]) & (df["ema_long"].iloc[-2] <= df["ema_mid"].iloc[-2])
-    second_buy_signal = second_buy_cond1 & second_adx_buy_cond & obv_cond
+    def crossed_below(v_now, v_prev, ref_now, ref_prev) -> bool:
+        return (v_prev >= ref_prev) and (v_now < ref_now)
 
-    first_adx_sell_cond = (adx_now > 25) & (df["plus_di"].iloc[-1] < df["minus_di"].iloc[-1])
-    second_adx_sell_cond = (adx_now > 30) & (df["plus_di"].iloc[-1] < df["minus_di"].iloc[-1])
+    # 트리거(교차)
+    rsi_buy_trigger = crossed_above(rsi_now, rsi_prev, 50, 50) or (rsi_now < 30 and rsi_now > rsi_prev)
+    rsi_sell_trigger = crossed_below(rsi_now, rsi_prev, 70, 70) or (rsi_now > 70 and rsi_now < rsi_prev)
+    stoch_buy_trigger = crossed_above(slowk_now, slowk_prev, 20, 20)
+    stoch_sell_trigger = crossed_below(slowk_now, slowk_prev, 80, 80)
+    macd_buy_trigger = crossed_above(macd_now, macd_prev, macd_sig_now, macd_sig_prev) and (adx_now > 20)
+    macd_sell_trigger = crossed_below(macd_now, macd_prev, macd_sig_now, macd_sig_prev) and (adx_now > 20)
 
-    # 매도 단기-중기
-    first_sell_cond1 = (df["ema_short"].iloc[-1] < df["ema_mid"].iloc[-1]) & (df["ema_short"].iloc[-2] >= df["ema_mid"].iloc[-2])
-    first_sell_signal = first_sell_cond1 & rsi_sell_cond & first_adx_sell_cond & obv_cond
-    first_sell_signal = first_sell_signal | first_ema_sell_cond
+    # 구간(레벨) 컨펌
+    rsi_bull = (rsi_now > 50) and (rsi_now >= rsi_prev)
+    rsi_bear = (rsi_now < 50) and (rsi_now <= rsi_prev)
+    stoch_kd_bull = (slowk_now > slowd_now) and (slowk_now > 20) and (slowd_now > 20)
+    stoch_kd_bear = (slowk_now < slowd_now) and (slowk_now < 80) and (slowd_now < 80)
+    macd_bull = (macd_now > macd_sig_now) and (macd_now > 0)
+    macd_bear = (macd_now < macd_sig_now) and (macd_now < 0)
 
-    # 매도 중기-장기
-    second_sell_cond = (df["ema_mid"].iloc[-1] < df["ema_long"].iloc[-1]) & (df["ema_mid"].iloc[-2] >= df["ema_long"].iloc[-2])
-    second_sell_signal = second_sell_cond & second_adx_sell_cond
 
-    # 손절 조건
-    # stop_loss_signal = False
-    # if buy_price is not None:
-    #     stop_loss_price = buy_price * (1 + stop_loss_rate)
-    #     stop_loss_signal = df['STCK_CLPR'].iloc[-1] <= stop_loss_price
-    return first_buy_signal, second_buy_signal, first_sell_signal, second_sell_signal
+    # 레벨 또는 트리거를 묶어 1표 인정
+    def votes_bull() -> int:
+        rsi_ok = rsi_bull or rsi_buy_trigger
+        stoch_ok = stoch_kd_bull or stoch_buy_trigger
+        macd_ok = macd_bull or macd_buy_trigger
+        return int(rsi_ok) + int(stoch_ok) + int(macd_ok)
+
+    def votes_bear() -> int:
+        rsi_ok = rsi_bear or rsi_sell_trigger
+        stoch_ok = stoch_kd_bear or stoch_sell_trigger
+        macd_ok = macd_bear or macd_sell_trigger
+        return int(rsi_ok) + int(stoch_ok) + int(macd_ok)
+
+    # 상태(이평)
+    state_up_s_gt_m = (ema_s_now > ema_m_now)
+    state_up_m_gt_l = (ema_m_now > ema_l_now)
+    state_dn_s_lt_m = (ema_s_now < ema_m_now)
+    state_dn_m_lt_l = (ema_m_now < ema_l_now)
+
+    # 컨펌 요구 개수
+    k_confirm = 2  # 3개(RSI / STOCH K/D / MACD) 중 최소 2개 이상
+
+    # === 매수/매도 신호 생성부 ===
+    # 1차 매수 신호:
+    # - 상태(필수): 단기 EMA > 중기 EMA
+    # - 보조지표 컨펌: RSI(레벨/교차), STOCH K/D(레벨/교차), MACD(레벨/교차) 중 2개 이상
+    # - 추세강도 필터: ADX > 15
+    # - 거래량/수급: OBV z-score 양성(obv_buy_cond)
+    first_buy_signal = bool(
+        state_up_s_gt_m and (votes_bull() >= k_confirm) and (adx_now > 15) and obv_buy_cond
+    )
+
+    # 2차 매수 신호:
+    # - 상태(필수): 중기 EMA > 장기 EMA
+    # - 보조지표 컨펌: RSI/스토캐/MACD 중 2개 이상
+    # - 거래량/수급: OBV z-score 양성(obv_buy_cond)
+    #   (비고) 2차 매수는 추세 강화 구간이므로 ADX 하한은 선택적으로 생략
+    second_buy_signal = bool(
+        state_up_m_gt_l and (votes_bull() >= k_confirm) and obv_buy_cond
+    )
+
+    # 1차 매도 신호:
+    # - 상태(필수): 단기 EMA < 중기 EMA
+    # - 보조지표 컨펌: RSI(레벨/교차), STOCH K/D(레벨/교차), MACD(레벨/교차) 중 2개 이상(약세 컨펌)
+    # - 거래량/수급: OBV z-score 음성(obv_sell_cond)
+    first_sell_signal = bool(
+        state_dn_s_lt_m and (votes_bear() >= k_confirm) and obv_sell_cond
+    )
+
+    # 2차 매도 신호:
+    # - 상태(필수): 중기 EMA < 장기 EMA
+    # - 보조지표 컨펌: RSI/스토캐/MACD 중 2개 이상(약세 컨펌)
+    # - 거래량/수급: OBV z-score 음성(obv_sell_cond)
+    second_sell_signal = bool(
+        state_dn_m_lt_l and (votes_bear() >= k_confirm) and obv_sell_cond
+    )
+
+    # ATR 기반 Chandelier Exit (롱 포지션 트레일링 스톱):
+    # - 기준: 최근 22봉 최고가 - ATR(14) * 2.5
+    # - 현재가가 CE 아래면 손절/청산 신호
+    highest_n = pd.Series(high, index=df.index).rolling(22, min_periods=1).max().iloc[-1]
+    ce_long = highest_n - 2.5 * atr_now if pd.notna(atr_now) else None
+    stop_loss_signal = bool(ce_long is not None and close_now < ce_long)
+
+    return first_buy_signal, second_buy_signal, first_sell_signal, second_sell_signal, stop_loss_signal

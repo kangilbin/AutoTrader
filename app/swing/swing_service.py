@@ -1,14 +1,10 @@
-from dateutil.relativedelta import relativedelta
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.swing.tech_analysis import sell_or_buy
 from app.stock.stock_service import get_stock_info
 from app.stock.stock_crud import update_stock
 from app.swing.swing_crud import insert_swing, select_swing, select_swing_account, list_day_swing, update_swing, delete_swing
 from app.swing.swing_model import SwingCreate
 from app.stock.stock_data_batch import fetch_and_store_3_years_data, get_batch_status as get_stock_batch_status
 from datetime import datetime, UTC
-from app.stock.stock_service import get_day_stock_price
-import pandas as pd
 import asyncio
 
 
