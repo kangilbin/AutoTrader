@@ -1,4 +1,4 @@
-from datetime import datetime, UTC
+from datetime import datetime
 from typing import Optional
 import jwt
 from jwt.exceptions import ExpiredSignatureError
@@ -10,11 +10,11 @@ settings = Settings()
 security = HTTPBearer()
 
 def create_access_token(user_id: str, user_info: dict) -> str:
-    to_encode = {"sub": user_id, "exp": datetime.now(UTC) + settings.token_access_exp, "user_claims": user_info}
+    to_encode = {"sub": user_id, "exp": datetime.now() + settings.token_access_exp, "user_claims": user_info}
     return jwt.encode(to_encode, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
 
 def create_refresh_token(user_id: str) -> str:
-    to_encode = {"sub": user_id, "exp": datetime.now(UTC) + settings.token_refresh_exp}
+    to_encode = {"sub": user_id, "exp": datetime.now() + settings.token_refresh_exp}
     return jwt.encode(to_encode, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
 
 def verify_token(token: str) -> Optional[TokenData]:
