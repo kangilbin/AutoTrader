@@ -7,7 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dateutil.relativedelta import relativedelta
 from app.stock.stock_service import get_day_stock_price
 from app.swing.swing_model import SwingCreate
-from app.swing.tech_analysis import sell_or_buy
+from app.swing.tech_analysis import ema_swing_signals
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.module.redis_connection import get_redis
 import json
@@ -59,12 +59,11 @@ def compute_backtest_sync(prices_df: pd.DataFrame, params: dict) -> dict:
         full_idx = df.index.get_loc(eval_df.index[i])
         current_data = df.iloc[: full_idx + 1]
 
-        first_buy_signal, second_buy_signal, first_sell_signal, second_sell_signal = sell_or_buy(
+        first_buy_signal, second_buy_signal, first_sell_signal, second_sell_signal = ema_swing_signals(
             current_data,
             short_term,
             medium_term,
-            long_term,
-            ris_period
+            long_term
         )
 
         current_price = current_data['STCK_CLPR'].iloc[-1]
