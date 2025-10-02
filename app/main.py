@@ -238,7 +238,6 @@ async def backtest(swing: SwingCreate, db: Annotated[AsyncSession, Depends(get_d
     스윙 전략 백테스팅 요청을 백그라운드 잡으로 실행하고 job_id를 반환합니다.
     결과는 GET /backtesting/{job_id} 로 조회하세요.
     """
-    swing.USER_ID = user_id
     try:
         job_id = await start_backtest_job(db, swing)
         return {"status": "accepted", "job_id": job_id}
