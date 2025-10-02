@@ -1,7 +1,7 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.stock.stock_service import get_stock_info
 from app.stock.stock_crud import update_stock
-from app.swing.swing_crud import insert_swing, select_swing, select_swing_account, list_day_swing, update_swing, delete_swing
+from app.swing.swing_crud import insert_swing, select_swing, select_swing_account, list_day_swing, update_swing, delete_swing, insert_swing_option
 from app.swing.swing_model import SwingCreate
 from app.stock.stock_data_batch import fetch_and_store_3_years_data, get_batch_status as get_stock_batch_status
 from datetime import datetime
@@ -11,7 +11,15 @@ import asyncio
 # 스윙 전략 등록
 async def create_swing(db: AsyncSession, swing_data: SwingCreate):
     # 스윙 등록
-    await insert_swing(db, swing_data)
+    try:
+        # 스윙
+        await insert_swing(db, swing_data)
+        await insert_swing_option(db, swing_data)
+        await db.commit()
+
+    except Exception as e:
+        await db.rollback()  # 실패 시 모두 롤백
+        raise
 
     stock_data = await get_stock_info(db, swing_data.ST_CODE)
 

@@ -54,7 +54,7 @@ class Stock(Base):
     """
     __tablename__ = "STOCK_INFO"
 
-    ST_CODE = Column(String(50), nullable=False, comment='주식 단축 코드', primary_key=True)
+    ST_CODE = Column(String(50), nullable=False, comment='종목 코드', primary_key=True)
     SD_CODE = Column(String(50), nullable=False, comment='주식 표준 코드')
     NAME = Column(String(100), nullable=False, comment='종목명')
     DATA_YN = Column(CHAR(1), nullable=False, default='N', comment='데이터 적재 여부')
@@ -74,7 +74,7 @@ class StockHstr(Base):
     """
     __tablename__ = "STOCK_DAY_HISTORY"
 
-    ST_CODE = Column(String(50), nullable=False, primary_key=True, comment='주식 단축 코드')
+    ST_CODE = Column(String(50), nullable=False, primary_key=True, comment='종목 코드')
     STCK_BSOP_DATE = Column(String(8), nullable=False, primary_key=True, comment='주식 영업 일자')
     STCK_OPRC = Column(DECIMAL(15, 2), nullable=False, comment='주식 시가')
     STCK_HGPR = Column(DECIMAL(15, 2), nullable=False, comment='주식 최고가')
@@ -91,20 +91,27 @@ class Swing(Base):
     """
     __tablename__ = "SWING_TRADE"
 
-    ST_CODE = Column(String(50), nullable=False, primary_key=True, comment='주식 단축 코드')
-    USER_ID = Column(String(50), nullable=False, primary_key=True, comment='사용자 ID')
     ACCOUNT_NO = Column(String(50), nullable=False, primary_key=True, comment='계좌 번호')
+    ST_CODE = Column(String(50), nullable=False, primary_key=True, comment='종목 코드')
     USE_YN = Column(CHAR(1), nullable=False, default='Y', comment='사용 여부')
     SWING_AMOUNT = Column(DECIMAL(15, 2), nullable=False, comment='초기 투자금')
-    SWING_TYPE = Column(CHAR(1), nullable=False, comment='스윙 타입 (D: 일봉, M: 분봉)')
+    SWING_TYPE = Column(CHAR(1), nullable=False, comment='스윙 타입 (A: 이평선, B: 일목균형표)')
+    BUY_RATIO = Column(Integer, nullable=False, comment='매수 비율')
+    SELL_RATIO = Column(Integer, nullable=False, comment='매도 비율')
+    REG_DT = Column(DateTime, default=datetime.now(), nullable=False, comment='등록일')
+    MOD_DT = Column(DateTime, comment='수정일')
+
+class EmaOpt(Base):
+    """
+    이평선 설정
+    """
+    __tablename__ = "EMA_OPT"
+    ACCOUNT_NO = Column(String(50), nullable=False, primary_key=True, comment='계좌 번호')
+    ST_CODE = Column(String(50), nullable=False, primary_key=True, comment='종목 코드')
     SHORT_TERM = Column(Integer, nullable=False, comment='단기 이평선')
     MEDIUM_TERM = Column(Integer, nullable=False, comment='중기 이평선')
     LONG_TERM = Column(Integer, nullable=False, comment='장기 이평선')
-    BUY_RATIO = Column(Integer, nullable=False, comment='매수 비율')
-    SELL_RATIO = Column(Integer, nullable=False, comment='매도 비율')
-    RSI_PERIOD = Column(Integer, nullable=False, comment='RSI 기간')
-    REG_DT = Column(DateTime, default=datetime.now(), nullable=False, comment='등록일')
-    MOD_DT = Column(DateTime, comment='수정일')
+
 
 
 class TradeHistory(Base):

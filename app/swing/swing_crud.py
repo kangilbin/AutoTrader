@@ -1,19 +1,19 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, delete, text, and_
-from app.infrastructure.database.table_create import Swing
+from app.infrastructure.database.table_create import Swing, EmaOpt
 from app.swing.swing_model import SwingCreate, SwingResponse
 from sqlalchemy.exc import SQLAlchemyError
 import logging
 
 
-# 스윙 생성
+# 스윙 등록
 async def insert_swing(db: AsyncSession, swing_data: SwingCreate):
     try:
         # 새로운 사용자 객체 생성
-        swing_info = Swing(ACCOUNT_NO=swing_data.ACCOUNT_NO, USER_ID=swing_data.USER_ID, ST_CODE=swing_data.ST_CODE,
+        swing_info = Swing(ACCOUNT_NO=swing_data.ACCOUNT_NO, ST_CODE=swing_data.ST_CODE,
                         SWING_AMOUNT=swing_data.SWING_AMOUNT, SWING_TYPE=swing_data.SWING_TYPE, SHORT_TERM=swing_data.SHORT_TERM,
                         MEDIUM_TERM=swing_data.MEDIUM_TERM, LONG_TERM=swing_data.LONG_TERM, BUY_RATIO=swing_data.BUY_RATIO,
-                        SELL_RATIO=swing_data.SELL_RATIO, RSI_PERIOD=swing_data.RSI_PERIOD)
+                        SELL_RATIO=swing_data.SELL_RATIO)
         db.add(swing_info)
         await db.commit()
         await db.refresh(swing_info)
@@ -22,6 +22,17 @@ async def insert_swing(db: AsyncSession, swing_data: SwingCreate):
         logging.error(f"Database error occurred: {e}", exc_info=True)
         raise
     return SwingResponse.model_validate(swing_info).model_dump()
+
+# 이평선 옵션 등록
+async def insert_swing_option(db: AsyncSession, swing_data: SwingCreate):
+    try:
+        query = EmaOpt(ACCOUNT_NO=swing_data.ACCOUNT_NO, ST_CODE=swing_data.ST_CODE,
+                       SHORT_TERM=swing_data.SHORT_TERM, MEDIUM_TERM=swing_data.MEDIUM_TERM, LONG_TERM=swing_data.LONG_TERM)
+        await db.execute(query)
+    except SQLAlchemyError as e:
+        await db.rollback()
+        logging.error(f"Database error occurred: {e}", exc_info=True)
+        raise
 
 
 # 스윙 조회

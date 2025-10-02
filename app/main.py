@@ -221,7 +221,6 @@ async def stock_update_cancel(order: ModOrder, user_id: Annotated[TokenData, Dep
 # 스윙 등록
 @app.post("/swing")
 async def swing_create(swing: SwingCreate, db: Annotated[AsyncSession, Depends(get_db)], user_id: Annotated[TokenData, Depends(get_token)]):
-    swing.USER_ID = user_id
     response = await create_swing(db, swing)
     return {"message": "정정 완료", "data": response}
 
