@@ -68,7 +68,7 @@ class EMAStrategy(BacktestStrategy):
             total_bought = sum(t['quantity'] for t in trades if t['action'] == 'BUY')
             total_sold = sum(t['quantity'] for t in trades if t['action'] == 'SELL')
             total_quantity = total_bought - total_sold
-            
+
             # 1차 매수 신호
             if first_buy_signal and current_capital > 0 and total_quantity == 0:
                 buy_amount = total_capital * buy_ratio
@@ -106,10 +106,29 @@ class EMAStrategy(BacktestStrategy):
                     })
             
             # 매도 신호
-            elif (first_sell_signal or second_sell_signal) and total_quantity > 0:
+            elif (first_sell_signal or stop_loss_signal) and total_quantity > 0:
                 curr_qty, curr_avg_cost = self._calculate_position_state(trades)
-                
-                if first_sell_signal:
+
+                if stop_loss_signal:
+                    sell_quantity = curr_qty
+                    sell_amount = sell_quantity * current_price
+                    realized_pnl = (current_price - curr_avg_cost) * sell_quantity
+                    realized_pnl_pct = ((current_price / curr_avg_cost) - 1) * 100 if curr_avg_cost > 0 else 0.0
+                    current_capital += sell_amount
+
+                    trades.append({
+                        'date': current_date,
+                        'action': 'SELL',
+                        'quantity': sell_quantity,
+                        'price': float(current_price),
+                        'amount': float(sell_amount),
+                        'current_capital': float(current_capital),
+                        'realized_pnl': float(realized_pnl),
+                        'realized_pnl_pct': round(realized_pnl_pct, 2),
+                        'reason': '손절/청산 신호 - 전량 매도'
+                    })
+
+                elif first_sell_signal:
                     sell_quantity = int(total_quantity * sell_ratio)
                     if sell_quantity > 0:
                         sell_amount = sell_quantity * current_price
@@ -128,25 +147,8 @@ class EMAStrategy(BacktestStrategy):
                             'realized_pnl_pct': round(realized_pnl_pct, 2),
                             'reason': '1차 매도 신호 (단기-중기 데드크로스)'
                         })
-                
-                elif second_sell_signal:
-                    sell_quantity = curr_qty
-                    sell_amount = sell_quantity * current_price
-                    realized_pnl = (current_price - curr_avg_cost) * sell_quantity
-                    realized_pnl_pct = ((current_price / curr_avg_cost) - 1) * 100 if curr_avg_cost > 0 else 0.0
-                    current_capital += sell_amount
-                    
-                    trades.append({
-                        'date': current_date,
-                        'action': 'SELL',
-                        'quantity': sell_quantity,
-                        'price': float(current_price),
-                        'amount': float(sell_amount),
-                        'current_capital': float(current_capital),
-                        'realized_pnl': float(realized_pnl),
-                        'realized_pnl_pct': round(realized_pnl_pct, 2),
-                        'reason': '2차 매도 신호 - 전량 매도 (중기-장기 데드크로스)'
-                    })
+
+
         
         # 결과 포맷팅
         result = self._format_result(prices_df, params, trades, current_capital)
