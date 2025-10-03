@@ -2,7 +2,7 @@ import pandas as pd
 import asyncio
 import os
 import uuid
-from datetime import datetime, UTC
+from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 from dateutil.relativedelta import relativedelta
 from app.stock.stock_service import get_day_stock_price
@@ -197,7 +197,7 @@ async def start_backtest_job(db: AsyncSession, swing_data: SwingCreate) -> str:
     buy_ratio = swing_data.BUY_RATIO / 100
     sell_ratio = swing_data.SELL_RATIO / 100
 
-    end_date = datetime.now(UTC)
+    end_date = datetime.now()
     start_date = end_date - relativedelta(years=3)
 
     # 실제 백테스팅은 1년치만 실행
@@ -215,7 +215,7 @@ async def start_backtest_job(db: AsyncSession, swing_data: SwingCreate) -> str:
         "status": "queued",
         "result": None,
         "error": None,
-        "created_at": datetime.now(UTC).isoformat()
+        "created_at": datetime.now().isoformat()
     }
 
     params = {
@@ -250,7 +250,7 @@ def job_key(job_id: str) -> str:
 
 async def job_create(job_id: str) -> None:
     redis = await get_redis()
-    now = datetime.now(UTC).isoformat()
+    now = datetime.now().isoformat()
     await redis.hset(
         job_key(job_id),
         mapping={
@@ -270,13 +270,13 @@ async def job_set_status(job_id: str, status: str) -> None:
         job_key(job_id),
         mapping={
             "status": status,
-            "updated_at": datetime.now(UTC).isoformat(),
+            "updated_at": datetime.now().isoformat(),
         },
     )
 
 async def job_set_result(job_id: str, result: dict | None = None, error: str | None = None) -> None:
     redis = await get_redis()
-    mapping = {"updated_at": datetime.now(UTC).isoformat()}
+    mapping = {"updated_at": datetime.now().isoformat()}
     if result is not None:
         mapping["result"] = json.dumps(result, ensure_ascii=False)
     if error is not None:

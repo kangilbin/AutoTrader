@@ -3,7 +3,7 @@ from app.api.local_stock_api import get_stock_data
 from app.stock.stock_crud import update_stock, insert_bulk_stock_hstr
 from app.stock.stock_service import get_stock_info
 from app.infrastructure.database.db_connection import get_db
-from datetime import datetime, UTC
+from datetime import datetime
 from dateutil.relativedelta import relativedelta
 import asyncio
 import logging
@@ -29,11 +29,11 @@ async def fetch_and_store_3_years_data(user_id: str, code: str, stock_data: dict
         try:
             # 상태 업데이트: 처리 중
             stock_data["DATA_YN"] = 'P'
-            stock_data["MOD_DT"] = datetime.now(UTC)
+            stock_data["MOD_DT"] = datetime.now()
             await update_stock(db, stock_data)
             logging.info(f"Started background data fetch for {code}")
 
-            end_date = datetime.now(UTC).date()
+            end_date = datetime.now().date()
             start_date = end_date - relativedelta(years=3)
             current_date = start_date
 
@@ -98,7 +98,7 @@ async def fetch_and_store_3_years_data(user_id: str, code: str, stock_data: dict
 
             # 상태 업데이트: 완료
             stock_data["DATA_YN"] = 'Y'
-            stock_data["MOD_DT"] = datetime.now(UTC)
+            stock_data["MOD_DT"] = datetime.now()
             await update_stock(db, stock_data)
             logging.info(f"Stock {code} updated to DATA_YN=Y")
 
@@ -108,7 +108,7 @@ async def fetch_and_store_3_years_data(user_id: str, code: str, stock_data: dict
             try:
                 if stock_data is not None:
                     stock_data["DATA_YN"] = 'E'
-                    stock_data["MOD_DT"] = datetime.now(UTC)
+                    stock_data["MOD_DT"] = datetime.now()
                     await update_stock(db, stock_data)
                     logging.error(f"Updated {code} to DATA_YN=E due to error: {e}")
                 else:

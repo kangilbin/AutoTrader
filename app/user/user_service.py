@@ -36,7 +36,7 @@ async def duplicate_user(db: AsyncSession, user_id: str):
 
 
 async def mod_user(db: AsyncSession, user_data: UserCreate):
-    user_data.MOD_DT = datetime.now(datetime.UTC)
+    user_data.MOD_DT = datetime.now()
     await update_user(db, user_data)
 
 
