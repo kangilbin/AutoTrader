@@ -28,7 +28,6 @@ def compute_backtest_sync(prices_df: pd.DataFrame, params: dict) -> dict:
     medium_term = params["medium_term"]
     long_term = params["long_term"]
     initial_capital = params["swing_amount"]
-    ris_period = params["rsi_period"]
     buy_ratio = params["buy_ratio"]
     sell_ratio = params["sell_ratio"]
     eval_start = params["eval_start"]
@@ -59,7 +58,7 @@ def compute_backtest_sync(prices_df: pd.DataFrame, params: dict) -> dict:
         full_idx = df.index.get_loc(eval_df.index[i])
         current_data = df.iloc[: full_idx + 1]
 
-        first_buy_signal, second_buy_signal, first_sell_signal, second_sell_signal = ema_swing_signals(
+        first_buy_signal, second_buy_signal, first_sell_signal, second_sell_signal, stop_loss_signal = ema_swing_signals(
             current_data,
             short_term,
             medium_term,
