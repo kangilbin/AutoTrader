@@ -3,7 +3,7 @@ import talib as ta
 
 
 
-def ema_swing_signals(df: pd.DataFrame, short_line: int, mid_line: int, long_line: int) -> tuple[bool, bool, bool, bool, bool]:
+def ema_swing_signals(df: pd.DataFrame, short_line: int, mid_line: int, long_line: int) -> tuple[bool, bool, bool, bool]:
     """
     스윙 매매 특화 신호 생성:
     - 1차 매수: 단기 > 중기 상태 + (RSI / STOCH K/D / MACD) 컨펌 2/3 + ADX 하한 + OBV 양호
@@ -54,6 +54,7 @@ def ema_swing_signals(df: pd.DataFrame, short_line: int, mid_line: int, long_lin
         fastk_period=14, slowk_period=3, slowk_matype=0,
         slowd_period=3, slowd_matype=0
     )
+
     slowk = pd.Series(slowk_np, index=df.index)
     slowd = pd.Series(slowd_np, index=df.index)
 
@@ -69,14 +70,14 @@ def ema_swing_signals(df: pd.DataFrame, short_line: int, mid_line: int, long_lin
     # 데이터 길이/NaN 가드
     min_needed = max(long_line, 26, 22, 14) + 1
     if len(df) < min_needed:
-        return False, False, False, False, False
+        return False, False, False, False
 
     tail2_cols = ["ema_short", "ema_mid", "rsi", "macd", "macd_signal"]
     tail1_cols = ["ema_long", "adx", "plus_di", "minus_di", "atr"]
     if df[tail2_cols].iloc[-2:].isna().any().any() or df[tail1_cols].iloc[-1:].isna().any().any():
-        return False, False, False, False, False
+        return False, False, False, False
     if pd.isna(slowk.iloc[-1]) or pd.isna(slowd.iloc[-1]) or pd.isna(slowk.iloc[-2]) or pd.isna(slowd.iloc[-2]):
-        return False, False, False, False, False
+        return False, False, False, False
 
     # 최신/직전 값
     ema_s_now, ema_m_now, ema_l_now = df["ema_short"].iloc[-1], df["ema_mid"].iloc[-1], df["ema_long"].iloc[-1]
@@ -130,7 +131,6 @@ def ema_swing_signals(df: pd.DataFrame, short_line: int, mid_line: int, long_lin
     state_up_s_gt_m = (ema_s_now > ema_m_now)
     state_up_m_gt_l = (ema_m_now > ema_l_now)
     state_dn_s_lt_m = (ema_s_now < ema_m_now)
-    state_dn_m_lt_l = (ema_m_now < ema_l_now)
 
     # 컨펌 요구 개수
     k_confirm = 2  # 3개(RSI / STOCH K/D / MACD) 중 최소 2개 이상
@@ -162,13 +162,6 @@ def ema_swing_signals(df: pd.DataFrame, short_line: int, mid_line: int, long_lin
         state_dn_s_lt_m and (votes_bear() >= k_confirm) and obv_sell_cond
     )
 
-    # 2차 매도 신호:
-    # - 상태(필수): 중기 EMA < 장기 EMA
-    # - 보조지표 컨펌: RSI/스토캐/MACD 중 2개 이상(약세 컨펌)
-    # - 거래량/수급: OBV z-score 음성(obv_sell_cond)
-    second_sell_signal = bool(
-        state_dn_m_lt_l and (votes_bear() >= k_confirm) and obv_sell_cond
-    )
 
     # ATR 기반 Chandelier Exit (롱 포지션 트레일링 스톱):
     # - 기준: 최근 22봉 최고가 - ATR(14) * 2.5
@@ -177,10 +170,10 @@ def ema_swing_signals(df: pd.DataFrame, short_line: int, mid_line: int, long_lin
     ce_long = highest_n - 2.5 * atr_now if pd.notna(atr_now) else None
     stop_loss_signal = bool(ce_long is not None and close_now < ce_long)
 
-    return first_buy_signal, second_buy_signal, first_sell_signal, second_sell_signal, stop_loss_signal
+    return first_buy_signal, second_buy_signal, first_sell_signal, stop_loss_signal
 
 
-def ichimoku_swing_signals(df: pd.DataFrame) -> tuple[bool, bool, bool, bool, bool]:
+def ichimoku_swing_signals(df: pd.DataFrame) -> tuple[bool, bool, bool, bool]:
     """
     일목균형표 기반 신호 생성:
     - 1차 매수: TK 골든크로스(전환선↑기준선) + 구름 상단 돌파/유지 + 치코우(현재가 > 26봉 전 종가)
@@ -196,7 +189,7 @@ def ichimoku_swing_signals(df: pd.DataFrame) -> tuple[bool, bool, bool, bool, bo
     ATR_PERIOD = 14
 
     if df is None or len(df) == 0:
-        return False, False, False, False, False
+        return False, False, False, False
 
     # 날짜 정렬 및 숫자형 보정
     if "STCK_BSOP_DATE" in df.columns:
@@ -212,7 +205,7 @@ def ichimoku_swing_signals(df: pd.DataFrame) -> tuple[bool, bool, bool, bool, bo
     # 데이터 길이/NaN 가드 (선행스팬 26 시프트 반영)
     min_needed = max(SENKOU_B_PERIOD, KIJUN_PERIOD, TENKAN_PERIOD) + 26 + 1
     if len(df) < min_needed:
-        return False, False, False, False, False
+        return False, False, False, False
 
     # 전환선(Tenkan), 기준선(Kijun)
     tenkan_high = high.rolling(TENKAN_PERIOD, min_periods=TENKAN_PERIOD).max()
@@ -240,9 +233,9 @@ def ichimoku_swing_signals(df: pd.DataFrame) -> tuple[bool, bool, bool, bool, bo
     tail_cols = [tenkan, kijun, senkou_a, senkou_b, close_26ago, atr]
     for s in tail_cols:
         if pd.isna(s.iloc[-1]) or pd.isna(s.iloc[-2]):
-            return False, False, False, False, False
+            return False, False, False, False
     if pd.isna(close.iloc[-1]) or pd.isna(close.iloc[-2]):
-        return False, False, False, False, False
+        return False, False, False, False
 
     # 최신/직전 값
     tenkan_now, tenkan_prev = tenkan.iloc[-1], tenkan.iloc[-2]
@@ -296,14 +289,9 @@ def ichimoku_swing_signals(df: pd.DataFrame) -> tuple[bool, bool, bool, bool, bo
         tk_bear_cross and ((close_now < tenkan_now) or rebreak_down)
     )
 
-    # 2차 매도: 구름 하단 이탈 또는 구름 약세 + TK 데드크로스
-    second_sell_signal = bool(
-        (below_cloud_now or cloud_bear) and (tk_bear_cross or rebreak_down)
-    )
-
     # 손절(롱 관점): min(기준선, 구름 하단) - 1.5*ATR
     cloud_floor_now = min(senkou_a_now, senkou_b_now)
     sl_level = min(kijun_now, cloud_floor_now)
     stop_loss_signal = bool(pd.notna(sl_level) and pd.notna(atr_now) and (close_now < (sl_level - 1.5 * atr_now)))
 
-    return first_buy_signal, second_buy_signal, first_sell_signal, second_sell_signal, stop_loss_signal
+    return first_buy_signal, second_buy_signal, first_sell_signal, stop_loss_signal

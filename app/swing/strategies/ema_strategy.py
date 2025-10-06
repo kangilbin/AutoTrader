@@ -54,7 +54,7 @@ class EMAStrategy(BacktestStrategy):
             current_data = df.iloc[: full_idx + 1]
             
             # 이평선 신호 계산
-            first_buy_signal, second_buy_signal, first_sell_signal, second_sell_signal, stop_loss_signal = ema_swing_signals(
+            first_buy_signal, second_buy_signal, first_sell_signal, stop_loss_signal = ema_swing_signals(
                 current_data,
                 short_term,
                 medium_term,
