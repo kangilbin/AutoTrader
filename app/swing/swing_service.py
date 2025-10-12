@@ -14,7 +14,8 @@ async def create_swing(db: AsyncSession, swing_data: SwingCreate):
     try:
         # 스윙
         await insert_swing(db, swing_data)
-        await insert_swing_option(db, swing_data)
+        if swing_data.SWING_TYPE == 'A':
+            await insert_swing_option(db, swing_data)
         await db.commit()
 
     except Exception as e:

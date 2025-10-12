@@ -4,6 +4,8 @@ from app.module.config import get_env
 from app.module.redis_connection import get_redis
 from datetime import datetime, timedelta
 
+from app.order.order_model import ModOrder, Order
+
 
 async def user(user_id: str):
     redis = await get_redis()
@@ -94,7 +96,7 @@ async def get_stock_balance(user_id: str):
     return await fetch("GET", api_url, params=params, headers=headers)
 
 
-async def get_order_cash(user_id: str, order: OrderModel):
+async def get_order_cash(user_id: str, order: Order):
     """
     주식 주문
     :param user_id:
@@ -196,7 +198,7 @@ async def get_inquire_psbl_rvsecncl_lst(user_id: str, fk100="", nk100=""):
     return await fetch("POST", api_url, json=body, headers=headers)
 
 
-async def get_order_rvsecncl(user_id:str, order: ModOrderModel):
+async def get_order_rvsecncl(user_id:str, order: ModOrder):
     """
     주식 주문(정정취소)
     :param user_id:

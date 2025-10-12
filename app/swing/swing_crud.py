@@ -11,8 +11,7 @@ async def insert_swing(db: AsyncSession, swing_data: SwingCreate):
     try:
         # 새로운 사용자 객체 생성
         swing_info = Swing(ACCOUNT_NO=swing_data.ACCOUNT_NO, ST_CODE=swing_data.ST_CODE,
-                        SWING_AMOUNT=swing_data.SWING_AMOUNT, SWING_TYPE=swing_data.SWING_TYPE, SHORT_TERM=swing_data.SHORT_TERM,
-                        MEDIUM_TERM=swing_data.MEDIUM_TERM, LONG_TERM=swing_data.LONG_TERM, BUY_RATIO=swing_data.BUY_RATIO,
+                        SWING_AMOUNT=swing_data.SWING_AMOUNT, SWING_TYPE=swing_data.SWING_TYPE, BUY_RATIO=swing_data.BUY_RATIO,
                         SELL_RATIO=swing_data.SELL_RATIO)
         db.add(swing_info)
         await db.commit()
@@ -28,7 +27,9 @@ async def insert_swing_option(db: AsyncSession, swing_data: SwingCreate):
     try:
         query = EmaOpt(ACCOUNT_NO=swing_data.ACCOUNT_NO, ST_CODE=swing_data.ST_CODE,
                        SHORT_TERM=swing_data.SHORT_TERM, MEDIUM_TERM=swing_data.MEDIUM_TERM, LONG_TERM=swing_data.LONG_TERM)
-        await db.execute(query)
+        db.add(query)
+        await db.commit()
+        await db.refresh(query)
     except SQLAlchemyError as e:
         await db.rollback()
         logging.error(f"Database error occurred: {e}", exc_info=True)
