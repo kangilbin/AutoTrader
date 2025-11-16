@@ -49,10 +49,10 @@ async def start_backtest_job(db: AsyncSession, swing_data: SwingCreate) -> str:
     비동기 백테스트 잡 시작
     """
     if not swing_data.ST_CODE:
-        raise ValueError("주식 코드(ST_CODE)는 필수입니다.")
+        raise ValueError("주식 코드는 필수입니다.")
 
     if not swing_data.SWING_TYPE:
-        raise ValueError("전략 타입(SWING_TYPE)은 필수입니다.")
+        raise ValueError("전략 타입은 필수입니다.")
 
     # 전략 타입 검증
     available_strategies = StrategyFactory.get_available_strategies()
