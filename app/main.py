@@ -221,8 +221,14 @@ async def stock_update_cancel(order: ModOrder, user_id: Annotated[TokenData, Dep
 # 스윙 등록
 @app.post("/swing")
 async def swing_create(swing: SwingCreate, db: Annotated[AsyncSession, Depends(get_db)], user_id: Annotated[TokenData, Depends(get_token)]):
-    response = await create_swing(db, swing)
-    return {"message": "정정 완료", "data": response}
+    try:
+        swing.USER_ID = user_id
+        response = await create_swing(db, swing)
+        return {"message": "정정 완료", "data": response}
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # 주식 호가 조회
