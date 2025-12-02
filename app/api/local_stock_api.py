@@ -54,7 +54,7 @@ async def get_balance(user_id: str):
 
 
 # 보유 주식
-async def get_stock_balance(user_id: str):
+async def get_stock_balance(user_id: str, fk100="", nk100=""):
     user_data, access_data = await user(user_id)
 
     path = "/uapi/domestic-stock/v1/trading/inquire-balance"
@@ -88,12 +88,20 @@ async def get_stock_balance(user_id: str):
         "UNPR_DVSN": "01",
         "FUND_STTL_ICLD_YN": "N",
         "FNCG_AMT_AUTO_RDPT_YN": "N",
-        "PRCS_DVSN": "01",
-        "CTX_AREA_FK100": "",
-        "CTX_AREA_NK100": ""
+        "PRCS_DVSN": "00",
+        "CTX_AREA_FK100": fk100,
+        "CTX_AREA_NK100": nk100
     }
+    response = await fetch("GET", api_url, params=params, headers=headers)
+    ctx_area_fk100 = response.get("ctx_area_fk100")
+    ctx_area_nk100 = response.get("ctx_area_nk100")
 
-    return await fetch("GET", api_url, params=params, headers=headers)
+    result = response.get("output1")
+
+    if ctx_area_fk100 != "" and ctx_area_nk100 != "":
+        result.add(get_stock_balance(user_id, ctx_area_fk100, ctx_area_nk100))
+
+    return result
 
 
 async def get_order_cash(user_id: str, order: Order):
