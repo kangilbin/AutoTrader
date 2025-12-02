@@ -15,7 +15,7 @@ from contextlib import asynccontextmanager
 from app.account.account_service import create_account, get_account, get_accounts, remove_account
 from app.auth.auth_service import create_auth, get_auth_key, get_auth_keys
 from app.stock.stock_service import get_stock_initial
-from app.swing.swing_service import create_swing
+from app.swing.swing_service import create_swing, mapping_swing
 from app.user.user_service import create_user, login_user, token_refresh, duplicate_user
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.infrastructure.security.jwt_utils import get_token, TokenData
@@ -227,6 +227,14 @@ async def swing_create(swing: SwingCreate, db: Annotated[AsyncSession, Depends(g
         return {"message": "정정 완료", "data": response}
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/swing/list")
+async def swing_list(account_no:str, db: Annotated[AsyncSession, Depends(get_db)], user_id: Annotated[TokenData, Depends(get_token)]):
+    try:
+        result = await mapping_swing(db, user_id, account_no)
+        return {"message": "스윙 매핑 완료", "data": result}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
