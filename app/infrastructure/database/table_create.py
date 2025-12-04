@@ -85,7 +85,7 @@ class Swing(Base):
     스윙 테이블 정의
     """
     __tablename__ = "SWING_TRADE"
-
+    SWING_ID = Column(Integer, Sequence('swing_id_seq'), primary_key=True, comment='스윙 ID')
     ACCOUNT_NO = Column(String(50), nullable=False, primary_key=True, comment='계좌 번호')
     ST_CODE = Column(String(50), nullable=False, primary_key=True, comment='종목 코드')
     # USE_YN = Column(CHAR(1), nullable=False, default='L', comment='L: 국내, F: 해외')
