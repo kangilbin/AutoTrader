@@ -134,7 +134,12 @@ async def mapping_swing(db: AsyncSession, user_id: str, account_no: str):
             results.append(result_data)
         else:
             # 이미 있으면 merge (필요시 업데이트)
-            existing_swing = swing_dict[st_code]
+            reult_data = {
+                **swing_dict[st_code],
+                "ST_NM": buy_item.get("prdt_name"),  # 상품명
+                "QTY": buy_item.get("hldg_qty"),  # 보유 수량
+            }
+
 
     # 커밋
 
