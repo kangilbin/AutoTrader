@@ -11,7 +11,7 @@ async def insert_swing(db: AsyncSession, swing_data: SwingCreate):
     try:
         # 새로운 사용자 객체 생성
         swing_info = Swing(ACCOUNT_NO=swing_data.ACCOUNT_NO, ST_CODE=swing_data.ST_CODE,
-                        SWING_AMOUNT=swing_data.SWING_AMOUNT, SWING_TYPE=swing_data.SWING_TYPE, BUY_RATIO=swing_data.BUY_RATIO,
+                        INIT_AMOUNT=swing_data.INIT_AMOUNT, CUR_AMOUNT=swing_data.INIT_AMOUNT,SWING_TYPE=swing_data.SWING_TYPE, BUY_RATIO=swing_data.BUY_RATIO,
                         SELL_RATIO=swing_data.SELL_RATIO)
         db.add(swing_info)
         await db.flush()
@@ -65,7 +65,7 @@ async def select_swing_account(db: AsyncSession, user_id, account_no: str):
     return result.scalars().all()
 
 
-# 모든 스윙 조회(사용중)
+# 배치 스윙 목록 조회(사용중)
 async def list_day_swing(db: AsyncSession):
     try:
         query = text("SELECT ST.*, U.API_KEY, U.SECRET_KEY "
@@ -78,7 +78,6 @@ async def list_day_swing(db: AsyncSession):
         logging.error(f"Database error occurred: {e}", exc_info=True)
         raise
     return result.all()
-
 
 # 스윙 업데이트
 async def update_swing(db: AsyncSession, swing_data: SwingCreate):
@@ -113,3 +112,16 @@ async def delete_swing(db: AsyncSession, swing_id: int):
     if result.rowcount == 0:
         return None  # 삭제된 행이 없으면 None 반환
     return swing_id
+
+# 스윙 목록 조회
+async def list_all_swing(db: AsyncSession, account_no: str):
+    try:
+        query = (
+            select(Swing)
+            .filter(Swing.ACCOUNT_NO == account_no)
+        )
+        result = await db.execute(query)
+    except SQLAlchemyError as e:
+        logging.error(f"Database error occurred: {e}", exc_info=True)
+        raise
+    return [SwingResponse.model_validate(row).model_dump() for row in result]

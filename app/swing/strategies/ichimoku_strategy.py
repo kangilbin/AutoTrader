@@ -26,7 +26,7 @@ class IchimokuStrategy(BacktestStrategy):
         """
         df = prices_df.copy()
 
-        initial_capital = params["swing_amount"]
+        initial_capital = params["init_amount"]
         buy_ratio = params["buy_ratio"]
         sell_ratio = params["sell_ratio"]
         eval_start = params["eval_start"]

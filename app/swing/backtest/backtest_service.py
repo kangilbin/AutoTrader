@@ -65,7 +65,7 @@ async def start_backtest_job(db: AsyncSession, swing_data: SwingCreate) -> str:
     short_term = swing_data.SHORT_TERM or 5
     medium_term = swing_data.MEDIUM_TERM or 20
     long_term = swing_data.LONG_TERM or 60
-    swing_amount = swing_data.SWING_AMOUNT
+    init_amount = swing_data.INIT_AMOUNT
     buy_ratio = (swing_data.BUY_RATIO or 50) / 100
     sell_ratio = (swing_data.SELL_RATIO or 50) / 100
 
@@ -88,7 +88,7 @@ async def start_backtest_job(db: AsyncSession, swing_data: SwingCreate) -> str:
         "short_term": short_term,
         "medium_term": medium_term,
         "long_term": long_term,
-        "swing_amount": swing_amount,
+        "init_amount": init_amount,
         "buy_ratio": buy_ratio,
         "sell_ratio": sell_ratio,
         "eval_start": eval_start,

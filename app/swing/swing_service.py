@@ -3,7 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.local_stock_api import get_stock_balance
 from app.stock.stock_service import get_stock_info
 from app.stock.stock_crud import update_stock
-from app.swing.swing_crud import insert_swing, select_swing, select_swing_account, list_day_swing, update_swing, delete_swing, insert_swing_option
+from app.swing.swing_crud import insert_swing, select_swing, select_swing_account, list_day_swing, update_swing, delete_swing, insert_swing_option, list_all_swing
 from app.swing.swing_model import SwingCreate
 from app.stock.stock_data_batch import fetch_and_store_3_years_data, get_batch_status as get_stock_batch_status
 from datetime import datetime
@@ -90,7 +90,7 @@ async def mapping_swing(db: AsyncSession, user_id: str, account_no: str):
         dict: 처리 결과 (신규 등록 수, 업데이트 수, 스킵 수)
     """
     # 기존 스윙 목록 조회
-    swing_list = await select_swing_account(db, user_id, account_no)
+    swing_list = await list_all_swing(db, account_no)
 
     # 보유 주식 목록 조회
     buy_list = await get_stock_balance(user_id)
@@ -99,9 +99,6 @@ async def mapping_swing(db: AsyncSession, user_id: str, account_no: str):
     swing_dict = {swing.ST_CODE: swing for swing in swing_list}
 
     # 처리 결과 카운터
-    new_count = 0
-    update_count = 0
-    skip_count = 0
     results = []
 
     # buy_list의 각 종목을 확인
@@ -119,36 +116,30 @@ async def mapping_swing(db: AsyncSession, user_id: str, account_no: str):
                 USER_ID=user_id,
                 ACCOUNT_NO=account_no,
                 USE_YN='N',
-                SWING_AMOUNT= 0,  # 매입금액
+                INIT_AMOUNT= 0,  # 매입금액
                 SWING_TYPE='B',  # 기본값: 이평선
             )
             swing_result = await insert_swing(db, new_swing)
             await db.commit()
             result_data = {
                 **swing_result,
-                "ST_NM": buy_item.get("prdt_name"), # 상품명
-                "QTY": buy_item.get("hldg_qty"), # 보유 수량
-                ## 평균금액, 수익률, 등등 값 구해서 반환
+                "ST_NM": buy_item.get("prdt_name"),     # 상품명
+                "QTY": buy_item.get("hldg_qty"),        # 보유 수량
+                # 평균금액, 수익률, 등등 값 구해서 반환
             }
-            # 여기서 스윙 목록에 추가하는 로직 작성
             results.append(result_data)
         else:
-            # 이미 있으면 merge (필요시 업데이트)
-            reult_data = {
-                **swing_dict[st_code],
-                "ST_NM": buy_item.get("prdt_name"),  # 상품명
-                "QTY": buy_item.get("hldg_qty"),  # 보유 수량
+            # 이미 있으면 merge
+            data = swing_dict[st_code],
+            rate = (data["CUR_AMOUNT"] - data["INIT_AMOUNT"])  / data["INIT_AMOUNT"] * 100
+            result_data = {
+                **data,
+                "ST_NM": buy_item.get("prdt_name"),     # 상품명
+                "QTY": buy_item.get("hldg_qty"),        # 보유 수량
+                "RATE": rate,
             }
-
-
-    # 커밋
-
-    return {
-        "new_count": new_count,
-        "update_count": update_count,
-        "skip_count": skip_count,
-        "total_processed": len(buy_list)
-    }
+            results.append(result_data)
+    return results
 
 
 

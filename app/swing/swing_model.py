@@ -8,7 +8,8 @@ class SwingCreate(BaseModel):
     USER_ID: Optional[str] = None
     ACCOUNT_NO: Optional[str] = None
     USE_YN: Optional[str] = None
-    SWING_AMOUNT: Optional[int] = None
+    INIT_AMOUNT: Optional[int] = None
+    CUR_AMOUNT: Optional[int] = None
     SWING_TYPE: Optional[str] = None
     SHORT_TERM: Optional[int] = None
     MEDIUM_TERM: Optional[int] = None

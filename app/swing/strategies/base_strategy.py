@@ -71,7 +71,7 @@ class BacktestStrategy(ABC):
         Returns:
             포맷팅된 결과 딕셔너리
         """
-        initial_capital = params["swing_amount"]
+        initial_capital = params["init_amount"]
         total_return = ((final_capital - initial_capital) / initial_capital) * 100
 
         return {

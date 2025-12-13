@@ -24,7 +24,7 @@ class EMAStrategy(BacktestStrategy):
                 "short_term": 단기 이평선,
                 "medium_term": 중기 이평선,
                 "long_term": 장기 이평선,
-                "swing_amount": 초기 투자금,
+                "init_amount": 초기 투자금,
                 "buy_ratio": 매수 비율,
                 "sell_ratio": 매도 비율,
                 "eval_start": 평가 시작일,
@@ -37,7 +37,7 @@ class EMAStrategy(BacktestStrategy):
         short_term = params["short_term"]
         medium_term = params["medium_term"]
         long_term = params["long_term"]
-        initial_capital = params["swing_amount"]
+        initial_capital = params["init_amount"]
         buy_ratio = params["buy_ratio"]
         sell_ratio = params["sell_ratio"]
         eval_start = params["eval_start"]
