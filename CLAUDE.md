@@ -61,7 +61,7 @@ app/
 
 2. **인증**: `fastapi-jwt-auth`를 통한 JWT 토큰. 사용자 자격증명 + KIS API 키는 `cryptography`로 암호화.
 
-3. **정기 매매**: APScheduler가 `trade_job`을 1시간 단위로(평일 9AM-3PM) 실행하고, `day_collect_job`은 3:31PM에 일일 데이터 수집.
+3. **정기 매매**: APSche[duler가 `trade_job`을 1시간 단위로(평일 9AM-3PM) 실행하고, `day_collect_job`은 3:31PM에 일일 데이터 수집.
 
 4. **매매 전략**: `BaseStrategy` 추상 클래스를 사용한 전략 패턴. 현재 구현:
    - `EmaStrategy`: EMA 골든크로스 (단기/중기/장기)
@@ -80,3 +80,140 @@ app/
 - Redis: 토큰 캐싱
 - MySQL: 데이터 영속성
 - TA-Lib: 기술 지표 계산
+
+## 개발 원칙
+
+### 1. 도메인 계층 구조
+각 도메인은 다음 계층을 명확히 분리:
+```
+[domain]/
+├── router.py      # API 엔드포인트 정의 (HTTP 요청/응답만 처리)
+├── service.py     # 비즈니스 로직 (트랜잭션, 검증, 도메인 규칙)
+├── crud.py        # 데이터 접근 계층 (순수 DB 쿼리만)
+└── model.py       # Pydantic 스키마
+```
+- **Router**: HTTP 관련 로직만. 비즈니스 로직 금지
+- **Service**: 비즈니스 규칙, 여러 CRUD 조합, 트랜잭션 관리
+- **CRUD**: 단일 테이블 쿼리. 비즈니스 로직 금지
+
+### 2. 예외 처리 표준화
+```python
+# 도메인별 예외 정의 (app/infrastructure/exceptions.py)
+class AppException(Exception):
+    def __init__(self, status_code: int, code: str, message: str):
+        self.status_code = status_code
+        self.code = code
+        self.message = message
+
+class NotFoundException(AppException):
+    def __init__(self, resource: str):
+        super().__init__(404, "NOT_FOUND", f"{resource}을(를) 찾을 수 없습니다")
+
+class BusinessException(AppException):
+    def __init__(self, message: str):
+        super().__init__(400, "BUSINESS_ERROR", message)
+```
+- Service 계층에서 예외 발생, Router에서 HTTPException으로 변환 금지
+- 전역 예외 핸들러에서 일괄 처리
+
+### 3. Dependency Injection 활용
+```python
+# 세션 주입
+async def get_db() -> AsyncGenerator[AsyncSession, None]:
+    async with async_session() as session:
+        yield session
+
+# 서비스 주입
+def get_user_service(db: AsyncSession = Depends(get_db)) -> UserService:
+    return UserService(db)
+
+# 라우터에서 사용
+@router.get("/users/{user_id}")
+async def get_user(
+    user_id: int,
+    service: UserService = Depends(get_user_service)
+):
+    return await service.get_by_id(user_id)
+```
+- 전역 객체 직접 import 대신 Depends 사용
+- 테스트 시 의존성 오버라이드 용이
+
+### 4. Pydantic 모델 분리
+```python
+# model.py 구조
+class UserBase(BaseModel):
+    email: str
+    name: str
+
+class UserCreate(UserBase):
+    password: str
+
+class UserUpdate(BaseModel):
+    name: str | None = None
+    email: str | None = None
+
+class UserResponse(UserBase):
+    id: int
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+```
+- **Create**: 생성 시 필수 필드
+- **Update**: 부분 업데이트용 (모든 필드 Optional)
+- **Response**: API 응답용 (DB 모델에서 변환)
+- SQLAlchemy 모델과 Pydantic 스키마 혼용 금지
+
+### 5. 라우터 분리
+```python
+# main.py
+app.include_router(user_router, prefix="/api/users", tags=["users"])
+app.include_router(account_router, prefix="/api/accounts", tags=["accounts"])
+app.include_router(swing_router, prefix="/api/swing", tags=["swing"])
+```
+- 도메인별 라우터 파일 분리
+- main.py는 라우터 등록과 앱 설정만
+- 공통 의존성은 `dependencies.py`에 정의
+
+### 6. 비동기 일관성
+```python
+# 올바른 예시
+async def get_user(user_id: int) -> User:
+    result = await db.execute(select(User).where(User.id == user_id))
+    return result.scalar_one_or_none()
+
+# 피해야 할 예시 (동기 호출 혼용)
+def get_user_sync(user_id: int):  # 동기 함수에서 비동기 DB 호출 불가
+    ...
+```
+- 모든 DB 작업은 `async/await` 사용
+- 동기 라이브러리 사용 시 `run_in_executor`로 감싸기
+- `asyncio.run()` 중첩 호출 금지
+
+### 7. 응답 형식 통일
+```python
+class ApiResponse(BaseModel, Generic[T]):
+    success: bool = True
+    data: T | None = None
+    message: str | None = None
+
+# 사용
+@router.get("/users/{id}", response_model=ApiResponse[UserResponse])
+async def get_user(id: int):
+    user = await service.get_by_id(id)
+    return ApiResponse(data=user)
+```
+
+### 8. 환경 설정 관리
+```python
+# config.py
+class Settings(BaseSettings):
+    database_url: str
+    redis_url: str
+    jwt_secret: str
+
+    model_config = SettingsConfigDict(env_file=".env")
+
+settings = Settings()
+```
+- 하드코딩된 설정값 금지
+- 환경별 설정은 `.env` 파일로 관리
