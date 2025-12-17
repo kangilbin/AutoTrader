@@ -23,7 +23,7 @@ docker run -p 8000:auto-trader
 
 ### 환경 변수
 `.env` 파일에 다음 항목이 필요합니다:
-- `DATABASE_URL`: MySQL 비동기 연결 문자열 (asyncmy 드라이버)
+- `DATABASE_URL`: MySQL 비동기 연결 문자열 (aiomysql 드라이버)
 - `JWT_SECRET_KEY`: JWT 토큰 서명 키
 - `REDIS_URL`: Redis 연결 URL
 - `REDIS_PASSWORD`: Redis 비밀번호
@@ -189,7 +189,7 @@ async def create_swing(
 
 ### 핵심 패턴
 
-1. **데이터베이스**: MySQL + 비동기 SQLAlchemy(asyncmy). `Database` 클래스에서 엔진/세션 싱글톤 패턴.
+1. **데이터베이스**: MySQL + 비동기 SQLAlchemy(aiomysql). `Database` 클래스에서 엔진/세션 싱글톤 패턴.
 
 2. **인증**: JWT 토큰 기반. 사용자 자격증명 + KIS API 키는 AES 암호화.
 

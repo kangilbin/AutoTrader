@@ -20,7 +20,7 @@ Auto-Trader는 FastAPI 기반의 한국 주식 자동매매 시스템입니다. 
 | 분류 | 기술 |
 |------|------|
 | Framework | FastAPI, Uvicorn |
-| Database | MySQL (asyncmy), SQLAlchemy 2.x |
+| Database | MySQL (aiomysql), SQLAlchemy 2.x |
 | Cache | Redis |
 | Authentication | fastapi-jwt-auth, bcrypt |
 | Scheduler | APScheduler |
@@ -70,7 +70,7 @@ pip install -e .
 
 ```env
 # Database
-DATABASE_URL=mysql+asyncmy://user:password@localhost:3306/auto_trader
+DATABASE_URL=mysql+aiomysql://user:password@localhost:3306/auto_trader
 
 # Redis
 REDIS_URL=redis://localhost:6379
