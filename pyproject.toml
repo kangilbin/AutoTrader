@@ -5,22 +5,22 @@ description = "FastAPI project"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "fastapi[standard]>=0.110.0",
-    "pydantic", # 최신 안정 버전
-    "starlette",
-    "greenlet",
-    "uvicorn", # 최신 안정 버전
-    "sqlalchemy", # 최신 안정 버전 (SQLAlchemy 2.x)
-    "apscheduler", # 최신 안정 버전
-    "fastapi-jwt-auth", # 최신 안정 버전
-    "redis", # 최신 안정 버전
-    "python-dotenv", # 최신 안정 버전
-    "cryptography", # 최신 안정 버전
-    "httpx", # 최신 안정 버전
-    "bcrypt", # 최신 안정 버전
-    "websockets", # 최신 안정 버전
-    "pandas",
-    "asyncmy",
-    "ta-lib>=0.6.7",
-    "pydantic-settings>=2.12.0",
+    "fastapi[standard]>=0.115.12,<1.0.0",
+    "pydantic>=2.12.5,<3.0.0",
+    "pydantic-settings>=2.12.0,<3.0.0",
+    "starlette>=0.49.1,<1.0.0",
+    "uvicorn>=0.38.0,<1.0.0",
+    "sqlalchemy>=2.0.45,<3.0.0",
+    "greenlet>=3.3.0,<4.0.0",
+    "apscheduler>=3.11.1,<4.0.0",
+    "fastapi-jwt-auth>=0.5.0,<1.0.0",
+    "redis>=5.2.1,<8.0.0",
+#    "python-dotenv>=1.1.0,<2.0.0",
+    "cryptography>=46.0.3,<47.0.0",
+    "httpx>=0.28.1,<1.0.0",
+    "bcrypt>=5.0.0,<6.0.0",
+    "websockets>=15.0.1,<16.0.0",
+    "pandas>=2.2.3,<3.0.0",
+    "aiomysql>=0.2.0,<1.0.0",
+    "ta-lib>=0.6.7,<1.0.0",
 ]
