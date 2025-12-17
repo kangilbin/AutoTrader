@@ -4,15 +4,15 @@ KIS (한국투자증권) API 통합 모듈
 from datetime import datetime, timedelta
 import logging
 
-from app.common import ExternalApiException
+from app.exceptions import ExternalApiException
+from app.core import get_settings
 from app.external.headers import kis_headers, kis_error_message
-from app.module.config import get_env
 from app.module.fetch_api import fetch
 from app.module.redis_connection import get_redis
-from app.domain.order import Order, ModifyOrder
+# from app.domain.order import Order, ModifyOrder
 
 logger = logging.getLogger(__name__)
-
+settings = get_settings()
 
 # ============================================================
 # OAuth 및 인증 관련
@@ -34,9 +34,9 @@ async def oauth_token(user_id: str, simulation_yn: str, api_key: str, secret_key
 
     path = "oauth2/tokenP"
     if simulation_yn == "Y":
-        api_url = get_env("DEV_API_URL")
+        api_url = settings.DEV_API_URL
     else:
-        api_url = get_env("REAL_API_URL")
+        api_url = settings.REAL_API_URL
 
     url = f"{api_url}/{path}"
     body = {
@@ -72,11 +72,12 @@ async def get_approval(user_id: str):
         raise ExternalApiException("KIS", "사용자 인증 정보가 없습니다.")
 
     if user_auth.get("simulation_yn") == "Y":
-        url = get_env("DEV_API_URL")
-        socket_url = get_env("DEV_SOCKET_URL")
+        url = settings.DEV_API_URL
+        socket_url = settings.DEV_SOCKET_URL
+
     else:
-        url = get_env("REAL_API_URL")
-        socket_url = get_env("REAL_SOCKET_URL")
+        url = settings.REAL_API_URL
+        socket_url = settings.REAL_SOCKET_URL
 
     path = "oauth2/Approval"
     api_url = f"{url}/{path}"
@@ -159,9 +160,9 @@ async def get_stock_balance(user_id: str, fk100="", nk100=""):
 
     path = "/uapi/domestic-stock/v1/trading/inquire-balance"
     if access_data.get("simulation_yn") == "Y":
-        url = get_env("DEV_API_URL")
+        url = settings.DEV_API_URL
     else:
-        url = get_env("REAL_API_URL")
+        url = settings.REAL_API_URL
 
     api_url = f"{url}/{path}"
 
@@ -204,44 +205,44 @@ async def get_stock_balance(user_id: str, fk100="", nk100=""):
 # 주문 관련
 # ============================================================
 
-async def place_order_api(user_id: str, order: Order):
-    """주식 주문"""
-    user_data, access_data = await _get_user_auth(user_id)
-    if access_data.get("simulation_yn") == "Y":
-        url = get_env("DEV_API_URL")
-    else:
-        url = get_env("REAL_API_URL")
-    path = "/uapi/domestic-stock/v1/trading/order-cash"
-    api_url = f"{url}/{path}"
-
-    if order.ord_dv == "buy":
-        if access_data.get("simulation_yn") == "Y":
-            tr_id = "VTTC0802U"  # 모의투자
-        else:
-            tr_id = "TTTC0012U"  # 실전투자
-    elif order.ord_dv == "sell":
-        if access_data.get("simulation_yn") == "Y":
-            tr_id = "VTTC0801U"  # 모의투자
-        else:
-            tr_id = "TTTC0011U"  # 실전투자
-    else:
-        return None
-
-    headers = kis_headers(
-        access_data,
-        tr_id=tr_id,
-    )
-
-    params = {
-        "CANO": user_data.get("ACCOUNT_NO")[:8],
-        "ACNT_PRDT_CD": user_data.get("ACCOUNT_NO")[-2:],
-        "PDNO": order.itm_no,
-        "ORD_DVSN": "01",  # 시장가
-        "ORD_QTY": str(order.qty),
-        "ORD_UNPR": "0"
-    }
-
-    return await fetch("POST", api_url, body=params, headers=headers)
+# async def place_order_api(user_id: str, order: Order):
+#     """주식 주문"""
+#     user_data, access_data = await _get_user_auth(user_id)
+#     if access_data.get("simulation_yn") == "Y":
+#         url = settings.DEV_API_URL
+#     else:
+#         url = settings.REAL_API_URL
+#     path = "/uapi/domestic-stock/v1/trading/order-cash"
+#     api_url = f"{url}/{path}"
+# 
+#     if order.ord_dv == "buy":
+#         if access_data.get("simulation_yn") == "Y":
+#             tr_id = "VTTC0802U"  # 모의투자
+#         else:
+#             tr_id = "TTTC0012U"  # 실전투자
+#     elif order.ord_dv == "sell":
+#         if access_data.get("simulation_yn") == "Y":
+#             tr_id = "VTTC0801U"  # 모의투자
+#         else:
+#             tr_id = "TTTC0011U"  # 실전투자
+#     else:
+#         return None
+# 
+#     headers = kis_headers(
+#         access_data,
+#         tr_id=tr_id,
+#     )
+# 
+#     params = {
+#         "CANO": user_data.get("ACCOUNT_NO")[:8],
+#         "ACNT_PRDT_CD": user_data.get("ACCOUNT_NO")[-2:],
+#         "PDNO": order.itm_no,
+#         "ORD_DVSN": "01",  # 시장가
+#         "ORD_QTY": str(order.qty),
+#         "ORD_UNPR": "0"
+#     }
+# 
+#     return await fetch("POST", api_url, body=params, headers=headers)
 
 
 async def get_cancelable_orders_api(user_id: str, fk100="", nk100=""):
@@ -249,8 +250,8 @@ async def get_cancelable_orders_api(user_id: str, fk100="", nk100=""):
     user_data, access_data = await _get_user_auth(user_id)
 
     path = "/uapi/domestic-stock/v1/trading/inquire-psbl-rvsecncl"
-    api_url = f"{get_env('REAL_API_URL')}/{path}"
-
+    api_url = f"{settings.REAL_API_URL}/{path}"
+    
     tr_id = "TTTC0084R"
 
     headers = kis_headers(
@@ -269,42 +270,42 @@ async def get_cancelable_orders_api(user_id: str, fk100="", nk100=""):
     return await fetch("POST", api_url, json=body, headers=headers)
 
 
-async def modify_or_cancel_order_api(user_id: str, order: ModifyOrder):
-    """주문 정정/취소"""
-    user_data, access_data = await _get_user_auth(user_id)
-    if access_data.get("simulation_yn") == "Y":
-        url = get_env("DEV_API_URL")
-    else:
-        url = get_env("REAL_API_URL")
-    path = "/uapi/domestic-stock/v1/trading/order-rvsecncl"
-    api_url = f"{url}/{path}"
-
-    if access_data.get("simulation_yn") == "Y":
-        tr_id = "VTTC0803U"  # 모의투자
-    else:
-        tr_id = "TTTC0013U"  # 실전투자
-
-    # 잔량전부인 경우 수량 0 처리
-    ord_qty = 0 if order.qty_all_ord_yn == 'Y' else order.ord_qty
-
-    headers = kis_headers(
-        access_data,
-        tr_id=tr_id,
-    )
-    body = {
-        "CANO": user_data.get("ACCOUNT_NO")[:8],
-        "ACNT_PRDT_CD": user_data.get("ACCOUNT_NO")[-2:],
-        "KRX_FWDG_ORD_ORGNO": order.ord_orgno,
-        "ORGN_ODNO": order.orgn_odno,
-        "ORD_DVSN": order.ord_dvsn,
-        "RVSE_CNCL_DVSN_CD": order.rvse_cncl_dvsn_cd,
-        "ORD_QTY": str(ord_qty),
-        "ORD_UNPR": str(order.ord_unpr),
-        "QTY_ALL_ORD_YN": order.qty_all_ord_yn
-    }
-
-    return await fetch("POST", api_url, json=body, headers=headers)
-
+# async def modify_or_cancel_order_api(user_id: str, order: ModifyOrder):
+#     """주문 정정/취소"""
+#     user_data, access_data = await _get_user_auth(user_id)
+#     if access_data.get("simulation_yn") == "Y":
+#         url = settings.DEV_API_URL
+#     else:
+#         url = settings.REAL_API_URL
+#     path = "/uapi/domestic-stock/v1/trading/order-rvsecncl"
+#     api_url = f"{url}/{path}"
+# 
+#     if access_data.get("simulation_yn") == "Y":
+#         tr_id = "VTTC0803U"  # 모의투자
+#     else:
+#         tr_id = "TTTC0013U"  # 실전투자
+# 
+#     # 잔량전부인 경우 수량 0 처리
+#     ord_qty = 0 if order.qty_all_ord_yn == 'Y' else order.ord_qty
+# 
+#     headers = kis_headers(
+#         access_data,
+#         tr_id=tr_id,
+#     )
+#     body = {
+#         "CANO": user_data.get("ACCOUNT_NO")[:8],
+#         "ACNT_PRDT_CD": user_data.get("ACCOUNT_NO")[-2:],
+#         "KRX_FWDG_ORD_ORGNO": order.ord_orgno,
+#         "ORGN_ODNO": order.orgn_odno,
+#         "ORD_DVSN": order.ord_dvsn,
+#         "RVSE_CNCL_DVSN_CD": order.rvse_cncl_dvsn_cd,
+#         "ORD_QTY": str(ord_qty),
+#         "ORD_UNPR": str(order.ord_unpr),
+#         "QTY_ALL_ORD_YN": order.qty_all_ord_yn
+#     }
+# 
+#     return await fetch("POST", api_url, json=body, headers=headers)
+# 
 
 # ============================================================
 # 시세 조회 관련
@@ -314,9 +315,9 @@ async def get_inquire_daily_ccld_obj(user_id: str, inqr_strt_dt=None, inqr_end_d
     """주식일별주문체결(현황)조회"""
     user_data, access_data = await _get_user_auth(user_id)
     if access_data.get("simulation_yn") == "Y":
-        url = get_env("DEV_API_URL")
+        url = settings.DEV_API_URL
     else:
-        url = get_env("REAL_API_URL")
+        url = settings.REAL_API_URL
 
     path = '/uapi/domestic-stock/v1/trading/inquire-daily-ccld'
     api_url = f"{url}/{path}"
@@ -358,44 +359,44 @@ async def get_inquire_daily_ccld_obj(user_id: str, inqr_strt_dt=None, inqr_end_d
     return await fetch("POST", api_url, json=body, headers=headers)
 
 
-async def get_target_price(code: str):
-    """종목 일별 시세 조회"""
-    redis = await get_redis()
-    access_data = await redis.hgetall("mgnt_access_token")
-
-    if not access_data:
-        access_data = await oauth_token("mgnt", "Y", get_env("API_KEY"), get_env("SECRET_KEY"))
-
-    if access_data.get("simulation_yn") == "Y":
-        url = get_env("DEV_API_URL")
-    else:
-        url = get_env("REAL_API_URL")
-
-    path = 'uapi/domestic-stock/v1/quotations/inquire-daily-price'
-    api_url = f"{url}/{path}"
-
-    headers = kis_headers(
-        access_data,
-        tr_id="FHKST01010400",
-    )
-
-    body = {
-        "FID_COND_MRKT_DIV_CODE": "J",
-        "FID_INPUT_ISCD": code,
-        "FID_ORG_ADJ_PRC": "1",
-        "FID_PERIOD_DIV_CODE": "D"
-    }
-    response = await fetch("POST", api_url, json=body, headers=headers)
-    return response['output'][0]
+# async def get_target_price(code: str):
+#     """종목 일별 시세 조회"""
+#     redis = await get_redis()
+#     access_data = await redis.hgetall("mgnt_access_token")
+#
+#     if not access_data:
+#         access_data = await oauth_token("mgnt", "Y", get_env("API_KEY"), get_env("SECRET_KEY"))
+#
+#     if access_data.get("simulation_yn") == "Y":
+#         url = settings.DEV_API_URL
+#     else:
+#         url = settings.REAL_API_URL
+#
+#     path = 'uapi/domestic-stock/v1/quotations/inquire-daily-price'
+#     api_url = f"{url}/{path}"
+#
+#     headers = kis_headers(
+#         access_data,
+#         tr_id="FHKST01010400",
+#     )
+#
+#     body = {
+#         "FID_COND_MRKT_DIV_CODE": "J",
+#         "FID_INPUT_ISCD": code,
+#         "FID_ORG_ADJ_PRC": "1",
+#         "FID_PERIOD_DIV_CODE": "D"
+#     }
+#     response = await fetch("POST", api_url, json=body, headers=headers)
+#     return response['output'][0]
 
 
 async def get_stock_data(user_id: str, code: str, start_date: str, end_date: str):
     """기간별 주식 데이터 조회"""
     user_data, access_data = await _get_user_auth(user_id)
     if access_data.get("simulation_yn") == "Y":
-        url = get_env("DEV_API_URL")
+        url = settings.DEV_API_URL
     else:
-        url = get_env("REAL_API_URL")
+        url = settings.REAL_API_URL
     path = "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice"
     api_url = f"{url}/{path}"
 
@@ -446,9 +447,9 @@ async def get_inquire_asking_price(user_id: str, code: str):
     user_data, access_data = await _get_user_auth(user_id)
     path = "/uapi/domestic-stock/v1/quotations/inquire-asking-price-exp-ccn"
     if access_data.get("simulation_yn") == "Y":
-        url = get_env("DEV_API_URL")
+        url = settings.DEV_API_URL
     else:
-        url = get_env("REAL_API_URL")
+        url = settings.REAL_API_URL
     api_url = f"{url}/{path}"
 
     headers = kis_headers(
