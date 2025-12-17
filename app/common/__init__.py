@@ -10,7 +10,8 @@ from app.common.exceptions import (
     NotFoundException,
     DuplicateException,
     UnauthorizedException,
-    BusinessException
+    BusinessException,
+    ExternalAPIException
 )
 
 __all__ = [
@@ -22,4 +23,5 @@ __all__ = [
     "DuplicateException",
     "UnauthorizedException",
     "BusinessException",
+    "ExternalAPIException"
 ]

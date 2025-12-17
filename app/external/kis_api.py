@@ -4,7 +4,8 @@ KIS (한국투자증권) API 통합 모듈
 from datetime import datetime, timedelta
 import logging
 
-from app.common.exceptions import ExternalAPIException
+from app.common import ExternalAPIException
+from app.external.headers import kis_headers, kis_error_message
 from app.module.config import get_env
 from app.module.fetch_api import fetch
 from app.module.redis_connection import get_redis
@@ -48,7 +49,7 @@ async def oauth_token(user_id: str, simulation_yn: str, api_key: str, secret_key
     access_token = response.get("access_token")
 
     if (not access_token) or (response.get("error_code")):
-        raise ExternalAPIException("KIS", response.get("error_description") or response.get("error_code") or "토큰 발급 실패")
+        raise ExternalAPIException("KIS", kis_error_message(response, "토큰 발급 실패"))
 
     data = {
         "access_token": access_token,
@@ -88,11 +89,7 @@ async def get_approval(user_id: str):
     response = await fetch("POST", api_url, json=body)
     approval_key = response.get("approval_key")
     if not approval_key:
-        raise ExternalAPIException(
-            "KIS",
-            response.get("error_description") or response.get("error_code") or "approval_key 발급 실패"
-        )
-
+        raise ExternalAPIException("KIS", kis_error_message(response, "approval_key 발급 실패"))
 
     data = {
         "socket_token": approval_key,
@@ -137,13 +134,10 @@ async def get_balance(user_id: str) -> int:
     else:
         tr_id = "TTTC8908R"  # 실전투자
 
-    headers = {
-        "authorization": f"Bearer {access_data.get('access_token')}",
-        "appkey": access_data.get("api_key"),
-        "appsecret": access_data.get("secret_key"),
-        "tr_id": tr_id,
-        "custtype": "P",
-    }
+    headers = kis_headers(
+        access_data,
+        tr_id=tr_id,
+    )
 
     params = {
         "CANO": user_data.get("ACCOUNT_NO")[:8],
@@ -176,13 +170,11 @@ async def get_stock_balance(user_id: str, fk100="", nk100=""):
     else:
         tr_id = "TTTC8434R"  # 실전투자
 
-    headers = {
-        "authorization": f"Bearer {access_data.get('access_token')}",
-        "appkey": access_data.get("api_key"),
-        "appsecret": access_data.get("secret_key"),
-        "tr_id": tr_id,
-        "custtype": "P"
-    }
+    headers = kis_headers(
+        access_data,
+        tr_id=tr_id,
+    )
+
     params = {
         "CANO": user_data.get("ACCOUNT_NO")[:8],
         "ACNT_PRDT_CD": user_data.get("ACCOUNT_NO")[-2:],
@@ -235,13 +227,11 @@ async def place_order_api(user_id: str, order: Order):
     else:
         return None
 
-    headers = {
-        "authorization": f"Bearer {access_data.get('access_token')}",
-        "appkey": access_data.get("api_key"),
-        "appsecret": access_data.get("secret_key"),
-        "tr_id": tr_id,
-        "custtype": "P"
-    }
+    headers = kis_headers(
+        access_data,
+        tr_id=tr_id,
+    )
+
     params = {
         "CANO": user_data.get("ACCOUNT_NO")[:8],
         "ACNT_PRDT_CD": user_data.get("ACCOUNT_NO")[-2:],
@@ -263,13 +253,10 @@ async def get_cancelable_orders_api(user_id: str, fk100="", nk100=""):
 
     tr_id = "TTTC0084R"
 
-    headers = {
-        "authorization": f"Bearer {access_data.get('access_token')}",
-        "appkey": access_data.get("api_key"),
-        "appsecret": access_data.get("secret_key"),
-        "tr_id": tr_id,
-        "custtype": "P"
-    }
+    headers = kis_headers(
+        access_data,
+        tr_id=tr_id,
+    )
     body = {
         "CANO": user_data.get("ACCOUNT_NO")[:8],
         "ACNT_PRDT_CD": user_data.get("ACCOUNT_NO")[-2:],
@@ -300,13 +287,10 @@ async def modify_or_cancel_order_api(user_id: str, order: ModifyOrder):
     # 잔량전부인 경우 수량 0 처리
     ord_qty = 0 if order.qty_all_ord_yn == 'Y' else order.ord_qty
 
-    headers = {
-        "authorization": f"Bearer {access_data.get('access_token')}",
-        "appkey": access_data.get("api_key"),
-        "appsecret": access_data.get("secret_key"),
-        "tr_id": tr_id,
-        "custtype": "P"
-    }
+    headers = kis_headers(
+        access_data,
+        tr_id=tr_id,
+    )
     body = {
         "CANO": user_data.get("ACCOUNT_NO")[:8],
         "ACNT_PRDT_CD": user_data.get("ACCOUNT_NO")[-2:],
@@ -350,13 +334,10 @@ async def get_inquire_daily_ccld_obj(user_id: str, inqr_strt_dt=None, inqr_end_d
     else:
         tr_id = "TTTC0081R"
 
-    headers = {
-        "authorization": f"Bearer {access_data.get('access_token')}",
-        "appkey": access_data.get("api_key"),
-        "appsecret": access_data.get("secret_key"),
-        "tr_id": tr_id,
-        "custtype": "P"
-    }
+    headers = kis_headers(
+        access_data,
+        tr_id=tr_id,
+    )
     body = {
         "CANO": user_data.get("ACCOUNT_NO")[:8],
         "ACNT_PRDT_CD": user_data.get("ACCOUNT_NO")[-2:],
@@ -393,12 +374,10 @@ async def get_target_price(code: str):
     path = 'uapi/domestic-stock/v1/quotations/inquire-daily-price'
     api_url = f"{url}/{path}"
 
-    headers = {
-        "authorization": f"Bearer {access_data.get('access_token')}",
-        "appkey": access_data.get("api_key"),
-        "appsecret": access_data.get("secret_key"),
-        "tr_id": "FHKST01010400",
-    }
+    headers = kis_headers(
+        access_data,
+        tr_id="FHKST01010400",
+    )
 
     body = {
         "FID_COND_MRKT_DIV_CODE": "J",
@@ -420,13 +399,10 @@ async def get_stock_data(user_id: str, code: str, start_date: str, end_date: str
     path = "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice"
     api_url = f"{url}/{path}"
 
-    headers = {
-        "authorization": f"Bearer {access_data.get('access_token')}",
-        "appkey": access_data.get("api_key"),
-        "appsecret": access_data.get("secret_key"),
-        "tr_id": "FHKST03010100",
-        "custtype": "P",
-    }
+    headers = kis_headers(
+        access_data,
+        tr_id="FHKST03010100",
+    )
 
     params = {
         "FID_COND_MRKT_DIV_CODE": "J",
@@ -475,13 +451,10 @@ async def get_inquire_asking_price(user_id: str, code: str):
         url = get_env("REAL_API_URL")
     api_url = f"{url}/{path}"
 
-    headers = {
-        "authorization": f"Bearer {access_data.get('access_token')}",
-        "appkey": access_data.get("api_key"),
-        "appsecret": access_data.get("secret_key"),
-        "tr_id": "FHKST01010200",
-        "custtype": "P",
-    }
+    headers = kis_headers(
+        access_data,
+        tr_id="FHKST01010200",
+    )
 
     params = {
         "FID_COND_MRKT_DIV_CODE": "J",
