@@ -1,7 +1,7 @@
 # scheduler.py
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
-from app.swing.auto_swing_batch import trade_job, day_collect_job
+from app.domain.swing import trade_job, day_collect_job
 
 scheduler = AsyncIOScheduler()
 

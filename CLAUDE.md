@@ -247,19 +247,19 @@ async def create(self, data):
 
 ### 3. 예외 처리 표준화
 ```python
-# common/exceptions.py
-class AppException(Exception):
+# common/http.py
+class ApiException(Exception):
     def __init__(self, status_code: int, code: str, message: str): ...
 
-class NotFoundException(AppException):
+class NotFoundException(ApiException):
     def __init__(self, resource: str, identifier: Any):
         super().__init__(404, "NOT_FOUND", f"{resource}을(를) 찾을 수 없습니다: {identifier}")
 
-class DuplicateException(AppException):
+class DuplicateException(ApiException):
     def __init__(self, resource: str, identifier: Any):
         super().__init__(409, "DUPLICATE", f"이미 존재하는 {resource}입니다: {identifier}")
 
-class BusinessException(AppException):
+class BusinessException(ApiException):
     def __init__(self, message: str):
         super().__init__(400, "BUSINESS_ERROR", message)
 ```

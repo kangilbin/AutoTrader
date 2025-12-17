@@ -7,13 +7,14 @@ from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
 
 from app.common.database import Database
+from app.exceptions import BizException
 from app.module.redis_connection import Redis
 from app.module.schedules import schedule_start
-from app.common.exceptions import AppException
+from app.exceptions.http import ApiException
 from app.core.response import error_response
 
 # 라우터 임포트
-from app.routers import (
+from app.domain.routers import (
     user_router,
     auth_router,
     account_router,
@@ -58,10 +59,11 @@ app = FastAPI(
 )
 
 
+
 # 전역 예외 핸들러
-@app.exception_handler(AppException)
-async def app_exception_handler(request: Request, exc: AppException):
-    """커스텀 예외 핸들러"""
+@app.exception_handler(ApiException)
+async def app_exception_handler(request: Request, exc: ApiException):
+    logger.error(f"ApiException: {exc}", exc_info=True)
     return JSONResponse(
         status_code=exc.status_code,
         content=error_response(
@@ -70,6 +72,18 @@ async def app_exception_handler(request: Request, exc: AppException):
         )
     )
 
+
+@app.exception_handler(BizException)
+async def domain_exception_handler(request: Request, exc: BizException):
+    logger.error(f"BizException: {exc}", exc_info=True)
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=error_response(
+            message=exc.message,
+            error_code=exc.error_code,
+            detail=exc.detail if logger.level == logging.DEBUG else None
+        )
+    )
 
 @app.exception_handler(Exception)
 async def general_exception_handler(request: Request, exc: Exception):

@@ -3,10 +3,8 @@
 """
 from fastapi import Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.common.database import get_db
-from app.common.exceptions import UnauthorizedException
+from app.exceptions.http import UnauthorizedException
 from app.core.security import verify_token
 
 security = HTTPBearer()
