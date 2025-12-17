@@ -85,3 +85,13 @@ class ValidationException(AppException):
             error_code="VALIDATION_ERROR"
         )
         self.errors = errors
+
+class ExternalAPIException(AppException):
+    """외부 API 호출 실패 (502)"""
+
+    def __init__(self, service: str, detail: str, error_code: str = "EXTERNAL_API_ERROR"):
+        super().__init__(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"{service} API 오류: {detail}",
+            error_code=error_code
+        )

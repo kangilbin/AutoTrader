@@ -2,9 +2,9 @@
 KIS (한국투자증권) API 통합 모듈
 """
 from datetime import datetime, timedelta
-from fastapi import HTTPException
 import logging
 
+from app.common.exceptions import ExternalAPIException
 from app.module.config import get_env
 from app.module.fetch_api import fetch
 from app.module.redis_connection import get_redis
@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 # ============================================================
 # OAuth 및 인증 관련
 # ============================================================
+
 
 async def oauth_token(user_id: str, simulation_yn: str, api_key: str, secret_key: str):
     """
@@ -47,7 +48,7 @@ async def oauth_token(user_id: str, simulation_yn: str, api_key: str, secret_key
     access_token = response.get("access_token")
 
     if (not access_token) or (response.get("error_code")):
-        raise HTTPException(status_code=403, detail=response.get("error_description"))
+        raise ExternalAPIException("KIS", response.get("error_description") or response.get("error_code") or "토큰 발급 실패")
 
     data = {
         "access_token": access_token,
@@ -67,7 +68,7 @@ async def get_approval(user_id: str):
     user_auth = await redis.hgetall(f"{user_id}_access_token")
 
     if not user_auth:
-        raise HTTPException(status_code=401, detail="사용자 인증 정보가 없습니다.")
+        raise ExternalAPIException("KIS", "사용자 인증 정보가 없습니다.")
 
     if user_auth.get("simulation_yn") == "Y":
         url = get_env("DEV_API_URL")
@@ -85,11 +86,16 @@ async def get_approval(user_id: str):
         "secretkey": user_auth.get('secret_key')
     }
     response = await fetch("POST", api_url, json=body)
-    if not response.get("approval_key") or response.get("approval_key") is None:
-        raise HTTPException(status_code=401, detail=response.get('error_code'))
+    approval_key = response.get("approval_key")
+    if not approval_key:
+        raise ExternalAPIException(
+            "KIS",
+            response.get("error_description") or response.get("error_code") or "approval_key 발급 실패"
+        )
+
 
     data = {
-        "socket_token": response.get("approval_key"),
+        "socket_token": approval_key,
         "url": socket_url
     }
     # Redis에 토큰 저장 만료기간(expires_in) 설정
