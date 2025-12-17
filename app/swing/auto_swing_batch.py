@@ -1,104 +1,116 @@
+"""
+스윙 매매 배치 작업
+"""
 import asyncio
 import logging
+from datetime import datetime, timedelta
 import pandas as pd
-from app.api.local_stock_api import get_target_price
+
+from app.external.kis_api import get_target_price
 from app.swing.tech_analysis import ema_swing_signals
-from app.stock.stock_crud import insert_bulk_stock_hstr
-from app.infrastructure.security.aes_crypto import decrypt
-from app.infrastructure.database.db_connection import get_db
-from app.stock.stock_service import get_day_stock_price
-from app.swing.swing_service import get_day_swing
+from app.core.security import decrypt
+from app.common.database import Database
+from app.swing.service import SwingService
+from app.stock.service import StockService
+
+logger = logging.getLogger(__name__)
+
 
 async def trade_job():
-    db = await get_db()
-    swing_list = await get_day_swing(db)
+    """매매 신호 확인 및 실행 (1시간 단위)"""
+    db = await Database.get_session()
+    try:
+        swing_service = SwingService(db)
+        stock_service = StockService(db)
 
-    tasks = []
-    for swing in swing_list:
-        print("#################스윙 시작################")
-        print(swing.SWING_ID, swing.STOCK_CODE, decrypt(swing.APP_KEY), decrypt(swing.SECRET_KEY))
+        swing_list = await swing_service.get_active_swings()
 
-        # 1. 이평선 조회
-        price_days = await get_day_stock_price(db, swing.ST_CODE, swing.LONG_TERM)
-        df = pd.DataFrame([price_day.__dict__ for price_day in price_days])
-        df = df.drop(columns=["_sa_instance_state"], errors="ignore")
-        new_row = pd.DataFrame([["01231230","2025-08-03", 15000, 17000, 13000, 14000, 200000]], columns=["ST_CODE", "STCK_BSOP_DATE", "STCK_OPRC", "STCK_HGPR", "STCK_LWPR", "STCK_CLPR", "ACML_VOL"])
-        df = pd.concat([df, new_row], ignore_index=True)
+        for swing in swing_list:
+            logger.info(f"스윙 시작: {swing.SWING_ID}, {swing.ST_CODE}")
 
-        first_buy_signal, second_buy_signal, first_sell_signal, stop_loss_signal = ema_swing_signals(df, swing.SHORT_TERM, swing.MEDIUM_TERM, swing.LONG_TERM)
+            # 이평선 데이터 조회
+            start_date = datetime.now() - timedelta(days=swing.LONG_TERM * 2)
+            price_days = await stock_service.get_stock_history(swing.ST_CODE, start_date)
 
-        if stop_loss_signal:
-            # 손절 신호 발생
-            print("손절 신호 발생")
-            # 매도 로직 실행
-            # swing.SIGNAL = "0" 초기화
-        else:
-            if swing.SIGNAL == "0": # 최초 상태
-                # 단기-중기 매수 신호 발생
-                if first_buy_signal:
-                    # 매수 신호 발생
-                    print("단기-중기 매수 신호 발생")
-                    # 매수 로직 실행
-                    # swing.SIGNAL = "1"
-            elif swing.SIGNAL == "1": # 첫 매수 후
-                if second_buy_signal:
-                    # 매수 신호 발생
-                    print("중기-장기 매수 신호 발생")
-                    # 매수 로직 실행
-                    # swing.SIGNAL = "2"
-                elif first_sell_signal:
-                    # 매도 신호 발생
-                    print("단기-중기 매도 신호 발생")
-                    # 매도 로직 실행
-                    # 첫 매수 후 매도 신호 발생하면 전량 매도
-                    # swing.SIGNAL = "0" 초기화
-            elif swing.SIGNAL == "2": # 두 번째 매수 후
-                if first_sell_signal:
-                    # 매도 신호 발생
-                    print("단기-중기 매도 신호 발생")
-                    # 매도 로직 실행
-                    # 두 번째 매수 후 매도 신호 발생하면 전량 매도
-                    # swing.SIGNAL = "3"
+            if not price_days:
+                logger.warning(f"주가 데이터 없음: {swing.ST_CODE}")
+                continue
 
+            df = pd.DataFrame(price_days)
 
+            # 이평선 신호 분석
+            first_buy_signal, second_buy_signal, first_sell_signal, stop_loss_signal = ema_swing_signals(
+                df, swing.SHORT_TERM, swing.MEDIUM_TERM, swing.LONG_TERM
+            )
 
+            if stop_loss_signal:
+                logger.info("손절 신호 발생")
+                # 매도 로직 실행
+                # swing.SIGNAL = "0" 초기화
+            else:
+                if swing.SIGNAL == "0":  # 최초 상태
+                    if first_buy_signal:
+                        logger.info("단기-중기 매수 신호 발생")
+                        # 매수 로직 실행
+                        # swing.SIGNAL = "1"
+                elif swing.SIGNAL == "1":  # 첫 매수 후
+                    if second_buy_signal:
+                        logger.info("중기-장기 매수 신호 발생")
+                        # 매수 로직 실행
+                        # swing.SIGNAL = "2"
+                    elif first_sell_signal:
+                        logger.info("단기-중기 매도 신호 발생")
+                        # 첫 매수 후 매도 → 전량 매도
+                        # swing.SIGNAL = "0" 초기화
+                elif swing.SIGNAL == "2":  # 두 번째 매수 후
+                    if first_sell_signal:
+                        logger.info("단기-중기 매도 신호 발생")
+                        # 두 번째 매수 후 매도 → 전량 매도
+                        # swing.SIGNAL = "3"
 
-        # 3. 보조 지표 (ADX, OBV) 필터링
+            logger.info(f"스윙 완료: {swing.SWING_ID}")
 
-        # 매수 or 매매 실행
-
-        # 비동기 작업을 백그라운드에서 실행
-        #task = asyncio.create_task(fetch("GET", api_url, body={}, headers=headers))
-        #tasks.append(task)
-        #await asyncio.gather(*tasks) #  모든 작업이 완료될 때까지 기다리는 함수
-        print("#################1시간 스윙################")
+    except Exception as e:
+        logger.error(f"trade_job 실패: {e}", exc_info=True)
+    finally:
+        await db.close()
 
 
 async def day_collect_job():
-    """
-    일 데이터 수집
-    stck_hgpr : 고가
-    stck_lwpr : 저가
-    stck_clspr : 종가
-    acml_vol : 거래량
-    """
-    logging.debug("#################데이터 수집 시작################")
-    db = await get_db()
-    swing_stock_list = await get_day_swing(db)
+    """일별 데이터 수집 (장 마감 후)"""
+    logger.info("데이터 수집 시작")
+    db = await Database.get_session()
+    try:
+        swing_service = SwingService(db)
+        stock_service = StockService(db)
 
-    tasks = []
-    for swing_stock in swing_stock_list:
-        code = swing_stock.STOCK_CODE
-        tasks.append(collect_and_insert_stock_data(db, code))
+        swing_list = await swing_service.get_active_swings()
 
-    await asyncio.gather(*tasks)
-    logging.debug("#################데이터 수집 종료################")
+        for swing in swing_list:
+            try:
+                code = swing.ST_CODE
+                response = await get_target_price(code)
 
+                if response:
+                    history_data = [{
+                        "ST_CODE": code,
+                        "STCK_BSOP_DATE": datetime.now().strftime('%Y%m%d'),
+                        "STCK_OPRC": response.get('stck_oprc'),
+                        "STCK_HGPR": response.get('stck_hgpr'),
+                        "STCK_LWPR": response.get('stck_lwpr'),
+                        "STCK_CLPR": response.get('stck_clpr'),
+                        "ACML_VOL": response.get('acml_vol'),
+                        "REG_DT": datetime.now()
+                    }]
+                    await stock_service.save_history_bulk(history_data)
+                    logger.debug(f"데이터 저장 완료: {code}")
 
-async def collect_and_insert_stock_data(db, code):
-    response = await get_target_price(code)
-    response.set("STOCK_CODE", code)
-    await insert_bulk_stock_hstr(db, response)
+            except Exception as e:
+                logger.error(f"데이터 수집 실패 ({swing.ST_CODE}): {e}")
 
+        logger.info("데이터 수집 종료")
 
-
+    except Exception as e:
+        logger.error(f"day_collect_job 실패: {e}", exc_info=True)
+    finally:
+        await db.close()

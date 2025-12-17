@@ -3,6 +3,9 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 from app.infrastructure.database.table_create import Base
 import os
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class Database:
@@ -14,14 +17,20 @@ class Database:
     async def connect(cls):
         """DB 엔진과 세션 팩토리를 싱글톤으로 초기화"""
         if cls._engine is None:
+            # 환경변수에서 설정 가져오기 (기본값 제공)
+            db_echo = os.getenv("DB_ECHO", "false").lower() == "true"
+            pool_size = int(os.getenv("DB_POOL_SIZE", "10"))
+            max_overflow = int(os.getenv("DB_MAX_OVERFLOW", "20"))
+
             cls._engine = create_async_engine(
                 os.getenv("DATABASE_URL"),
-                echo=True,
-                pool_size=10,
-                max_overflow=20,
+                echo=db_echo,  # 프로덕션에서는 False
+                pool_size=pool_size,
+                max_overflow=max_overflow,
                 pool_timeout=30,
                 pool_recycle=1800
             )
+            logger.info(f"Database engine created (echo={db_echo})")
             # 테이블 생성 (최초 실행 시)
             async with cls._engine.begin() as conn:
                 await conn.run_sync(Base.metadata.create_all)

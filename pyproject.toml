@@ -22,4 +22,5 @@ dependencies = [
     "pandas",
     "asyncmy",
     "ta-lib>=0.6.7",
+    "pydantic-settings>=2.12.0",
 ]

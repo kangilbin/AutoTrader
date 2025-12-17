@@ -38,6 +38,18 @@ def verify_token(token: str) -> Optional[TokenData]:
         )
 
 async def get_token(credentials: HTTPAuthorizationCredentials = Depends(security)) -> str:
-    return verify_token(credentials.credentials).user_id
+    """JWT 토큰에서 user_id를 추출하여 반환
+
+    Returns:
+        str: 사용자 ID
+    """
+    token_data = verify_token(credentials.credentials)
+    if not token_data:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="유효하지 않은 토큰입니다.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return token_data.user_id
 
 

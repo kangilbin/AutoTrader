@@ -5,12 +5,13 @@ import uuid
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 from dateutil.relativedelta import relativedelta
-from app.stock.stock_service import get_day_stock_price
-from app.swing.strategy_factory import StrategyFactory
-from app.swing.swing_model import SwingCreate
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.module.redis_connection import get_redis
 import json
+
+from app.stock.service import StockService
+from app.swing.strategy_factory import StrategyFactory
+from app.swing.schemas import SwingCreateRequest
+from app.module.redis_connection import get_redis
 
 # ===== 백테스트 잡 실행 환경 =====
 _EXECUTOR = ThreadPoolExecutor(max_workers=min(4, (os.cpu_count() or 2)))
@@ -44,7 +45,7 @@ async def compute_backtest_offloaded(prices_df: pd.DataFrame, params: dict) -> d
         )
 
 
-async def start_backtest_job(db: AsyncSession, swing_data: SwingCreate) -> str:
+async def start_backtest_job(db: AsyncSession, swing_data: SwingCreateRequest) -> str:
     """
     비동기 백테스트 잡 시작
     """
@@ -74,7 +75,8 @@ async def start_backtest_job(db: AsyncSession, swing_data: SwingCreate) -> str:
     eval_start = end_date - relativedelta(years=1)
 
     # 주가 데이터 조회
-    price_days = await get_day_stock_price(db, swing_data.ST_CODE, start_date)
+    stock_service = StockService(db)
+    price_days = await stock_service.get_stock_history(swing_data.ST_CODE, start_date)
     if not price_days:
         raise ValueError("주가 데이터가 없습니다.")
 
