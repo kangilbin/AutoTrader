@@ -11,7 +11,7 @@ from app.domain.auth.repository import AuthRepository
 from app.domain.auth.entity import Auth
 from app.domain.auth.schemas import AuthCreateRequest, AuthResponse
 from app.core.security import encrypt, decrypt
-from app.exceptions.http import BusinessException, NotFoundException
+from app.exceptions import ValidationError, NotFoundError, DatabaseError
 from app.module.redis_connection import get_redis
 from app.external.kis_api import oauth_token
 
@@ -44,7 +44,7 @@ class AuthService:
         except SQLAlchemyError as e:
             await self.db.rollback()
             logger.error(f"인증키 등록 실패: {e}", exc_info=True)
-            raise BusinessException("인증키 등록에 실패했습니다")
+            raise DatabaseError("인증키 등록에 실패했습니다", operation="insert", original_error=e)
 
     async def get_auth_keys(self, user_id: str) -> List[dict]:
         """인증키 목록 조회"""
@@ -55,7 +55,7 @@ class AuthService:
         """인증키 선택 및 OAuth 토큰 발급"""
         auth_data = await self.repo.find_by_id(user_id, auth_id)
         if not auth_data:
-            raise NotFoundException("인증키", auth_id)
+            raise NotFoundError("인증키", auth_id)
 
         # Redis에 계좌번호 저장
         redis = await get_redis()
@@ -86,7 +86,7 @@ class AuthService:
         except SQLAlchemyError as e:
             await self.db.rollback()
             logger.error(f"인증키 수정 실패: {e}", exc_info=True)
-            raise BusinessException("인증키 수정에 실패했습니다")
+            raise DatabaseError("인증키 수정에 실패했습니다", operation="update", original_error=e)
 
     async def delete_auth(self, auth_id: int) -> bool:
         """인증키 삭제"""
@@ -94,9 +94,9 @@ class AuthService:
             result = await self.repo.delete(auth_id)
             await self.db.commit()
             if not result:
-                raise NotFoundException("인증키", auth_id)
+                raise NotFoundError("인증키", auth_id)
             return result
         except SQLAlchemyError as e:
             await self.db.rollback()
             logger.error(f"인증키 삭제 실패: {e}", exc_info=True)
-            raise BusinessException("인증키 삭제에 실패했습니다")
+            raise DatabaseError("인증키 삭제에 실패했습니다", operation="delete", original_error=e)

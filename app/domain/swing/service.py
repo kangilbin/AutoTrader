@@ -11,7 +11,7 @@ import logging
 from app.domain.swing.repository import SwingRepository
 from app.domain.swing.entity import SwingTrade, EmaOption
 from app.domain.swing.schemas import SwingCreateRequest, SwingResponse
-from app.exceptions.http import BusinessException, NotFoundException, DuplicateException
+from app.exceptions import DatabaseError, NotFoundError, DuplicateError
 from app.external.kis_api import get_stock_balance
 
 logger = logging.getLogger(__name__)
@@ -57,17 +57,17 @@ class SwingService:
         except IntegrityError as e:
             await self.db.rollback()
             logger.error(f"스윙 등록 실패 (중복): {e}", exc_info=True)
-            raise DuplicateException("스윙 전략", request.ST_CODE)
+            raise DuplicateError("스윙 전략", request.ST_CODE)
         except SQLAlchemyError as e:
             await self.db.rollback()
             logger.error(f"스윙 등록 실패: {e}", exc_info=True)
-            raise BusinessException("스윙 등록에 실패했습니다")
+            raise DatabaseError("스윙 등록에 실패했습니다")
 
     async def get_swing(self, swing_id: int) -> dict:
         """스윙 조회"""
         swing = await self.repo.find_by_id(swing_id)
         if not swing:
-            raise NotFoundException("스윙 전략", swing_id)
+            raise NotFoundError("스윙 전략", swing_id)
         return SwingResponse.model_validate(swing).model_dump()
 
     async def update_swing(self, swing_id: int, data: dict) -> dict:
@@ -80,7 +80,7 @@ class SwingService:
         except SQLAlchemyError as e:
             await self.db.rollback()
             logger.error(f"스윙 수정 실패: {e}", exc_info=True)
-            raise BusinessException("스윙 수정에 실패했습니다")
+            raise DatabaseError("스윙 수정에 실패했습니다")
 
     async def delete_swing(self, swing_id: int) -> bool:
         """스윙 삭제"""
@@ -88,12 +88,12 @@ class SwingService:
             result = await self.repo.delete(swing_id)
             await self.db.commit()
             if not result:
-                raise NotFoundException("스윙 전략", swing_id)
+                raise NotFoundError("스윙 전략", swing_id)
             return result
         except SQLAlchemyError as e:
             await self.db.rollback()
             logger.error(f"스윙 삭제 실패: {e}", exc_info=True)
-            raise BusinessException("스윙 삭제에 실패했습니다")
+            raise DatabaseError("스윙 삭제에 실패했습니다")
 
     async def mapping_swing(self, user_id: str, account_no: str) -> List[dict]:
         """스윙 목록과 보유 주식 매핑"""
@@ -151,7 +151,7 @@ class SwingService:
         except SQLAlchemyError as e:
             await self.db.rollback()
             logger.error(f"스윙 매핑 실패: {e}", exc_info=True)
-            raise BusinessException("스윙 매핑에 실패했습니다")
+            raise DatabaseError("스윙 매핑에 실패했습니다")
 
     async def get_active_swings(self) -> List:
         """활성화된 스윙 목록 조회 (배치용)"""

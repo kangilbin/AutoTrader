@@ -10,7 +10,7 @@ import logging
 from app.domain.account.repository import AccountRepository
 from app.domain.account.entity import Account
 from app.domain.account.schemas import AccountCreateRequest, AccountResponse
-from app.exceptions.http import BusinessException, NotFoundException
+from app.exceptions import ValidationError, NotFoundError, DatabaseError
 from app.module.redis_connection import get_redis
 
 logger = logging.getLogger(__name__)
@@ -40,14 +40,14 @@ class AccountService:
         except SQLAlchemyError as e:
             await self.db.rollback()
             logger.error(f"계좌 등록 실패: {e}", exc_info=True)
-            raise BusinessException("계좌 등록에 실패했습니다")
+            raise DatabaseError("계좌 등록에 실패했습니다", operation="insert", original_error=e)
 
     async def get_account(self, account_id: str, user_id: str) -> dict:
         """계좌 조회 및 Redis 캐싱"""
         account_info = await self.repo.find_by_id(account_id)
 
         if not account_info:
-            raise NotFoundException("계좌", account_id)
+            raise NotFoundError("계좌", account_id)
 
         # Redis에 캐싱
         redis = await get_redis()
@@ -69,7 +69,7 @@ class AccountService:
         except SQLAlchemyError as e:
             await self.db.rollback()
             logger.error(f"계좌 수정 실패: {e}", exc_info=True)
-            raise BusinessException("계좌 수정에 실패했습니다")
+            raise DatabaseError("계좌 수정에 실패했습니다", operation="update", original_error=e)
 
     async def delete_account(self, account_id: str) -> bool:
         """계좌 삭제"""
@@ -77,9 +77,9 @@ class AccountService:
             result = await self.repo.delete(account_id)
             await self.db.commit()
             if not result:
-                raise NotFoundException("계좌", account_id)
+                raise NotFoundError("계좌", account_id)
             return result
         except SQLAlchemyError as e:
             await self.db.rollback()
             logger.error(f"계좌 삭제 실패: {e}", exc_info=True)
-            raise BusinessException("계좌 삭제에 실패했습니다")
+            raise DatabaseError("계좌 삭제에 실패했습니다", operation="delete", original_error=e)

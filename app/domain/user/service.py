@@ -17,10 +17,10 @@ from app.core.security import (
     verify_token,
 )
 from app.core.config import get_settings
-from app.exceptions.http import (
-    UnauthorizedException,
-    BusinessException,
-    DuplicateException,
+from app.exceptions import (
+    AuthenticationError,
+    DuplicateError,
+    DatabaseError,
 )
 from app.module.redis_connection import get_redis
 
@@ -40,7 +40,7 @@ class UserService:
         try:
             # 중복 검사
             if await self.repo.exists(request.USER_ID):
-                raise DuplicateException("사용자", request.USER_ID)
+                raise DuplicateError("사용자", request.USER_ID)
 
             # 도메인 엔티티 생성 (비즈니스 검증 포함)
             user = User.create(
@@ -58,14 +58,14 @@ class UserService:
         except SQLAlchemyError as e:
             await self.db.rollback()
             logger.error(f"회원 가입 실패: {e}", exc_info=True)
-            raise BusinessException("회원 가입에 실패했습니다")
+            raise DatabaseError("회원 가입에 실패했습니다", operation="insert", original_error=e)
 
     async def login(self, user_id: str, password: str) -> tuple[str, str]:
         """로그인"""
         user_info = await self.repo.find_by_id_with_password(user_id)
 
         if not user_info or not check_password(password, user_info["PASSWORD"]):
-            raise UnauthorizedException("잘못된 아이디 또는 비밀번호입니다")
+            raise AuthenticationError("잘못된 아이디 또는 비밀번호입니다")
 
         # 토큰 생성
         access_token = create_access_token(
@@ -93,7 +93,7 @@ class UserService:
         """토큰 갱신"""
         token_data = verify_token(refresh_token)
         if token_data is None:
-            raise UnauthorizedException("유효하지 않은 리프레시 토큰입니다")
+            raise AuthenticationError("유효하지 않은 리프레시 토큰입니다")
 
         user_id = token_data.user_id
         redis = await get_redis()
@@ -101,7 +101,7 @@ class UserService:
         # Redis 검증
         user_info = await redis.hgetall(user_id)
         if not user_info or user_info.get("refresh_token") != refresh_token:
-            raise UnauthorizedException("유효하지 않은 리프레시 토큰입니다")
+            raise AuthenticationError("유효하지 않은 리프레시 토큰입니다")
 
         # 새 액세스 토큰 발급
         access_token = create_access_token(
@@ -121,7 +121,7 @@ class UserService:
         except SQLAlchemyError as e:
             await self.db.rollback()
             logger.error(f"회원 정보 수정 실패: {e}", exc_info=True)
-            raise BusinessException("회원 정보 수정에 실패했습니다")
+            raise DatabaseError("회원 정보 수정에 실패했습니다", operation="update", original_error=e)
 
     async def delete_user(self, user_id: str) -> bool:
         """회원 탈퇴"""
@@ -132,4 +132,4 @@ class UserService:
         except SQLAlchemyError as e:
             await self.db.rollback()
             logger.error(f"회원 탈퇴 실패: {e}", exc_info=True)
-            raise BusinessException("회원 탈퇴에 실패했습니다")
+            raise DatabaseError("회원 탈퇴에 실패했습니다", operation="delete", original_error=e)

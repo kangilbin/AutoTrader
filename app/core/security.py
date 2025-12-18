@@ -17,7 +17,7 @@ from cryptography.hazmat.backends import default_backend
 from pydantic import BaseModel
 from fastapi import HTTPException, status
 
-from app.common import UnauthorizedException
+from app.exceptions import AuthenticationError
 from app.core.config import get_settings
 
 
@@ -68,9 +68,9 @@ def verify_token(token: str) -> Optional[TokenData]:
             return None
         return TokenData(user_id=user_id)
     except ExpiredSignatureError:
-        raise UnauthorizedException("토큰이 만료되었습니다.")
+        raise AuthenticationError("토큰이 만료되었습니다.", reason="token_expired")
     except jwt.PyJWTError:
-        raise UnauthorizedException("유효하지 않은 토큰입니다.")
+        raise AuthenticationError("유효하지 않은 토큰입니다.", reason="invalid_token")
 
 
 # ==================== Password Hashing ====================

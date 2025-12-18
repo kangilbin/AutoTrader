@@ -4,7 +4,7 @@
 from fastapi import Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
-from app.exceptions.http import UnauthorizedException
+from app.exceptions import AuthenticationError
 from app.core.security import verify_token
 
 security = HTTPBearer()
@@ -18,7 +18,7 @@ async def get_current_user(
     token_data = verify_token(token)
 
     if token_data is None:
-        raise UnauthorizedException("유효하지 않은 토큰입니다")
+        raise AuthenticationError("유효하지 않은 토큰입니다", reason="invalid_token")
 
     return token_data.user_id
 
@@ -29,5 +29,5 @@ async def get_current_user_optional(
     """현재 인증된 사용자 ID 반환 (선택적)"""
     try:
         return await get_current_user(credentials)
-    except UnauthorizedException:
+    except AuthenticationError:
         return None

@@ -2,16 +2,13 @@
 FastAPI 애플리케이션 진입점
 """
 import logging
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI
 from contextlib import asynccontextmanager
 
 from app.common.database import Database
-from app.exceptions import BizException
 from app.module.redis_connection import Redis
 from app.module.schedules import schedule_start
-from app.exceptions.http import ApiException
-from app.core.response import error_response
+from app.exceptions.handlers import register_exception_handlers
 
 # 라우터 임포트
 from app.domain.routers import (
@@ -58,46 +55,8 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-
-
-# 전역 예외 핸들러
-@app.exception_handler(ApiException)
-async def app_exception_handler(request: Request, exc: ApiException):
-    logger.error(f"ApiException: {exc}", exc_info=True)
-    return JSONResponse(
-        status_code=exc.status_code,
-        content=error_response(
-            message=exc.detail,
-            error_code=exc.error_code
-        )
-    )
-
-
-@app.exception_handler(BizException)
-async def domain_exception_handler(request: Request, exc: BizException):
-    logger.error(f"BizException: {exc}", exc_info=True)
-    return JSONResponse(
-        status_code=exc.status_code,
-        content=error_response(
-            message=exc.message,
-            error_code=exc.error_code,
-            detail=exc.detail if logger.level == logging.DEBUG else None
-        )
-    )
-
-@app.exception_handler(Exception)
-async def general_exception_handler(request: Request, exc: Exception):
-    """일반 예외 핸들러"""
-    logger.error(f"Unhandled exception: {exc}", exc_info=True)
-    return JSONResponse(
-        status_code=500,
-        content=error_response(
-            message="서버 내부 오류가 발생했습니다",
-            error_code="INTERNAL_SERVER_ERROR",
-            detail=str(exc) if logger.level == logging.DEBUG else None
-        )
-    )
-
+# 전역 예외 핸들러 등록
+register_exception_handlers(app)
 
 # 라우터 등록
 app.include_router(health_router)

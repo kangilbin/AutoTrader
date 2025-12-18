@@ -10,7 +10,7 @@ from app.common.dependencies import get_current_user
 from app.domain.swing.schemas import SwingCreateRequest
 from app.domain.swing.backtest.backtest_service import start_backtest_job, get_backtest_job
 from app.core.response import success_response
-from app.exceptions.http import BusinessException, NotFoundException
+from app.exceptions import DatabaseError, NotFoundError
 
 router = APIRouter(prefix="/backtest", tags=["Backtest"])
 
@@ -33,7 +33,7 @@ async def request_backtest(
             "job_id": job_id
         })
     except Exception as e:
-        raise BusinessException(str(e))
+        raise DatabaseError("백테스팅 요청 처리 중 오류가 발생했습니다", operation="backtest", original_error=e)
 
 
 @router.get("/{job_id}")
@@ -41,5 +41,5 @@ async def get_backtest_result(job_id: str):
     """백테스팅 결과 조회"""
     job = await get_backtest_job(job_id)
     if not job:
-        raise NotFoundException("백테스팅 작업", job_id)
+        raise NotFoundError("백테스팅 작업", job_id)
     return success_response("백테스팅 결과", job)

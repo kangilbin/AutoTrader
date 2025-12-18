@@ -4,7 +4,7 @@ KIS (한국투자증권) API 통합 모듈
 from datetime import datetime, timedelta
 import logging
 
-from app.exceptions import ExternalApiException
+from app.exceptions import ExternalServiceError
 from app.core import get_settings
 from app.external.headers import kis_headers, kis_error_message
 from app.module.fetch_api import fetch
@@ -49,7 +49,7 @@ async def oauth_token(user_id: str, simulation_yn: str, api_key: str, secret_key
     access_token = response.get("access_token")
 
     if (not access_token) or (response.get("error_code")):
-        raise ExternalApiException("KIS", kis_error_message(response, "토큰 발급 실패"))
+        raise ExternalServiceError("KIS", kis_error_message(response, "토큰 발급 실패"))
 
     data = {
         "access_token": access_token,
@@ -69,7 +69,7 @@ async def get_approval(user_id: str):
     user_auth = await redis.hgetall(f"{user_id}_access_token")
 
     if not user_auth:
-        raise ExternalApiException("KIS", "사용자 인증 정보가 없습니다.")
+        raise ExternalServiceError("KIS", "사용자 인증 정보가 없습니다.")
 
     if user_auth.get("simulation_yn") == "Y":
         url = settings.DEV_API_URL
@@ -90,7 +90,7 @@ async def get_approval(user_id: str):
     response = await fetch("POST", api_url, json=body)
     approval_key = response.get("approval_key")
     if not approval_key:
-        raise ExternalApiException("KIS", kis_error_message(response, "approval_key 발급 실패"))
+        raise ExternalServiceError("KIS", kis_error_message(response, "approval_key 발급 실패"))
 
     data = {
         "socket_token": approval_key,

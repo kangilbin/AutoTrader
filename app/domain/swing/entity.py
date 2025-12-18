@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Optional
 from decimal import Decimal
 
-from app.exceptions.http import BusinessException
+from app.exceptions import DatabaseError, ValidationError
 
 
 @dataclass
@@ -29,15 +29,15 @@ class SwingTrade:
     def validate(self) -> None:
         """스윙 설정 유효성 검증"""
         if not self.account_no:
-            raise BusinessException("계좌번호는 필수입니다")
+            raise ValidationError("계좌번호는 필수입니다")
         if not self.st_code:
-            raise BusinessException("종목코드는 필수입니다")
+            raise ValidationError("종목코드는 필수입니다")
         if self.swing_type not in ('A', 'B'):
-            raise BusinessException("스윙 타입은 A 또는 B여야 합니다")
+            raise ValidationError("스윙 타입은 A 또는 B여야 합니다")
         if not (0 <= self.buy_ratio <= 100):
-            raise BusinessException("매수 비율은 0~100 사이여야 합니다")
+            raise ValidationError("매수 비율은 0~100 사이여야 합니다")
         if not (0 <= self.sell_ratio <= 100):
-            raise BusinessException("매도 비율은 0~100 사이여야 합니다")
+            raise ValidationError("매도 비율은 0~100 사이여야 합니다")
 
     def is_active(self) -> bool:
         """활성화 여부"""
@@ -111,4 +111,4 @@ class EmaOption:
     def validate(self) -> None:
         """이평선 옵션 유효성 검증"""
         if not (1 <= self.short_term < self.medium_term < self.long_term):
-            raise BusinessException("이평선 기간은 단기 < 중기 < 장기 순이어야 합니다")
+            raise ValidationError("이평선 기간은 단기 < 중기 < 장기 순이어야 합니다")

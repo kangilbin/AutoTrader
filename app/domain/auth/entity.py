@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional
 
-from app.exceptions.http import BusinessException
+from app.exceptions import ValidationError
 
 
 @dataclass
@@ -25,13 +25,13 @@ class Auth:
     def validate(self) -> None:
         """인증키 유효성 검증"""
         if not self.auth_name:
-            raise BusinessException("인증키 이름은 필수입니다")
+            raise ValidationError("인증키 이름은 필수입니다")
         if self.simulation_yn not in ('Y', 'N'):
-            raise BusinessException("모의투자 여부는 Y 또는 N이어야 합니다")
+            raise ValidationError("모의투자 여부는 Y 또는 N이어야 합니다")
         if not self.api_key:
-            raise BusinessException("API 키는 필수입니다")
+            raise ValidationError("API 키는 필수입니다")
         if not self.secret_key:
-            raise BusinessException("시크릿 키는 필수입니다")
+            raise ValidationError("시크릿 키는 필수입니다")
 
     def is_simulation(self) -> bool:
         """모의투자 여부"""
@@ -43,7 +43,7 @@ class Auth:
             self.auth_name = auth_name
         if simulation_yn:
             if simulation_yn not in ('Y', 'N'):
-                raise BusinessException("모의투자 여부는 Y 또는 N이어야 합니다")
+                raise ValidationError("모의투자 여부는 Y 또는 N이어야 합니다")
             self.simulation_yn = simulation_yn
         self.mod_dt = datetime.now()
 

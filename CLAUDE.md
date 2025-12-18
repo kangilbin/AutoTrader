@@ -52,8 +52,13 @@ app/
 ├── main.py                  # FastAPI 앱 진입점, 라우터 등록
 ├── common/                  # 공통 인프라
 │   ├── database.py          # SQLAlchemy 비동기 설정, Database 싱글톤
-│   ├── dependencies.py      # FastAPI 의존성 (get_db, get_current_user)
-│   └── exceptions.py        # 표준 예외 클래스
+│   └── dependencies.py      # FastAPI 의존성 (get_db, get_current_user)
+├── exceptions/              # 예외 처리 (상세: exceptions/README.md)
+│   ├── base.py              # AppError 베이스 클래스
+│   ├── domain.py            # 도메인 예외 (4xx)
+│   ├── infrastructure.py    # 인프라 예외 (5xx)
+│   ├── auth.py              # 인증/인가 예외 (401, 403)
+│   └── handlers.py          # 전역 예외 핸들러
 ├── core/                    # 앱 설정/유틸리티
 │   ├── config.py            # Pydantic Settings (환경변수)
 │   ├── response.py          # 표준 API 응답 헬퍼
@@ -246,25 +251,63 @@ async def create(self, data):
 ```
 
 ### 3. 예외 처리 표준화
+
+**📚 상세 가이드**: [`app/exceptions/README.md`](app/exceptions/README.md) 참고
+
+#### HTTP 비의존 예외 체계
+
+모든 예외는 `AppError` 베이스 상속 (HTTP 의존성 없음):
+
 ```python
-# common/http.py
-class ApiException(Exception):
-    def __init__(self, status_code: int, code: str, message: str): ...
+# Service/Repository/Entity에서 사용
+from app.exceptions import NotFoundError, DuplicateError, ValidationError
 
-class NotFoundException(ApiException):
-    def __init__(self, resource: str, identifier: Any):
-        super().__init__(404, "NOT_FOUND", f"{resource}을(를) 찾을 수 없습니다: {identifier}")
-
-class DuplicateException(ApiException):
-    def __init__(self, resource: str, identifier: Any):
-        super().__init__(409, "DUPLICATE", f"이미 존재하는 {resource}입니다: {identifier}")
-
-class BusinessException(ApiException):
-    def __init__(self, message: str):
-        super().__init__(400, "BUSINESS_ERROR", message)
+async def get_swing(self, swing_id: int):
+    swing = await self.repo.find_by_id(swing_id)
+    if not swing:
+        raise NotFoundError("스윙 전략", swing_id)  # HTTP 비의존
+    return swing
 ```
-- Service에서 도메인 예외 발생
-- 전역 예외 핸들러에서 HTTP 응답 변환
+
+#### 예외 분류
+
+**도메인 예외** (`exceptions/domain.py`) - Service에서 사용:
+- `ValidationError` (422) - Entity/Request 검증 실패
+- `NotFoundError` (404) - 리소스 없음
+- `DuplicateError` (409) - 중복 리소스
+- `BusinessRuleError` (400) - 비즈니스 규칙 위반
+- `PermissionDeniedError` (403) - 소유권 검증 실패
+
+**인프라 예외** (`exceptions/infrastructure.py`) - 외부 연동:
+- `ExternalServiceError` (502/504) - 외부 API 오류
+- `DatabaseError` (500) - DB 오류
+- `CacheError` (500) - Redis 오류
+- `ConfigurationError` (500) - 설정 오류
+
+**인증/인가 예외** (`exceptions/auth.py`) - Router/Middleware:
+- `AuthenticationError` (401) - 인증 실패
+- `TokenExpiredError` (401) - 토큰 만료
+- `AuthorizationError` (403) - 권한 부족
+
+#### 전역 핸들러
+
+```python
+# main.py
+from app.exceptions.handlers import register_exception_handlers
+
+register_exception_handlers(app)  # 자동으로 모든 AppError → HTTP 응답 변환
+```
+
+#### 응답 형식
+
+```json
+{
+  "success": false,
+  "error_code": "NOT_FOUND",
+  "message": "스윙 전략을(를) 찾을 수 없습니다: 123",
+  "detail": {"resource": "스윙 전략", "identifier": "123"}
+}
+```
 
 ### 4. 의존성 주입
 ```python
@@ -301,32 +344,28 @@ def error_response(message: str, error_code: str = None) -> dict:
     return {"success": False, "message": message, "error_code": error_code}
 ```
 
-### 6. 배치 작업 패턴
-배치 작업은 Service 클래스를 직접 사용:
-```python
-# auto_swing_batch.py
-async def trade_job():
-    db = await Database.get_session()
-    try:
-        swing_service = SwingService(db)
-        stock_service = StockService(db)
 
-        swing_list = await swing_service.get_active_swings()
-        for swing in swing_list:
-            # 매매 로직 실행
-            ...
-    finally:
-        await db.close()
-```
-
-### 7. 비동기 일관성
+### 6. 비동기 일관성
 - 모든 DB 작업은 `async/await` 사용
 - 동기 라이브러리는 `run_in_executor`로 감싸기
 - `asyncio.run()` 중첩 호출 금지
 
-### 8. 네이밍 컨벤션
+### 7. 네이밍 컨벤션
 - **파일명**: 소문자 + 언더스코어 (`swing_service.py`)
 - **클래스**: PascalCase (`SwingService`)
 - **함수/변수**: snake_case (`get_active_swings`)
 - **상수**: UPPER_SNAKE_CASE (`MAX_RETRY_COUNT`)
 - **DB 컬럼**: UPPER_SNAKE_CASE (`SWING_ID`, `ST_CODE`)
+
+
+## 작업 방식
+1. 복잡한 작업 시 반드시 계획 먼저 수립
+- 코드 작성 전에 계획을 먼저 보여줄 것
+- 사용자 확인 후 실행
+
+2. 계획 수립 시 포함 사항
+- 파일 구조 (어떤 파일을 만들지)
+- 구현 순서 (Schema → Model → Repository → Service → Endpoint)
+
+3. 작업 우선순위
+- 정확성 > 계회성 > 일관성 > 간결성

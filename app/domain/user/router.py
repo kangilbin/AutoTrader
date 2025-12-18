@@ -7,7 +7,7 @@ from typing import Annotated
 
 from app.common.database import get_db
 from app.common.dependencies import get_current_user
-from app.exceptions.http import UnauthorizedException
+from app.exceptions import AuthenticationError
 from app.domain.user.service import UserService
 from app.domain.user.schemas import UserCreateRequest, UserLoginRequest
 from app.module.redis_connection import get_redis
@@ -65,7 +65,7 @@ async def refresh(
     body = await request.json()
     refresh_token = body.get("refresh_token")
     if not refresh_token:
-        raise UnauthorizedException("refresh_token이 필요합니다")
+        raise AuthenticationError("refresh_token이 필요합니다")
 
     access_token = await service.refresh_token(refresh_token)
     return {"message": "토큰 재발급", "data": {"access_token": access_token}}

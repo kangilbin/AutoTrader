@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional
 
-from app.exceptions.http import BusinessException
+from app.exceptions import DatabaseError
 
 
 @dataclass
@@ -23,9 +23,9 @@ class User:
     def validate_password_strength(self, password: str) -> None:
         """비밀번호 강도 검증"""
         if len(password) < 8:
-            raise BusinessException("비밀번호는 8자 이상이어야 합니다")
+            raise ValidationError("비밀번호는 8자 이상이어야 합니다")
         if not any(c.isdigit() for c in password):
-            raise BusinessException("비밀번호에 숫자가 포함되어야 합니다")
+            raise ValidationError("비밀번호에 숫자가 포함되어야 합니다")
 
     def change_password(self, new_password: str) -> None:
         """비밀번호 변경"""
@@ -37,11 +37,11 @@ class User:
         """프로필 수정"""
         if name:
             if len(name) < 2:
-                raise BusinessException("이름은 2자 이상이어야 합니다")
+                raise ValidationError("이름은 2자 이상이어야 합니다")
             self.user_name = name
         if phone:
             if len(phone) != 11 or not phone.isdigit():
-                raise BusinessException("휴대폰 번호는 11자리 숫자여야 합니다")
+                raise ValidationError("휴대폰 번호는 11자리 숫자여야 합니다")
             self.phone = phone
         self.mod_dt = datetime.now()
 
@@ -62,5 +62,5 @@ class User:
         )
         user.validate_password_strength(password)
         if not user.validate_phone():
-            raise BusinessException("휴대폰 번호 형식이 올바르지 않습니다")
+            raise ValidationError("휴대폰 번호 형식이 올바르지 않습니다")
         return user

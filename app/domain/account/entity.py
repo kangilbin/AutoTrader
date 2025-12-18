@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional
 
-from app.exceptions.http import BusinessException
+from app.exceptions import ValidationError
 
 
 @dataclass
@@ -23,11 +23,11 @@ class Account:
     def validate(self) -> None:
         """계좌 유효성 검증"""
         if not self.account_no:
-            raise BusinessException("계좌번호는 필수입니다")
+            raise ValidationError("계좌번호는 필수입니다")
         if len(self.account_no) != 10:
-            raise BusinessException("계좌번호는 10자리여야 합니다")
+            raise ValidationError("계좌번호는 10자리여야 합니다")
         if not self.auth_id:
-            raise BusinessException("인증키 ID는 필수입니다")
+            raise ValidationError("인증키 ID는 필수입니다")
 
     def get_cano(self) -> str:
         """계좌번호 앞 8자리 (CANO)"""
@@ -40,7 +40,7 @@ class Account:
     def update_auth(self, auth_id: int) -> None:
         """인증키 변경"""
         if not auth_id:
-            raise BusinessException("인증키 ID는 필수입니다")
+            raise ValidationError("인증키 ID는 필수입니다")
         self.auth_id = auth_id
         self.mod_dt = datetime.now()
 

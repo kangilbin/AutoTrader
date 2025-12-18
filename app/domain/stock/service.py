@@ -8,7 +8,7 @@ from datetime import datetime
 import logging
 
 from app.domain.stock.repository import StockRepository
-from app.exceptions.http import BusinessException, NotFoundException
+from app.exceptions import DatabaseError, NotFoundError
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +28,7 @@ class StockService:
         """종목 정보 조회"""
         stock = await self.repo.find_by_code(code)
         if not stock:
-            raise NotFoundException("종목", code)
+            raise NotFoundError("종목", code)
         return stock
 
     async def update_stock(self, st_code: str, data: dict) -> dict:
@@ -41,7 +41,7 @@ class StockService:
         except SQLAlchemyError as e:
             await self.db.rollback()
             logger.error(f"종목 수정 실패: {e}", exc_info=True)
-            raise BusinessException("종목 수정에 실패했습니다")
+            raise DatabaseError("종목 수정에 실패했습니다")
 
     async def save_history_bulk(self, history_data: List[dict]) -> int:
         """일별 데이터 벌크 저장"""
@@ -52,7 +52,7 @@ class StockService:
         except SQLAlchemyError as e:
             await self.db.rollback()
             logger.error(f"일별 데이터 저장 실패: {e}", exc_info=True)
-            raise BusinessException("일별 데이터 저장에 실패했습니다")
+            raise DatabaseError("일별 데이터 저장에 실패했습니다")
 
     async def get_stock_history(self, code: str, start_date: datetime) -> List[dict]:
         """일별 데이터 조회"""
