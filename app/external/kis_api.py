@@ -358,35 +358,35 @@ async def get_inquire_daily_ccld_obj(user_id: str, inqr_strt_dt=None, inqr_end_d
     return await fetch("POST", api_url, "KIS", json=body, headers=headers)
 
 
-# async def get_target_price(code: str):
-#     """종목 일별 시세 조회"""
-#     redis = await get_redis()
-#     access_data = await redis.hgetall("mgnt_access_token")
-#
-#     if not access_data:
-#         access_data = await oauth_token("mgnt", "Y", get_env("API_KEY"), get_env("SECRET_KEY"))
-#
-#     if access_data.get("simulation_yn") == "Y":
-#         url = settings.DEV_API_URL
-#     else:
-#         url = settings.REAL_API_URL
-#
-#     path = 'uapi/domestic-stock/v1/quotations/inquire-daily-price'
-#     api_url = f"{url}/{path}"
-#
-#     headers = kis_headers(
-#         access_data,
-#         tr_id="FHKST01010400",
-#     )
-#
-#     body = {
-#         "FID_COND_MRKT_DIV_CODE": "J",
-#         "FID_INPUT_ISCD": code,
-#         "FID_ORG_ADJ_PRC": "1",
-#         "FID_PERIOD_DIV_CODE": "D"
-#     }
-#     response = await fetch("POST", api_url, "KIS", json=body, headers=headers)
-#     return response['output'][0]
+async def get_target_price(code: str):
+    """종목 일별 시세 조회"""
+    redis = await get_redis()
+    access_data = await redis.hgetall("mgnt_access_token")
+
+    if not access_data:
+        access_data = await oauth_token("mgnt", "Y", settings.API_KEY, settings.SECRET_KEY)
+
+    if access_data.get("simulation_yn") == "Y":
+        url = settings.DEV_API_URL
+    else:
+        url = settings.REAL_API_URL
+
+    path = 'uapi/domestic-stock/v1/quotations/inquire-daily-price'
+    api_url = f"{url}/{path}"
+
+    headers = kis_headers(
+        access_data,
+        tr_id="FHKST01010400",
+    )
+
+    body = {
+        "FID_COND_MRKT_DIV_CODE": "J",
+        "FID_INPUT_ISCD": code,
+        "FID_ORG_ADJ_PRC": "1",
+        "FID_PERIOD_DIV_CODE": "D"
+    }
+    response = await fetch("POST", api_url, "KIS", json=body, headers=headers)
+    return response['output'][0]
 
 
 async def get_stock_data(user_id: str, code: str, start_date: str, end_date: str):
