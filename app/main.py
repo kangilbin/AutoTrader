@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 
 from app.common.database import Database
 from app.module.redis_connection import Redis
-from app.module.schedules import schedule_start
+from app.module import schedule_start
 from app.exceptions.handlers import register_exception_handlers
 
 # 라우터 임포트

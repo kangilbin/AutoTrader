@@ -10,7 +10,7 @@ from app.common.dependencies import get_current_user
 from app.exceptions import AuthenticationError
 from app.domain.user.service import UserService
 from app.domain.user.schemas import UserCreateRequest, UserLoginRequest
-from app.module.redis_connection import get_redis
+from app.module import get_redis
 
 router = APIRouter(prefix="/users", tags=["Users"])
 

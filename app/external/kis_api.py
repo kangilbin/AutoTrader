@@ -7,8 +7,7 @@ import logging
 from app.exceptions import ExternalServiceError
 from app.core import get_settings
 from app.external.headers import kis_headers, kis_error_message
-from app.module.fetch_api import fetch
-from app.module.redis_connection import get_redis
+from app.module import fetch, get_redis
 # from app.domain.order import Order, ModifyOrder
 
 logger = logging.getLogger(__name__)
@@ -45,7 +44,7 @@ async def oauth_token(user_id: str, simulation_yn: str, api_key: str, secret_key
         "appsecret": secret_key
     }
 
-    response = await fetch("POST", url, json=body)
+    response = await fetch("POST", url, "KIS",json=body)
     access_token = response.get("access_token")
 
     if (not access_token) or (response.get("error_code")):
@@ -87,7 +86,7 @@ async def get_approval(user_id: str):
         "appkey": user_auth.get('api_key'),
         "secretkey": user_auth.get('secret_key')
     }
-    response = await fetch("POST", api_url, json=body)
+    response = await fetch("POST", api_url,  "KIS", json=body)
     approval_key = response.get("approval_key")
     if not approval_key:
         raise ExternalServiceError("KIS", kis_error_message(response, "approval_key 발급 실패"))
@@ -149,7 +148,7 @@ async def get_balance(user_id: str) -> int:
         "CMA_EVLU_AMT_ICLD_YN": "Y",
         "OVRS_ICLD_YN": "Y"
     }
-    response = await fetch("GET", api_url, params=params, headers=headers)
+    response = await fetch("GET", api_url, "KIS", params=params, headers=headers)
     cash = response['output']['ord_psbl_cash']
     return int(cash)
 
@@ -189,7 +188,7 @@ async def get_stock_balance(user_id: str, fk100="", nk100=""):
         "CTX_AREA_FK100": fk100,
         "CTX_AREA_NK100": nk100
     }
-    response = await fetch("GET", api_url, params=params, headers=headers)
+    response = await fetch("GET", api_url, "KIS", params=params, headers=headers)
     ctx_area_fk100 = response.get("ctx_area_fk100")
     ctx_area_nk100 = response.get("ctx_area_nk100")
 
@@ -242,7 +241,7 @@ async def get_stock_balance(user_id: str, fk100="", nk100=""):
 #         "ORD_UNPR": "0"
 #     }
 # 
-#     return await fetch("POST", api_url, body=params, headers=headers)
+#     return await fetch("POST", api_url, "KIS", body=params, headers=headers)
 
 
 async def get_cancelable_orders_api(user_id: str, fk100="", nk100=""):
@@ -267,7 +266,7 @@ async def get_cancelable_orders_api(user_id: str, fk100="", nk100=""):
         "CTX_AREA_NK100": nk100
     }
 
-    return await fetch("POST", api_url, json=body, headers=headers)
+    return await fetch("POST", api_url, "KIS", json=body, headers=headers)
 
 
 # async def modify_or_cancel_order_api(user_id: str, order: ModifyOrder):
@@ -304,7 +303,7 @@ async def get_cancelable_orders_api(user_id: str, fk100="", nk100=""):
 #         "QTY_ALL_ORD_YN": order.qty_all_ord_yn
 #     }
 # 
-#     return await fetch("POST", api_url, json=body, headers=headers)
+#     return await fetch("POST", api_url, "KIS", json=body, headers=headers)
 # 
 
 # ============================================================
@@ -356,7 +355,7 @@ async def get_inquire_daily_ccld_obj(user_id: str, inqr_strt_dt=None, inqr_end_d
         "CTX_AREA_NK100": nk100
     }
 
-    return await fetch("POST", api_url, json=body, headers=headers)
+    return await fetch("POST", api_url, "KIS", json=body, headers=headers)
 
 
 # async def get_target_price(code: str):
@@ -386,7 +385,7 @@ async def get_inquire_daily_ccld_obj(user_id: str, inqr_strt_dt=None, inqr_end_d
 #         "FID_ORG_ADJ_PRC": "1",
 #         "FID_PERIOD_DIV_CODE": "D"
 #     }
-#     response = await fetch("POST", api_url, json=body, headers=headers)
+#     response = await fetch("POST", api_url, "KIS", json=body, headers=headers)
 #     return response['output'][0]
 
 
@@ -414,7 +413,7 @@ async def get_stock_data(user_id: str, code: str, start_date: str, end_date: str
         "FID_ORG_ADJ_PRC": "0"
     }
 
-    response = await fetch("GET", api_url, params=params, headers=headers)
+    response = await fetch("GET", api_url, "KIS", params=params, headers=headers)
 
     # API 응답 데이터의 키를 대문자로 변경하고 st_code 추가
     if response and "output2" in response:
@@ -462,4 +461,4 @@ async def get_inquire_asking_price(user_id: str, code: str):
         "FID_INPUT_ISCD": code,
     }
 
-    return await fetch("GET", api_url, params=params, headers=headers)
+    return await fetch("GET", api_url, "KIS", params=params, headers=headers)
