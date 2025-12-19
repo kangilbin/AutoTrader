@@ -14,6 +14,7 @@ class StrategyFactory:
     _strategies: Dict[str, BacktestStrategy] = {
         "A": EMAStrategy(),
         "B": IchimokuStrategy(),
+        # "C": SimpleEMAStrategy(),
     }
     
     @classmethod
@@ -22,7 +23,7 @@ class StrategyFactory:
         전략 타입에 해당하는 전략 객체 반환
         
         Args:
-            strategy_type: "A" (이평선) 또는 "B" (일목균형표)
+            strategy_type: "A" (이평선), "B" (일목균형표), "C" (단순 이평선)
             
         Returns:
             BacktestStrategy 인스턴스
@@ -39,18 +40,7 @@ class StrategyFactory:
             )
         
         return strategy
-    
-    @classmethod
-    def register_strategy(cls, strategy_type: str, strategy: BacktestStrategy):
-        """
-        새로운 전략 등록 (확장 가능)
-        
-        Args:
-            strategy_type: 전략 타입 코드
-            strategy: BacktestStrategy 인스턴스
-        """
-        cls._strategies[strategy_type] = strategy
-    
+
     @classmethod
     def get_available_strategies(cls) -> Dict[str, str]:
         """

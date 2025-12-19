@@ -59,7 +59,8 @@ class SwingRepository:
             CUR_AMOUNT=swing.cur_amount,
             SWING_TYPE=swing.swing_type,
             BUY_RATIO=swing.buy_ratio,
-            SELL_RATIO=swing.sell_ratio
+            SELL_RATIO=swing.sell_ratio,
+            SIGNAL=swing.signal
         )
         self.db.add(db_swing)
         await self.db.flush()
@@ -98,3 +99,25 @@ class SwingRepository:
         result = await self.db.execute(query)
         await self.db.flush()
         return result.rowcount > 0
+
+    async def reset_signals_by_value(self, old_value: int, new_value: int) -> int:
+        """
+        특정 신호 값을 일괄 변경 (flush만 수행)
+
+        Args:
+            old_value: 기존 신호 값
+            new_value: 새로운 신호 값
+
+        Returns:
+            업데이트된 행 개수
+        """
+        from datetime import datetime
+        query = (
+            update(SwingModel)
+            .filter(SwingModel.SIGNAL == old_value)
+            .values(SIGNAL=new_value, MOD_DT=datetime.now())
+            .execution_options(synchronize_session=False)
+        )
+        result = await self.db.execute(query)
+        await self.db.flush()
+        return result.rowcount

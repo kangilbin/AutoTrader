@@ -21,6 +21,7 @@ class SwingTrade:
     swing_type: str = "A"  # A: 이평선, B: 일목균형표
     buy_ratio: int = 50
     sell_ratio: int = 50
+    signal: int = 0  # 매매 신호 상태 (0:대기, 1:1차매수, 2:2차매수, 3:매도)
     reg_dt: Optional[datetime] = field(default_factory=datetime.now)
     mod_dt: Optional[datetime] = None
 
@@ -79,6 +80,50 @@ class SwingTrade:
     def calculate_sell_amount(self) -> Decimal:
         """매도 금액 계산"""
         return self.cur_amount * Decimal(self.sell_ratio) / Decimal(100)
+
+    # ==================== 신호 상태 관리 ====================
+
+    def is_waiting(self) -> bool:
+        """대기 상태 여부"""
+        return self.signal == 0
+
+    def is_first_buy_done(self) -> bool:
+        """1차 매수 완료 여부"""
+        return self.signal == 1
+
+    def is_second_buy_done(self) -> bool:
+        """2차 매수 완료 여부"""
+        return self.signal == 2
+
+    def is_sold(self) -> bool:
+        """매도 완료 여부"""
+        return self.signal == 3
+
+    def transition_to_first_buy(self) -> None:
+        """1차 매수 상태로 전환"""
+        if self.signal != 0:
+            raise ValidationError(f"1차 매수는 대기 상태(0)에서만 가능합니다. 현재 상태: {self.signal}")
+        self.signal = 1
+        self.mod_dt = datetime.now()
+
+    def transition_to_second_buy(self) -> None:
+        """2차 매수 상태로 전환"""
+        if self.signal != 1:
+            raise ValidationError(f"2차 매수는 1차 매수 상태(1)에서만 가능합니다. 현재 상태: {self.signal}")
+        self.signal = 2
+        self.mod_dt = datetime.now()
+
+    def transition_to_sold(self) -> None:
+        """매도 완료 상태로 전환"""
+        if self.signal not in (1, 2):
+            raise ValidationError(f"매도는 매수 완료 상태(1,2)에서만 가능합니다. 현재 상태: {self.signal}")
+        self.signal = 3
+        self.mod_dt = datetime.now()
+
+    def reset_signal(self) -> None:
+        """신호 초기화 (매도 후 새로운 사이클 시작)"""
+        self.signal = 0
+        self.mod_dt = datetime.now()
 
     # ==================== 팩토리 메서드 ====================
 

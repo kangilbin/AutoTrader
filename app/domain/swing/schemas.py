@@ -41,6 +41,7 @@ class SwingResponse(BaseModel):
     SWING_TYPE: Optional[str] = None
     BUY_RATIO: Optional[int] = None
     SELL_RATIO: Optional[int] = None
+    SIGNAL: Optional[int] = None
     REG_DT: Optional[datetime] = None
     MOD_DT: Optional[datetime] = None
 
@@ -61,6 +62,7 @@ class SwingMappingResponse(BaseModel):
     INIT_AMOUNT: Optional[Decimal] = None
     CUR_AMOUNT: Optional[Decimal] = None
     SWING_TYPE: Optional[str] = None
+    SIGNAL: Optional[int] = None
     ST_NM: Optional[str] = None  # 종목명
     QTY: Optional[str] = None  # 보유 수량
     RATE: Optional[float] = None  # 수익률

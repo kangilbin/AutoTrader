@@ -94,6 +94,7 @@ class SwingModel(Base):
     SWING_TYPE = Column(CHAR(1), nullable=False, comment='스윙 타입 (A: 이평선, B: 일목균형표)')
     BUY_RATIO = Column(Integer, nullable=False, comment='매수 비율')
     SELL_RATIO = Column(Integer, nullable=False, comment='매도 비율')
+    SIGNAL = Column(Integer, nullable=False, default=0, comment='매매 신호 상태 (0:대기, 1:1차매수, 2:2차매수, 3:매도)')
     REG_DT = Column(DateTime, default=datetime.now, nullable=False, comment='등록일')
     MOD_DT = Column(DateTime, comment='수정일')
 

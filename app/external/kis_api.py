@@ -462,3 +462,26 @@ async def get_inquire_asking_price(user_id: str, code: str):
     }
 
     return await fetch("GET", api_url, "KIS", params=params, headers=headers)
+
+
+async def get_inquire_price(user_id: str, code: str):
+    """주식현재가 시세"""
+    user_data, access_data = await _get_user_auth(user_id)
+    path = "/uapi/domestic-stock/v1/quotations/inquire-price"
+    if access_data.get("simulation_yn") == "Y":
+        url = settings.DEV_API_URL
+    else:
+        url = settings.REAL_API_URL
+    api_url = f"{url}/{path}"
+
+    headers = kis_headers(
+        access_data,
+        tr_id="FHKST01010100",
+    )
+
+    params = {
+        "FID_COND_MRKT_DIV_CODE": "J",
+        "FID_INPUT_ISCD": code,
+    }
+
+    return await fetch("GET", api_url, "KIS", params=params, headers=headers)

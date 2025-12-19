@@ -156,3 +156,83 @@ class SwingService:
     async def get_active_swings(self) -> List:
         """활성화된 스윙 목록 조회 (배치용)"""
         return await self.repo.find_active_swings()
+
+    async def transition_signal(self, swing_id: int, new_signal: int, reason: str = None) -> dict:
+        """
+        신호 상태 전환 (유효성 검증 포함)
+
+        Args:
+            swing_id: 스윙 ID
+            new_signal: 새로운 신호 값 (0, 1, 2, 3)
+            reason: 전환 사유 (로깅용)
+
+        Returns:
+            업데이트된 스윙 정보
+
+        Raises:
+            ValidationError: 잘못된 상태 전환
+        """
+        from app.exceptions import ValidationError
+
+        try:
+            # 현재 스윙 조회
+            swing = await self.repo.find_by_id(swing_id)
+            if not swing:
+                raise NotFoundError("스윙 전략", swing_id)
+
+            current_signal = swing.SIGNAL if hasattr(swing, 'SIGNAL') else 0
+
+            # 상태 전환 유효성 검증
+            valid_transitions = {
+                0: [1],        # 대기 → 1차 매수만 가능
+                1: [2, 3],     # 1차 매수 → 2차 매수 또는 매도
+                2: [3],        # 2차 매수 → 매도만 가능
+                3: [0]         # 매도 → 초기화만 가능
+            }
+
+            if new_signal not in valid_transitions.get(current_signal, []):
+                raise ValidationError(
+                    f"잘못된 신호 전환: {current_signal} → {new_signal}. "
+                    f"허용된 전환: {valid_transitions.get(current_signal, [])}"
+                )
+
+            # 업데이트
+            result = await self.update_swing(
+                swing_id,
+                {
+                    "SIGNAL": new_signal,
+                    "MOD_DT": datetime.now()
+                }
+            )
+
+            logger.info(
+                f"신호 전환 완료: SWING_ID={swing_id}, {current_signal} → {new_signal}"
+                + (f" (사유: {reason})" if reason else "")
+            )
+
+            return result
+
+        except SQLAlchemyError as e:
+            await self.db.rollback()
+            logger.error(f"신호 전환 실패: {e}", exc_info=True)
+            raise DatabaseError("신호 전환에 실패했습니다")
+
+    async def reset_completed_signals(self) -> int:
+        """
+        매도 완료(SIGNAL=3) 상태를 초기화(SIGNAL=0)
+
+        배치 작업으로 주기적으로 실행하거나,
+        사용자 요청 시 수동으로 실행
+
+        Returns:
+            초기화된 스윙 개수
+        """
+        try:
+            count = await self.repo.reset_signals_by_value(old_value=3, new_value=0)
+            await self.db.commit()
+            logger.info(f"매도 완료 신호 초기화: {count}건")
+            return count
+        except SQLAlchemyError as e:
+            await self.db.rollback()
+            logger.error(f"신호 초기화 실패: {e}", exc_info=True)
+            raise DatabaseError("신호 초기화에 실패했습니다")
