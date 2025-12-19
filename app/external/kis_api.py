@@ -8,7 +8,7 @@ from app.exceptions import ExternalServiceError
 from app.core import get_settings
 from app.external.headers import kis_headers, kis_error_message
 from app.module import fetch, get_redis
-# from app.domain.order import Order, ModifyOrder
+from app.domain.order.entity import Order, ModifyOrder
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -204,44 +204,44 @@ async def get_stock_balance(user_id: str, fk100="", nk100=""):
 # 주문 관련
 # ============================================================
 
-# async def place_order_api(user_id: str, order: Order):
-#     """주식 주문"""
-#     user_data, access_data = await _get_user_auth(user_id)
-#     if access_data.get("simulation_yn") == "Y":
-#         url = settings.DEV_API_URL
-#     else:
-#         url = settings.REAL_API_URL
-#     path = "/uapi/domestic-stock/v1/trading/order-cash"
-#     api_url = f"{url}/{path}"
-# 
-#     if order.ord_dv == "buy":
-#         if access_data.get("simulation_yn") == "Y":
-#             tr_id = "VTTC0802U"  # 모의투자
-#         else:
-#             tr_id = "TTTC0012U"  # 실전투자
-#     elif order.ord_dv == "sell":
-#         if access_data.get("simulation_yn") == "Y":
-#             tr_id = "VTTC0801U"  # 모의투자
-#         else:
-#             tr_id = "TTTC0011U"  # 실전투자
-#     else:
-#         return None
-# 
-#     headers = kis_headers(
-#         access_data,
-#         tr_id=tr_id,
-#     )
-# 
-#     params = {
-#         "CANO": user_data.get("ACCOUNT_NO")[:8],
-#         "ACNT_PRDT_CD": user_data.get("ACCOUNT_NO")[-2:],
-#         "PDNO": order.itm_no,
-#         "ORD_DVSN": "01",  # 시장가
-#         "ORD_QTY": str(order.qty),
-#         "ORD_UNPR": "0"
-#     }
-# 
-#     return await fetch("POST", api_url, "KIS", body=params, headers=headers)
+async def place_order_api(user_id: str, order: Order):
+    """주식 주문"""
+    user_data, access_data = await _get_user_auth(user_id)
+    if access_data.get("simulation_yn") == "Y":
+        url = settings.DEV_API_URL
+    else:
+        url = settings.REAL_API_URL
+    path = "/uapi/domestic-stock/v1/trading/order-cash"
+    api_url = f"{url}/{path}"
+
+    if order.ord_dv == "buy":
+        if access_data.get("simulation_yn") == "Y":
+            tr_id = "VTTC0802U"  # 모의투자
+        else:
+            tr_id = "TTTC0012U"  # 실전투자
+    elif order.ord_dv == "sell":
+        if access_data.get("simulation_yn") == "Y":
+            tr_id = "VTTC0801U"  # 모의투자
+        else:
+            tr_id = "TTTC0011U"  # 실전투자
+    else:
+        return None
+
+    headers = kis_headers(
+        access_data,
+        tr_id=tr_id,
+    )
+
+    params = {
+        "CANO": user_data.get("ACCOUNT_NO")[:8],
+        "ACNT_PRDT_CD": user_data.get("ACCOUNT_NO")[-2:],
+        "PDNO": order.itm_no,
+        "ORD_DVSN": "01",  # 시장가
+        "ORD_QTY": str(order.qty),
+        "ORD_UNPR": "0"
+    }
+
+    return await fetch("POST", api_url, "KIS", body=params, headers=headers)
 
 
 async def get_cancelable_orders_api(user_id: str, fk100="", nk100=""):
@@ -269,42 +269,42 @@ async def get_cancelable_orders_api(user_id: str, fk100="", nk100=""):
     return await fetch("POST", api_url, "KIS", json=body, headers=headers)
 
 
-# async def modify_or_cancel_order_api(user_id: str, order: ModifyOrder):
-#     """주문 정정/취소"""
-#     user_data, access_data = await _get_user_auth(user_id)
-#     if access_data.get("simulation_yn") == "Y":
-#         url = settings.DEV_API_URL
-#     else:
-#         url = settings.REAL_API_URL
-#     path = "/uapi/domestic-stock/v1/trading/order-rvsecncl"
-#     api_url = f"{url}/{path}"
-# 
-#     if access_data.get("simulation_yn") == "Y":
-#         tr_id = "VTTC0803U"  # 모의투자
-#     else:
-#         tr_id = "TTTC0013U"  # 실전투자
-# 
-#     # 잔량전부인 경우 수량 0 처리
-#     ord_qty = 0 if order.qty_all_ord_yn == 'Y' else order.ord_qty
-# 
-#     headers = kis_headers(
-#         access_data,
-#         tr_id=tr_id,
-#     )
-#     body = {
-#         "CANO": user_data.get("ACCOUNT_NO")[:8],
-#         "ACNT_PRDT_CD": user_data.get("ACCOUNT_NO")[-2:],
-#         "KRX_FWDG_ORD_ORGNO": order.ord_orgno,
-#         "ORGN_ODNO": order.orgn_odno,
-#         "ORD_DVSN": order.ord_dvsn,
-#         "RVSE_CNCL_DVSN_CD": order.rvse_cncl_dvsn_cd,
-#         "ORD_QTY": str(ord_qty),
-#         "ORD_UNPR": str(order.ord_unpr),
-#         "QTY_ALL_ORD_YN": order.qty_all_ord_yn
-#     }
-# 
-#     return await fetch("POST", api_url, "KIS", json=body, headers=headers)
-# 
+async def modify_or_cancel_order_api(user_id: str, order: ModifyOrder):
+    """주문 정정/취소"""
+    user_data, access_data = await _get_user_auth(user_id)
+    if access_data.get("simulation_yn") == "Y":
+        url = settings.DEV_API_URL
+    else:
+        url = settings.REAL_API_URL
+    path = "/uapi/domestic-stock/v1/trading/order-rvsecncl"
+    api_url = f"{url}/{path}"
+
+    if access_data.get("simulation_yn") == "Y":
+        tr_id = "VTTC0803U"  # 모의투자
+    else:
+        tr_id = "TTTC0013U"  # 실전투자
+
+    # 잔량전부인 경우 수량 0 처리
+    ord_qty = 0 if order.qty_all_ord_yn == 'Y' else order.ord_qty
+
+    headers = kis_headers(
+        access_data,
+        tr_id=tr_id,
+    )
+    body = {
+        "CANO": user_data.get("ACCOUNT_NO")[:8],
+        "ACNT_PRDT_CD": user_data.get("ACCOUNT_NO")[-2:],
+        "KRX_FWDG_ORD_ORGNO": order.ord_orgno,
+        "ORGN_ODNO": order.orgn_odno,
+        "ORD_DVSN": order.ord_dvsn,
+        "RVSE_CNCL_DVSN_CD": order.rvse_cncl_dvsn_cd,
+        "ORD_QTY": str(ord_qty),
+        "ORD_UNPR": str(order.ord_unpr),
+        "QTY_ALL_ORD_YN": order.qty_all_ord_yn
+    }
+
+    return await fetch("POST", api_url, "KIS", json=body, headers=headers)
+
 
 # ============================================================
 # 시세 조회 관련
