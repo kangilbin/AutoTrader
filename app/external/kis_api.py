@@ -9,6 +9,7 @@ from app.core import get_settings
 from app.external.headers import kis_headers, kis_error_message
 from app.module import fetch, get_redis
 from app.domain.order.entity import Order, ModifyOrder
+from typing import List, Optional
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -38,17 +39,18 @@ async def oauth_token(user_id: str, simulation_yn: str, api_key: str, secret_key
         api_url = settings.REAL_API_URL
 
     url = f"{api_url}/{path}"
-    body = {
+    query = {
         "grant_type": "client_credentials",
         "appkey": api_key,
         "appsecret": secret_key
     }
 
-    response = await fetch("POST", url, "KIS",json=body)
-    access_token = response.get("access_token")
+    response = await fetch("POST", url, "KIS",json=query)
+    body = response["body"]
+    access_token = body.get("access_token")
 
-    if (not access_token) or (response.get("error_code")):
-        raise ExternalServiceError("KIS", kis_error_message(response, "토큰 발급 실패"))
+    if (not access_token) or (body.get("error_code")):
+        raise ExternalServiceError("KIS", kis_error_message(body, "토큰 발급 실패"))
 
     data = {
         "access_token": access_token,
@@ -58,7 +60,7 @@ async def oauth_token(user_id: str, simulation_yn: str, api_key: str, secret_key
     }
     # Redis에 토큰 저장 만료기간(expires_in) 설정
     await redis.hset(f"{user_id}_access_token", mapping=data)
-    await redis.expire(f"{user_id}_access_token", response.get("expires_in"))
+    await redis.expire(f"{user_id}_access_token", body.get("expires_in"))
     return data
 
 
@@ -81,13 +83,14 @@ async def get_approval(user_id: str):
     path = "oauth2/Approval"
     api_url = f"{url}/{path}"
 
-    body = {
+    query = {
         "grant_type": "client_credentials",
         "appkey": user_auth.get('api_key'),
         "secretkey": user_auth.get('secret_key')
     }
-    response = await fetch("POST", api_url,  "KIS", json=body)
-    approval_key = response.get("approval_key")
+    response = await fetch("POST", api_url,  "KIS", json=query)
+    body = response["body"]
+    approval_key = body.get("approval_key")
     if not approval_key:
         raise ExternalServiceError("KIS", kis_error_message(response, "approval_key 발급 실패"))
 
@@ -139,7 +142,7 @@ async def get_balance(user_id: str) -> int:
         tr_id=tr_id,
     )
 
-    params = {
+    query = {
         "CANO": user_data.get("ACCOUNT_NO")[:8],
         "ACNT_PRDT_CD": user_data.get("ACCOUNT_NO")[-2:],
         "PDNO": "",
@@ -148,12 +151,13 @@ async def get_balance(user_id: str) -> int:
         "CMA_EVLU_AMT_ICLD_YN": "Y",
         "OVRS_ICLD_YN": "Y"
     }
-    response = await fetch("GET", api_url, "KIS", params=params, headers=headers)
-    cash = response['output']['ord_psbl_cash']
+    response = await fetch("GET", api_url, "KIS", params=query, headers=headers)
+    body = response["body"]
+    cash = body['output']['ord_psbl_cash']
     return int(cash)
 
 
-async def get_stock_balance(user_id: str, fk100="", nk100=""):
+async def get_stock_balance(user_id: str, fk100="", nk100="", result: Optional[List] = None,):
     """보유 주식 조회"""
     user_data, access_data = await _get_user_auth(user_id)
 
@@ -175,7 +179,7 @@ async def get_stock_balance(user_id: str, fk100="", nk100=""):
         tr_id=tr_id,
     )
 
-    params = {
+    query = {
         "CANO": user_data.get("ACCOUNT_NO")[:8],
         "ACNT_PRDT_CD": user_data.get("ACCOUNT_NO")[-2:],
         "AFHR_FLPR_YN": "N",
@@ -188,14 +192,20 @@ async def get_stock_balance(user_id: str, fk100="", nk100=""):
         "CTX_AREA_FK100": fk100,
         "CTX_AREA_NK100": nk100
     }
-    response = await fetch("GET", api_url, "KIS", params=params, headers=headers)
-    ctx_area_fk100 = response.get("ctx_area_fk100")
-    ctx_area_nk100 = response.get("ctx_area_nk100")
+    response = await fetch("GET", api_url, "KIS", params=query, headers=headers)
+    body = response["body"]
+    header = response["header"]
+    tr_cont = header.get("tr_cont")
 
-    result = response.get("output1")
+    ctx_area_fk100 = body.get("ctx_area_fk100")
+    ctx_area_nk100 = body.get("ctx_area_nk100")
+    if result is None:
+        result = list(body.get("output1"))
+    else:
+        result.extend(body.get("output1"))
 
-    if ctx_area_fk100 != "" and ctx_area_nk100 != "":
-        result.add(await get_stock_balance(user_id, ctx_area_fk100, ctx_area_nk100))
+    if tr_cont == "F" or tr_cont == "M":  # 다음 페이지 존재하는 경우 자기 호출 처리
+        return await get_stock_balance(user_id, ctx_area_fk100, ctx_area_nk100, result)
 
     return result
 
@@ -232,7 +242,7 @@ async def place_order_api(user_id: str, order: Order):
         tr_id=tr_id,
     )
 
-    params = {
+    query = {
         "CANO": user_data.get("ACCOUNT_NO")[:8],
         "ACNT_PRDT_CD": user_data.get("ACCOUNT_NO")[-2:],
         "PDNO": order.itm_no,
@@ -240,8 +250,9 @@ async def place_order_api(user_id: str, order: Order):
         "ORD_QTY": str(order.qty),
         "ORD_UNPR": "0"
     }
-
-    return await fetch("POST", api_url, "KIS", body=params, headers=headers)
+    response = await fetch("POST", api_url, "KIS", body=query, headers=headers)
+    body = response["body"]
+    return body
 
 
 async def get_cancelable_orders_api(user_id: str, fk100="", nk100=""):
@@ -257,7 +268,7 @@ async def get_cancelable_orders_api(user_id: str, fk100="", nk100=""):
         access_data,
         tr_id=tr_id,
     )
-    body = {
+    query = {
         "CANO": user_data.get("ACCOUNT_NO")[:8],
         "ACNT_PRDT_CD": user_data.get("ACCOUNT_NO")[-2:],
         "INQR_DVSN_1": "1",
@@ -265,8 +276,9 @@ async def get_cancelable_orders_api(user_id: str, fk100="", nk100=""):
         "CTX_AREA_FK100": fk100,
         "CTX_AREA_NK100": nk100
     }
-
-    return await fetch("POST", api_url, "KIS", json=body, headers=headers)
+    response = await fetch("POST", api_url, "KIS", json=query, headers=headers)
+    body = response["body"]
+    return body
 
 
 async def modify_or_cancel_order_api(user_id: str, order: ModifyOrder):
@@ -291,7 +303,7 @@ async def modify_or_cancel_order_api(user_id: str, order: ModifyOrder):
         access_data,
         tr_id=tr_id,
     )
-    body = {
+    query = {
         "CANO": user_data.get("ACCOUNT_NO")[:8],
         "ACNT_PRDT_CD": user_data.get("ACCOUNT_NO")[-2:],
         "KRX_FWDG_ORD_ORGNO": order.ord_orgno,
@@ -302,8 +314,9 @@ async def modify_or_cancel_order_api(user_id: str, order: ModifyOrder):
         "ORD_UNPR": str(order.ord_unpr),
         "QTY_ALL_ORD_YN": order.qty_all_ord_yn
     }
-
-    return await fetch("POST", api_url, "KIS", json=body, headers=headers)
+    response = await fetch("POST", api_url, "KIS", json=query, headers=headers)
+    body = response["body"]
+    return body
 
 
 # ============================================================
@@ -338,7 +351,7 @@ async def get_inquire_daily_ccld_obj(user_id: str, inqr_strt_dt=None, inqr_end_d
         access_data,
         tr_id=tr_id,
     )
-    body = {
+    query = {
         "CANO": user_data.get("ACCOUNT_NO")[:8],
         "ACNT_PRDT_CD": user_data.get("ACCOUNT_NO")[-2:],
         "INQR_STRT_DT": inqr_strt_dt,
@@ -354,8 +367,9 @@ async def get_inquire_daily_ccld_obj(user_id: str, inqr_strt_dt=None, inqr_end_d
         "CTX_AREA_FK100": fk100,
         "CTX_AREA_NK100": nk100
     }
-
-    return await fetch("POST", api_url, "KIS", json=body, headers=headers)
+    response = await fetch("POST", api_url, "KIS", json=query, headers=headers)
+    body = response["body"]
+    return body
 
 
 async def get_target_price(code: str):
@@ -379,14 +393,15 @@ async def get_target_price(code: str):
         tr_id="FHKST01010400",
     )
 
-    body = {
+    query = {
         "FID_COND_MRKT_DIV_CODE": "J",
         "FID_INPUT_ISCD": code,
         "FID_ORG_ADJ_PRC": "1",
         "FID_PERIOD_DIV_CODE": "D"
     }
-    response = await fetch("POST", api_url, "KIS", json=body, headers=headers)
-    return response['output'][0]
+    response = await fetch("POST", api_url, "KIS", json=query, headers=headers)
+    body = response["body"]
+    return body['output'][0]
 
 
 async def get_stock_data(user_id: str, code: str, start_date: str, end_date: str):
@@ -414,10 +429,10 @@ async def get_stock_data(user_id: str, code: str, start_date: str, end_date: str
     }
 
     response = await fetch("GET", api_url, "KIS", params=params, headers=headers)
-
+    body = response["body"]
     # API 응답 데이터의 키를 대문자로 변경하고 st_code 추가
-    if response and "output2" in response:
-        for item in response["output2"]:
+    if body and "output2" in body:
+        for item in body["output2"]:
             converted_item = {}
 
             column_mapping = {
@@ -438,7 +453,7 @@ async def get_stock_data(user_id: str, code: str, start_date: str, end_date: str
             item.clear()
             item.update(converted_item)
 
-    return response
+    return body
 
 
 async def get_inquire_asking_price(user_id: str, code: str):
@@ -456,12 +471,13 @@ async def get_inquire_asking_price(user_id: str, code: str):
         tr_id="FHKST01010200",
     )
 
-    params = {
+    query = {
         "FID_COND_MRKT_DIV_CODE": "J",
         "FID_INPUT_ISCD": code,
     }
-
-    return await fetch("GET", api_url, "KIS", params=params, headers=headers)
+    response = await fetch("GET", api_url, "KIS", params=query, headers=headers)
+    body = response["body"]
+    return body
 
 
 async def get_inquire_price(user_id: str, code: str):
@@ -479,9 +495,10 @@ async def get_inquire_price(user_id: str, code: str):
         tr_id="FHKST01010100",
     )
 
-    params = {
+    query = {
         "FID_COND_MRKT_DIV_CODE": "J",
         "FID_INPUT_ISCD": code,
     }
-
-    return await fetch("GET", api_url, "KIS", params=params, headers=headers)
+    response = await fetch("GET", api_url, "KIS", params=query, headers=headers)
+    body = response["body"]
+    return body

@@ -12,7 +12,10 @@ async def fetch(method: str, url: str, service_name: str = "External API", **kwa
             response.raise_for_status() # 4xx/5xx는 예외로 처리
 
             try:
-                return response.json()
+                return {
+                    "body": response.json(),
+                    "header": dict(response.headers),
+                }
             except ValueError as e:
                 raise ExternalServiceError(
                     service=service_name,

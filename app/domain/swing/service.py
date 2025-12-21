@@ -145,7 +145,7 @@ class SwingService:
                     }
                     results.append(result_data)
 
-            await self.db.commit()
+                await self.db.commit()
             return results
 
         except SQLAlchemyError as e:
