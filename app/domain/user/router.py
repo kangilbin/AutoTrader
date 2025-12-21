@@ -20,7 +20,7 @@ def get_user_service(db: AsyncSession = Depends(get_db)) -> UserService:
     return UserService(db)
 
 
-@router.post("")
+@router.post("/signup")
 async def signup(
     request: UserCreateRequest,
     service: Annotated[UserService, Depends(get_user_service)]
