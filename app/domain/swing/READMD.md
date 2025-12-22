@@ -1,704 +1,431 @@
-# 🚀 한국투자증권 API 스윙 트레이딩 시스템
+🎯 최종 단일 20EMA 매매 전략 (완성본)
+📌 핵심 철학
+"20EMA 돌파 + 의미있는 수급 2회 연속 확인 시 진입, 추세 악화 시 손절"
 
-## 📋 목차
-- [개요](#개요)
-- [핵심 전략](#핵심-전략)
-- [매수 시그널](#매수-시그널)
-- [매도 시그널](#매도-시그널)
-- [모니터링 주기](#모니터링-주기)
-- [리스크 관리](#리스크-관리)
-- [데이터 구조](#데이터-구조)
-- [구현 가이드](#구현-가이드)
-- [주의사항](#주의사항)
-
----
-
-## 개요
-
-### 전략명: **"모멘텀 서핑 + 하이브리드 손익 관리"**
-
-20일 이평선 기반의 추세 추종 전략과 외국인/프로그램 매매 동향을 결합한 스윙 트레이딩 시스템입니다.
-
-### 핵심 특징
-- ✅ 20일 EMA 기반 추세 판단 (SMA보다 빠른 반응)
-- ✅ 외국인 + 프로그램 매수세 동시 감지
-- ✅ 급등 추격매수 가능
-- ✅ 급락 시 빠른 탈출
-- ✅ 5분 간격 모니터링 (노이즈 필터링)
-- ✅ 하이브리드 손익 관리 (고정 + 동적)
-
----
-
-## 핵심 전략
-
-### 매매 철학
-> "기관의 발자취를 따라가되, 추세가 꺾이면 즉시 탈출한다"
-
-### 전략 구성
-1. **진입**: 20일 EMA 상승 + 외국인/프로그램 동시 매수
-2. **추격**: 급등 + 폭발적 거래량 감지 시 즉시 진입
-3. **손절**: 고정 -3% 또는 20일 EMA -5% (빠른 것 우선)
-4. **익절**: 단계별 분할 익절 + 추세 이탈 시 전량 청산
-
----
-
-## 매수 시그널
-
-### 전략 구조 이해
-
-**TYPE A와 TYPE B는 독립적인 진입 전략입니다** ⚠️
-
-```
-5분마다 시장 스캔
-├─ TYPE A 조건 체크 (모든 종목)
-│  └─ 충족 시 매수 진입
-│
-└─ TYPE B 조건 체크 (모든 종목)
-   └─ 충족 시 매수 진입
-```
-
-**동시 운영 예시:**
-- 삼성전자: TYPE A로 진입 (20% 투자)
-- 네이버: TYPE A로 진입 (20% 투자)  
-- 카카오: TYPE B로 진입 (10% 투자)
-- SK하이닉스: TYPE B로 진입 (10% 투자)
-
-**중복 진입 방지:**
-- 같은 종목은 한 번만 보유
-- 두 신호 동시 발생 시 TYPE B 우선 (더 강한 신호)
-
----
-
-### TYPE A: 안정적 진입 (기본 전략)
-
-**4가지 조건 모두 충족 시 매수**
-
-```
-✅ 조건 1: 현재가 > 20일 이평선
-
-✅ 조건 2: 의미있는 외국인/프로그램 순매수
-   - 외국인 순매수 > 당일 거래량 × 2%
-   - 프로그램 순매수 > 당일 거래량 × 1.5%
-   - 또는 외국인 순매수 > 3일 평균 × 120%
-   - 또는 프로그램 순매수 > 3일 평균 × 120%
-
-✅ 조건 3: 거래량 >= 전일 대비 120%
-
-✅ 조건 4: 단기과열 아님 (short_over_yn = 'N')
-```
-
-**우선순위 스코어링 (70점 이상 매수)**
-
-```python
-# 외국인 순매수 강도 (30점)
-외국인_비율 = 외국인_순매수 / 당일_거래량 × 100
-if 외국인_비율 >= 5%: 30점
-elif 외국인_비율 >= 3%: 25점
-elif 외국인_비율 >= 2%: 20점
-elif 외국인_비율 >= 1%: 15점
-
-# 프로그램 순매수 강도 (30점)
-프로그램_비율 = 프로그램_순매수 / 당일_거래량 × 100
-if 프로그램_비율 >= 4%: 30점
-elif 프로그램_비율 >= 2.5%: 25점
-elif 프로그램_비율 >= 1.5%: 20점
-elif 프로그램_비율 >= 1%: 15점
-
-# 20일선 괴리율 (20점)
-괴리율 = (현재가 - 20일선) / 20일선 × 100
-if 0% < 괴리율 <= 3%: 20점    # 이상적
-elif 3% < 괴리율 <= 5%: 15점
-elif 5% < 괴리율 <= 7%: 10점
-elif 괴리율 > 7%: 5점          # 너무 높음
-
-# 거래량 증가율 (20점)
-거래량_비율 = 당일_거래량 / 전일_거래량 × 100
-if 거래량_비율 >= 200%: 20점
-elif 거래량_비율 >= 150%: 15점
-elif 거래량_비율 >= 120%: 10점
-```
-
-### TYPE B: 급등 추격매수 ⚡
-
-**모든 조건 충족 시 즉시 매수 (80점 이상)**
-
-```
-🔥 20일 EMA 기반 (필수 조건)
-   - 현재가 > 20일 EMA
-   - 20일 EMA 상승 추세 (최근 5일간 우상향)
-
-🔥 강력한 급등
-   - 전일 대비 +5% 이상 상승
-   - 현재가가 당일 고가 대비 -1% 이내
-   - 시가 대비 +3% 이상
-
-🔥 외국인 + 프로그램 동시 공격
-   - 외국인 순매수 > 당일 거래량 × 3% (최소 기준)
-   - 프로그램 순매수 > 당일 거래량 × 2% (최소 기준)
-   - AND 외국인 순매수 > 3일 평균 × 150%
-   - AND 프로그램 순매수 > 3일 평균 × 150%
-
-🔥 폭발적 거래량
-   - 전일 대비 200% 이상
-   - 20일 평균 대비 150% 이상
-
-🔥 안전장치
-   - 단기과열 아님
-   - 상한가 근처 아님 (< 95%)
-   - 52주 최고가 대비 120% 이내
-```
-
-**추격매수 진입 타이밍**
-- ✅ 09:00 ~ 10:00: 갭상승 + 거래량 폭발 확인 시
-- ✅ 10:00 ~ 14:00: 장중 급등 돌파 시
-- ❌ 14:00 ~ 15:20: 추격매수 금지 (리스크 과다)
-
-**추격매수 특별 규칙**
-- 투자 비중: 전체 자금의 **10%만** (일반 매수 20%)
-- 동시 추격: 최대 2종목
-- 손절 라인: -1.5% (일반보다 타이트)
-
-### 공통 필터링 (진입 전 확인)
-
-**제외 종목**
-```python
-❌ scd_stat_cls_code = '58' (거래정지)
-❌ mang_issu_cls_code = '1' (관리종목)
-❌ per < 0 or per > 150
-❌ pbr > 15
-❌ whol_loan_rmnd_rate > 20% (융자잔고 과열)
-```
-
-### 실제 계산 예시
-
-**TYPE A 매수 판단 코드**
-
-```python
-def check_type_a_buy_signal(stock_data, history):
-    """안정적 진입 신호 판단"""
+1️⃣ 실시간 EMA20 계산
+pythondef get_realtime_ema20(종목코드, 현재가):
+    """
+    어제까지 일봉 + 현재가 포함하여 정확한 EMA 계산
+    성능: 메모리 캐싱으로 0.0001초
+    """
+    # DB에서 어제까지 100일 일봉 조회 (메모리 캐싱됨)
+    daily_data = db.get_cached_daily_prices(종목코드, days=100)
+    close_prices = [d['close_price'] for d in daily_data]
     
-    현재가 = int(stock_data['stck_prpr'])
-    이평선20 = calculate_ma20(stock_data['종목코드'])
-    외국인_순매수 = int(stock_data['frgn_ntby_qty'])
-    프로그램_순매수 = int(stock_data['pgtr_ntby_qty'])
-    당일_거래량 = int(stock_data['acml_vol'])
-    전일_거래량_비율 = float(stock_data['prdy_vrss_vol_rate'])
+    # 오늘 현재가 추가
+    close_prices_with_today = close_prices + [현재가]
     
-    # 조건 1: 20일선 위
-    if 현재가 <= 이평선20:
-        return False
+    # TA-Lib으로 EMA 계산
+    ema_array = talib.EMA(np.array(close_prices_with_today), timeperiod=20)
     
-    # 조건 2: 의미있는 순매수
-    외국인_비율 = (외국인_순매수 / 당일_거래량) * 100
-    프로그램_비율 = (프로그램_순매수 / 당일_거래량) * 100
+    return ema_array[-1]
+
+2️⃣ 진입 조건 (모두 충족 필요)
+🔹 조건 A: 가격 위치
+python# 1. EMA 위에 있어야 함
+현재가 > 실시간_EMA20
+
+# 2. 괴리율 2% 이내 (너무 멀리 떨어지면 늦은 진입)
+괴리율 = (현재가 - 실시간_EMA20) / 실시간_EMA20
+괴리율 <= 0.02
+이유:
+
+EMA 돌파는 맞지만 이미 +5% 급등했다면 늦은 진입
+2% 이내면 적절한 타이밍
+
+
+🔹 조건 B: 수급 강도 (하이브리드)
+python외국인_비율 = (외국인_순매수량 / 당일_누적_거래량) × 100
+프로그램_비율 = (프로그램_순매수량 / 당일_누적_거래량) × 100
+
+# 하이브리드 조건
+수급_OK = (
+    (외국인_비율 >= 3.0 or 프로그램_비율 >= 3.0)  # 한쪽 강함
+    and 
+    (외국인_비율 + 프로그램_비율 >= 4.5)           # 전체 강함
+)
+케이스별 예시:
+외국인프로그램합산결과이유3.0%1.5%4.5%✅ 진입한쪽 강하고 합산 OK3.0%0.5%3.5%❌ 불진입외국인만 강함 (리스크)2.5%2.5%5.0%❌ 불진입둘 다 3% 미만3.5%3.0%6.5%✅ 진입이상적
+
+🔹 조건 C: 수급 유지
+python# 이전 대비 20% 이상 감소하지 않았는지
+if 이전_상태_있음:
+    외국인_유지 = 현재_외국인 >= 이전_외국인 × 0.8
+    프로그램_유지 = 현재_프로그램 >= 이전_프로그램 × 0.8
     
-    외국인_조건 = 외국인_비율 >= 2.0  # 거래량의 2% 이상
-    프로그램_조건 = 프로그램_비율 >= 1.5  # 거래량의 1.5% 이상
+    수급_유지 = 외국인_유지 or 프로그램_유지
+```
+
+**예시:**
+```
+10:00 외국인 3.5%
+10:05 외국인 3.2% → OK (8.6% 감소, 20% 이내)
+10:05 외국인 2.5% → NG (28.6% 감소, 20% 초과)
+
+🔹 조건 D: 거래량
+python당일_거래량 >= 전일_거래량 × 1.2  # 120% 이상
+
+🔹 조건 E: 급등 필터
+python당일_상승률 <= 7%  # 7% 초과 시 추격 리스크
+
+3️⃣ 2회 연속 확인 시스템 (노이즈 제거)
+Redis 상태 구조
+python{
+    "symbol": "005930",
     
-    # 또는 3일 평균 대비 증가
-    if history:
-        외국인_3일평균 = get_3day_average(history, 'frgn_ntby_qty')
-        프로그램_3일평균 = get_3day_average(history, 'pgtr_ntby_qty')
+    # 현재 상태
+    "curr_price": 72500,
+    "curr_ema20": 71850,
+    "curr_frgn_ratio": 3.5,
+    "curr_pgm_ratio": 1.3,
+    "curr_signal": true,
+    
+    # 연속 카운트
+    "consecutive_count": 2,  # ⭐ 핵심
+    
+    # 시간 정보
+    "first_signal_time": "10:00",
+    "last_update": "10:05"
+}
+진입 로직
+pythondef check_entry_signal(종목코드, stock_data):
+    """진입 신호 체크 - 2회 연속 확인"""
+    
+    # 1. 현재 조건 충족 여부
+    현재_신호 = (
+        조건A_가격 and 
+        조건B_수급 and 
+        조건C_유지 and 
+        조건D_거래량 and 
+        조건E_급등필터
+    )
+    
+    # 2. Redis에서 이전 상태 조회
+    prev = redis.get(f"entry:{종목코드}")
+    
+    # 3. 연속 카운트 계산
+    if 현재_신호:
+        if prev and prev['curr_signal']:
+            consecutive = prev['consecutive_count'] + 1
+        else:
+            consecutive = 1
+    else:
+        consecutive = 0
+    
+    # 4. 상태 저장 (TTL 15분)
+    new_state = {
+        "curr_signal": 현재_신호,
+        "consecutive_count": consecutive,
+        "curr_price": 현재가,
+        "curr_ema20": 실시간_ema20,
+        "curr_frgn_ratio": 외국인_비율,
+        "curr_pgm_ratio": 프로그램_비율,
+        "last_update": now()
+    }
+    redis.setex(f"entry:{종목코드}", 900, json.dumps(new_state))
+    
+    # 5. 최종 판정
+    if consecutive >= 2:
+        return {
+            "action": "BUY",
+            "price": 현재가,
+            "ema20": 실시간_ema20,
+            "confidence": "HIGH"
+        }
+    
+    return None
+```
+
+**타임라인 예시:**
+```
+09:55 스캔 → 조건 불충족 → consecutive = 0
+10:00 스캔 → 조건 충족! → consecutive = 1 (대기)
+10:05 스캔 → 조건 충족! → consecutive = 2 (매수!) ⭐
+
+4️⃣ 매도 전략
+🔴 손절 (3단계 방어)
+1단계: 하드 손절 (즉시)
+python# 고정 손절 -3%
+if 현재가 < 매수가 × 0.97:
+    return {"action": "SELL", "reason": "고정손절-3%"}
+
+# EMA 대폭 이탈 (EMA -3% 아래)
+if 현재가 < 실시간_EMA20 × 0.97:
+    return {"action": "SELL", "reason": "EMA대폭이탈"}
+2단계: 추세 기반 손절 (악화 시)
+python# EMA 아래지만 -3%까지는 아닌 구간
+if 0 < 이탈폭 < 실시간_EMA20 × 0.03:
+    
+    prev = redis.get(f"stop:{position_id}")
+    
+    if prev:
+        # ⭐ 핵심: 추세 악화 확인
+        가격_하락 = 현재가 < 이전_가격
+        이탈_증가 = 현재_이탈폭 > 이전_이탈폭
         
-        외국인_조건 = 외국인_조건 or (외국인_순매수 > 외국인_3일평균 * 1.2)
-        프로그램_조건 = 프로그램_조건 or (프로그램_순매수 > 프로그램_3일평균 * 1.2)
-    
-    if not (외국인_조건 and 프로그램_조건):
-        return False
-    
-    # 조건 3: 거래량 증가
-    if 전일_거래량_비율 < 120:
-        return False
-    
-    # 조건 4: 단기과열 아님
-    if stock_data['short_over_yn'] == 'Y':
-        return False
-    
-    # 스코어링 (70점 이상)
-    score = calculate_priority_score(stock_data, 이평선20)
-    if score < 70:
-        return False
-    
-    return True
+        if 가격_하락 and 이탈_증가:
+            # 악화 추세 → 손절
+            return {"action": "SELL", "reason": "추세악화"}
+        else:
+            # 회복/횡보 → 대기
+            update_state()
+            return {"action": "HOLD"}
+    else:
+        # 첫 이탈 → 기록
+        save_state()
+        return {"action": "HOLD"}
+시나리오 비교:
+시간가격EMA이탈폭추세판정10:0072,00071,800-200-HOLD10:0571,50071,700+200첫이탈HOLD10:1071,65071,720+70회복중 ✅HOLD10:1571,40071,750+350악화 ❌SELL
 
-
-def calculate_priority_score(stock_data, 이평선20):
-    """우선순위 점수 계산"""
-    score = 0
-    
-    현재가 = int(stock_data['stck_prpr'])
-    외국인_순매수 = int(stock_data['frgn_ntby_qty'])
-    프로그램_순매수 = int(stock_data['pgtr_ntby_qty'])
-    당일_거래량 = int(stock_data['acml_vol'])
-    전일_거래량_비율 = float(stock_data['prdy_vrss_vol_rate'])
-    
-    # 외국인 강도 (30점)
-    외국인_비율 = (외국인_순매수 / 당일_거래량) * 100
-    if 외국인_비율 >= 5:
-        score += 30
-    elif 외국인_비율 >= 3:
-        score += 25
-    elif 외국인_비율 >= 2:
-        score += 20
-    elif 외국인_비율 >= 1:
-        score += 15
-    
-    # 프로그램 강도 (30점)
-    프로그램_비율 = (프로그램_순매수 / 당일_거래량) * 100
-    if 프로그램_비율 >= 4:
-        score += 30
-    elif 프로그램_비율 >= 2.5:
-        score += 25
-    elif 프로그램_비율 >= 1.5:
-        score += 20
-    elif 프로그램_비율 >= 1:
-        score += 15
-    
-    # 20일선 괴리율 (20점)
-    괴리율 = ((현재가 - 이평선20) / 이평선20) * 100
-    if 0 < 괴리율 <= 3:
-        score += 20
-    elif 3 < 괴리율 <= 5:
-        score += 15
-    elif 5 < 괴리율 <= 7:
-        score += 10
-    elif 괴리율 > 7:
-        score += 5
-    
-    # 거래량 증가율 (20점)
-    if 전일_거래량_비율 >= 200:
-        score += 20
-    elif 전일_거래량_비율 >= 150:
-        score += 15
-    elif 전일_거래량_비율 >= 120:
-        score += 10
-    
-    return score
+🟢 익절 (2단계)
+1단계: 목표 익절
+pythonif 현재가 >= 매수가 × 1.08:
+    return {"action": "SELL", "reason": "목표익절+8%"}
+2단계: 수급 이탈 익절
+pythonif (현재가 > 매수가 × 1.03 and  # 최소 3% 수익
+    외국인_비율 < 1.0 and 
+    프로그램_비율 < 1.0):
+    return {"action": "SELL", "reason": "수급이탈"}
 ```
+
+**이유:** 
+- 최소 수익 확보 후 수급 약화 시 빠른 탈출
+- 급락 전 선제적 익절
 
 ---
 
-## 매도 시그널
-
-### 손절 라인: 2중 안전장치 🛡️
-
-**둘 중 먼저 도달하는 조건으로 즉시 손절**
-
-```python
-손절_조건_1 = 현재가 < 매수가 × 0.97      # 고정 -3%
-손절_조건_2 = 현재가 < 20일_이평선 × 0.95  # 이평선 -5%
-
-# 추격매수의 경우
-손절_조건_1 = 현재가 < 매수가 × 0.985     # 고정 -1.5%
+## 5️⃣ 전체 실행 흐름
 ```
-
-**이유**
-- 급락 → 고정 -3%가 먼저 걸려 빠른 방어 ✅
-- 완만한 하락 → 이평선 -5%로 여유 대응 ✅
-
-### 익절 전략: 단계별 분할 익절 💰
-
-#### **1단계: 빠른 수익 확보 (30% 물량)**
-```
-매수가 대비 +5% 도달 시 → 30% 익절
-(추격매수는 +2%에서 30% 익절)
-```
-
-#### **2단계: 추세 이탈 감지 (나머지 70%)**
-
-**전량 청산 조건 (하나라도 충족 시)**
-
-```python
-# 조건 A: 20일선 하회 + 매수세 이탈
-if 현재가 < 20일_이평선:
-    # ⚠️ 주의: frgn_ntby_qty가 음수를 지원하는지 확인 필요
-    
-    # 방법 1: 2일 연속 순매도 (음수 지원 시)
-    if (어제_외국인 < 0 and 오늘_외국인 < 0) or \
-       (어제_프로그램 < 0 and 오늘_프로그램 < 0):
-        전량_익절()
-    
-    # 방법 2: 순매수 급감 (음수 미지원 시)
-    if 오늘_외국인 < 어제_외국인 × 0.2:  # 80% 감소
-        전량_익절()
-
-# 조건 B: 당일 강력한 매도 신호
-if 외국인_순매수 < 0 and 프로그램_순매수 < 0:  # 양측 모두 순매도
-    전량_익절()
-
-# 조건 C: 대량 순매도
-if 외국인_순매수 < -거래량 × 0.05:  # 거래량의 5% 이상
-    전량_익절()
-```
-
-#### **3단계: 과열 방지 (나머지 70%)**
-```
-매수가 대비 +15% 도달 시 → 전량 익절 (과욕 방지)
-```
-
-### 급락 감지 알고리즘 🚨
-
-**5분 체크 주기 내에서도 급락 감지**
-
-```python
-# 급락 조건 (하나라도 충족 시 즉시 손절)
-
-✓ 5분간 -2% 이상 하락
-✓ 최근 5분 거래량 > 평소 5분 평균 × 2 + 가격 하락
-✓ 외국인 5분 순매수 < -평소 5분 평균 × 3
-```
-
----
-
-## 모니터링 주기
-
-### 스마트 적응형 모니터링 시스템
-
-#### **기본 주기: 5분 간격** ⏰
-
-```
-09:00 ~ 15:00
-├─ 진입 신호 스캔: 5분마다
-└─ 보유 종목 체크: 5분마다
-```
-
-
-#### **노이즈 필터링 기법**
-
-**1. 시간 기반 집계**
-```python
-# 5분 누적 데이터로 판단
-외국인_5분_순매수 = sum(최근_5분_데이터)
-프로그램_5분_순매수 = sum(최근_5분_데이터)
-```
-
-**2. 이동평균 활용**
-```python
-# 현재가의 5분 이동평균으로 노이즈 제거
-현재가_5분평균 = MA(현재가, 5분)
-실제_손익률 = (현재가_5분평균 - 매수가) / 매수가 × 100
-```
-
-**3. 신호 확인 (Confirmation)**
-```python
-# 손절 신호 2회 연속 확인 후 실행
-if 손익률 < -1.5%:
-    손절_카운트 += 1
-    if 손절_카운트 >= 2:  # 10분간 지속
-        실제_손절_실행()
-```
-
-### 체크 항목
-
-**진입 신호 스캔 (5분마다)**
-```
-□ 현재가 vs 20일 이평선 위치
-□ 최근 30분간 외국인/프로그램 누적 순매수
-□ 급등 조건 충족 여부
-□ 거래량 폭발 여부
-□ 안전장치 필터 통과 여부
-```
-
-**보유 종목 모니터링 (5분마다)**
-```
-□ 5분 평균 손익률
-□ 최근 15분간 외국인/프로그램 추세
-□ 20일 이평선 위치 확인
-□ 거래량 추이
-□ 급락 패턴 감지
-```
-
----
-
-## 리스크 관리
-
-### 자금 관리
-
-```
-📊 일반 매수
-   - 단일 종목 최대: 전체 자금의 20%
-   - 동시 보유 종목: 최대 5개
-
-⚡ 추격 매수
-   - 단일 종목 최대: 전체 자금의 10%
-   - 동시 보유 종목: 최대 2개
-```
-
-### 일일 손실 한도
-
-```
-🛑 당일 총 손실 -2% 도달 → 당일 매매 중단
-🛑 3연속 손절 → 1시간 매매 중지
-```
-
-### 손익비
-
-```
-하이브리드 방식 손익비
-
-손절: -3% (또는 -1.5% 추격매수)
-익절: 
-  - 1단계: +5% (30%)
-  - 2단계: +15% (70%)
-  
-평균 기대 손익비: 약 1:3
-```
-
----
-
-## 데이터 구조
-
-### API 응답 데이터 (한국투자증권)
-
-**주요 활용 필드**
-
-```python
-# 가격 정보
-stck_prpr: str           # 주식 현재가
-stck_oprc: str           # 주식 시가
-stck_hgpr: str           # 주식 최고가
-stck_lwpr: str           # 주식 최저가
-stck_mxpr: str           # 주식 상한가
-stck_sdpr: str           # 주식 기준가
-wghn_avrg_stck_prc: str  # 가중 평균 주식 가격
-
-# 매수세 지표 ⚠️ 중요
-frgn_ntby_qty: str       # 외국인 순매수 수량
-pgtr_ntby_qty: str       # 프로그램매매 순매수 수량
-                         # ⚠️ 음수 지원 여부 확인 필요!
-
-# 거래량
-acml_vol: str            # 누적 거래량
-prdy_vrss_vol_rate: str  # 전일 대비 거래량 비율
-
-# 변동률
-prdy_ctrt: str           # 전일 대비율
-prdy_vrss: str           # 전일 대비
-prdy_vrss_sign: str      # 전일 대비 부호
-
-# 기본 지표
-per: str                 # PER
-pbr: str                 # PBR
-eps: str                 # EPS
-bps: str                 # BPS
-
-# 52주 데이터
-w52_hgpr: str            # 52주일 최고가
-w52_lwpr: str            # 52주일 최저가
-
-# 안전장치
-scd_stat_cls_code: str   # 종목 상태 구분 코드
-short_over_yn: str       # 단기과열여부
-mang_issu_cls_code: str  # 관리종목여부
-whol_loan_rmnd_rate: str # 전체 융자 잔고 비율
-```
-
-
----
-
-## 기술 스택
-
-### 필수 라이브러리
-
-```bash
-# TA-Lib 설치 (기술적 지표 계산)
-pip install TA-Lib --break-system-packages
-
-# 기타 필수 라이브러리
-pip install numpy pandas requests --break-system-packages
-```
-
-### TA-Lib 활용
-
-**실시간 20일 EMA 계산** ⭐ 핵심
-
-```python
-
-# 사용 예시 - 실시간 비교
-종목코드 = '005930'
-현재가 = 75000
-
-어제_ema20 = calculate_yesterday_ema20(종목코드, api)
-실시간_ema20 = calculate_realtime_ema20(종목코드, api, 현재가)
-
-print(f"현재가: {현재가:,}원")
-print(f"어제 기준 EMA: {어제_ema20:,.0f}원")
-print(f"실시간 EMA: {실시간_ema20:,.0f}원")
-print(f"차이: {실시간_ema20 - 어제_ema20:,.0f}원")
-```
-
-**왜 실시간 EMA인가?**
-```
-상황: 삼성전자가 장중 급등
-
-09:00  현재가 70,000원  실시간EMA 72,500원  → EMA 아래 (진입X)
-10:00  현재가 73,000원  실시간EMA 72,800원  → EMA 아래 (진입X)
-11:00  현재가 75,000원  실시간EMA 73,200원  → EMA 위! (진입 가능) ✅
-
-만약 어제 기준 EMA(72,000원)를 사용했다면:
-09:00부터 이미 EMA 위로 인식 → 너무 이른 진입
-
-실시간 EMA는 현재 추세를 정확히 반영!
-```
-
-
----
-
-## 구현 가이드
-
-```
-
-**TA-Lib 사용 시 주의사항**
-
-```python
-# 1. 충분한 데이터 확보
-# 20일선 계산 시 최소 20개 데이터 필요
-# 여유있게 30일치 조회 권장
-
-# 2. NaN 처리
-ma20 = talib.SMA(close_prices, timeperiod=20)
-if np.isnan(ma20[-1]):
-    # 데이터 부족, 다른 방법 사용
-    ma20_value = np.mean(close_prices[-20:])
-
-# 3. 배열 타입 확인
-close_prices = np.array(prices, dtype=float)  # float 변환 필수
-
-# 4. 캐싱으로 성능 최적화
-# 같은 종목의 20일선을 5분 내 여러 번 계산하지 않도록
-```
-
----
-
-## 주의사항
-
-### ⚠️ 필수 확인 사항
-
-#### 1. **외국인 순매수 데이터 확인**
-
-```
-❗ 중요: frgn_ntby_qty가 음수를 지원하는지 확인 필요!
-
-확인 방법:
-1. 한투증권 API 문서에서 frgn_ntby_qty 설명 확인
-2. 실제 API 호출하여 순매도 종목의 응답값 확인
-3. HTS에서 순매도 종목과 API 데이터 비교
-
-- 음수 지원 O → 원래 전략 그대로 사용
-- 음수 지원 X → "순매수 급감" 방식으로 수정 필요
-```
-
-#### 2. **20일 이평선 계산**
-
-**⚠️ 중요: SMA vs EMA**
-
-```python
+┌─────────────────────────────────────────┐
+│ 08:50 장 시작 전                         │
+├─────────────────────────────────────────┤
+│ 1. DB 연결 확인                          │
+│ 2. 관심종목 일봉 데이터 메모리 캐싱      │
+│    (100개 종목 × 100일 = 0.3초)         │
+│ 3. Redis 상태 초기화                     │
+└─────────────────────────────────────────┘
+           ↓
+┌─────────────────────────────────────────┐
+│ 09:00~15:20 메인 루프 (5분마다)         │
+├─────────────────────────────────────────┤
+│                                          │
+│ [보유 종목 모니터링]                     │
+│ ├─ 실시간 시세 조회 (API)               │
+│ ├─ 실시간 EMA20 계산 (메모리)           │
+│ ├─ 손절 조건 체크                       │
+│ └─ 익절 조건 체크                       │
+│                                          │
+│ [신규 진입 기회 스캔]                   │
+│ ├─ 조건 A~E 체크                        │
+│ ├─ Redis 이전 상태 조회                 │
+│ ├─ 2회 연속 확인                        │
+│ └─ 매수 실행                            │
+│                                          │
+└─────────────────────────────────────────┘
+           ↓
+┌─────────────────────────────────────────┐
+│ 15:40 장 마감 후                         │
+├─────────────────────────────────────────┤
+│ 1. 오늘 일봉 데이터 DB 저장             │
+│ 2. 거래 내역 기록                       │
+│ 3. 일일 리포트 생성                     │
+│ 4. Redis TTL 자동 만료 대기             │
+└─────────────────────────────────────────┘
+
+6️⃣ 완성 코드
+pythonimport redis
 import talib
 import numpy as np
+from datetime import datetime
 
-# SMA (단순이동평균): 최근 20일만 동일 가중치
-# EMA (지수이동평균): 과거 모든 데이터가 영향 (최근 데이터에 더 큰 가중치)
-def calculate_ma20_sma(종목코드, api):
-    """20일 SMA 계산 (30일 데이터로 충분)"""
+# Redis 연결
+redis_client = redis.Redis(host='localhost', port=6379, db=0)
+
+class SingleEMAStrategy:
+    """단일 20EMA 매매 전략"""
     
-    # 일봉 데이터 조회 (최근 3년)
-    end_date = datetime.now()
-    start_date = end_date - relativedelta(years=3)
-
-    # 주가 데이터 조회
-    stock_service = StockService(db)
-    daily_data = await stock_service.get_stock_history(swing_data.ST_CODE, start_date)
+    def __init__(self, db):
+        self.db = db
+        self.redis = redis_client
     
-    # 종가 배열로 변환
-    close_prices = np.array([float(d['stck_clpr']) for d in daily_data])
+    # ==================== EMA 계산 ====================
     
-    # TA-Lib SMA 계산
-    ma20 = talib.SMA(close_prices, timeperiod=20)
+    def get_realtime_ema20(self, 종목코드, 현재가):
+        """실시간 EMA20 계산"""
+        daily_data = self.db.get_cached_daily_prices(종목코드, days=100)
+        close_prices = [d['close_price'] for d in daily_data]
+        close_prices_with_today = close_prices + [현재가]
+        
+        ema_array = talib.EMA(np.array(close_prices_with_today), timeperiod=20)
+        return ema_array[-1]
     
-    # 가장 최근 값 반환 (NaN 체크)
-    if np.isnan(ma20[-1]):
-        # 데이터 부족 시 수동 계산
-        return np.mean(close_prices[-20:])
+    # ==================== 진입 ====================
     
-    return ma20[-1]
-
-
-def calculate_ma20_ema(종목코드, api):
-    """20일 EMA 계산 (최소 100일 데이터 필요) ⭐ 권장"""
+    def check_entry_signal(self, 종목코드, stock_data):
+        """진입 신호 체크"""
+        
+        # 데이터 추출
+        현재가 = int(stock_data['stck_prpr'])
+        누적거래량 = int(stock_data['acml_vol'])
+        외국인_순매수 = int(stock_data['frgn_ntby_qty'])
+        프로그램_순매수 = int(stock_data['pgtr_ntby_qty'])
+        거래량_비율 = float(stock_data['prdy_vrss_vol_rate'])
+        당일_상승률 = float(stock_data['prdy_ctrt'])
+        
+        # EMA 계산
+        실시간_ema20 = self.get_realtime_ema20(종목코드, 현재가)
+        
+        # === 조건 A: 가격 ===
+        가격_조건 = 현재가 > 실시간_ema20
+        
+        괴리율 = (현재가 - 실시간_ema20) / 실시간_ema20
+        괴리_조건 = 괴리율 <= 0.02
+        
+        # === 조건 B: 수급 ===
+        외국인_비율 = (외국인_순매수 / 누적거래량) * 100 if 누적거래량 > 0 else 0
+        프로그램_비율 = (프로그램_순매수 / 누적거래량) * 100 if 누적거래량 > 0 else 0
+        
+        수급_조건 = (
+            (외국인_비율 >= 3.0 or 프로그램_비율 >= 3.0) and
+            (외국인_비율 + 프로그램_비율 >= 4.5)
+        )
+        
+        # === 조건 C: 수급 유지 ===
+        prev = self.redis.get(f"entry:{종목코드}")
+        if prev:
+            prev = json.loads(prev)
+            외국인_유지 = 외국인_비율 >= prev.get('curr_frgn_ratio', 0) * 0.8
+            프로그램_유지 = 프로그램_비율 >= prev.get('curr_pgm_ratio', 0) * 0.8
+            수급_유지 = 외국인_유지 or 프로그램_유지
+        else:
+            수급_유지 = True
+        
+        # === 조건 D: 거래량 ===
+        거래량_조건 = 거래량_비율 >= 120
+        
+        # === 조건 E: 급등 필터 ===
+        급등_필터 = 당일_상승률 <= 7
+        
+        # === 전체 조건 ===
+        현재_신호 = (
+            가격_조건 and 괴리_조건 and
+            수급_조건 and 수급_유지 and
+            거래량_조건 and 급등_필터
+        )
+        
+        # === 연속 카운트 ===
+        if prev and prev.get('curr_signal') and 현재_신호:
+            consecutive = prev.get('consecutive_count', 0) + 1
+        else:
+            consecutive = 1 if 현재_신호 else 0
+        
+        # === 상태 저장 ===
+        state = {
+            'curr_signal': 현재_신호,
+            'consecutive_count': consecutive,
+            'curr_price': 현재가,
+            'curr_ema20': 실시간_ema20,
+            'curr_frgn_ratio': 외국인_비율,
+            'curr_pgm_ratio': 프로그램_비율,
+            'last_update': datetime.now().isoformat()
+        }
+        self.redis.setex(f"entry:{종목코드}", 900, json.dumps(state))
+        
+        # === 최종 판정 ===
+        if consecutive >= 2:
+            return {
+                'action': 'BUY',
+                'price': 현재가,
+                'ema20': 실시간_ema20,
+                'frgn_ratio': 외국인_비율,
+                'pgm_ratio': 프로그램_비율,
+                'gap_ratio': 괴리율
+            }
+        
+        return None
     
-    # 일봉 데이터 조회 (EMA는 많을수록 정확) 최근 3년
-    # 일봉 데이터 조회 (최근 3년)
-    end_date = datetime.now()
-    start_date = end_date - relativedelta(years=3)
-
-    # 주가 데이터 조회
-    stock_service = StockService(db)
-    daily_data = await stock_service.get_stock_history(swing_data.ST_CODE, start_date)
+    # ==================== 매도 ====================
     
-    if len(daily_data) < 100:
-        # 상장 초기 종목 등 데이터 부족 시 SMA로 대체
-        return calculate_ma20_sma(종목코드, api)
-    
-    # 종가 배열로 변환
-    close_prices = np.array([float(d['stck_clpr']) for d in daily_data])
-    
-    # TA-Lib EMA 계산
-    ema20 = talib.EMA(close_prices, timeperiod=20)
-    
-    # 가장 최근 값 반환
-    if np.isnan(ema20[-1]):
-        # NaN이면 SMA로 fallback
-        return calculate_ma20_sma(종목코드, api)
-    
-    return ema20[-1]
+    def check_exit_signal(self, position, stock_data):
+        """매도 신호 체크"""
+        
+        현재가 = int(stock_data['stck_prpr'])
+        매수가 = position['entry_price']
+        실시간_ema20 = self.get_realtime_ema20(position['symbol'], 현재가)
+        
+        손실률 = (현재가 - 매수가) / 매수가
+        수익률 = (현재가 - 매수가) / 매수가
+        현재_이탈폭 = 실시간_ema20 - 현재가
+        
+        # === 손절 1: 하드 스톱 ===
+        
+        # 고정 손절 -3%
+        if 손실률 <= -0.03:
+            return {"action": "SELL", "reason": "고정손절-3%"}
+        
+        # EMA 대폭 이탈
+        if 현재가 < 실시간_ema20 * 0.97:
+            return {"action": "SELL", "reason": "EMA대폭이탈"}
+        
+        # === 손절 2: 추세 기반 ===
+        
+        if 0 < 현재_이탈폭 < 실시간_ema20 * 0.03:
+            
+            prev = self.redis.get(f"stop:{position['id']}")
+            
+            if prev:
+                prev = json.loads(prev)
+                이전_가격 = prev['price']
+                이전_이탈폭 = prev['gap']
+                
+                # 추세 악화 확인
+                가격_하락 = 현재가 < 이전_가격
+                이탈_증가 = 현재_이탈폭 > 이전_이탈폭
+                
+                if 가격_하락 and 이탈_증가:
+                    return {"action": "SELL", "reason": "추세악화"}
+                else:
+                    # 상태 업데이트
+                    self.redis.setex(f"stop:{position['id']}", 600, json.dumps({
+                        'gap': 현재_이탈폭,
+                        'price': 현재가,
+                        'time': datetime.now().isoformat()
+                    }))
+                    return {"action": "HOLD"}
+            else:
+                # 첫 이탈 기록
+                self.redis.setex(f"stop:{position['id']}", 600, json.dumps({
+                    'gap': 현재_이탈폭,
+                    'price': 현재가,
+                    'time': datetime.now().isoformat()
+                }))
+                return {"action": "HOLD"}
+        
+        # === 익절 ===
+        
+        # 목표 익절 +8%
+        if 수익률 >= 0.08:
+            return {"action": "SELL", "reason": "목표익절+8%"}
+        
+        # 수급 이탈 익절
+        외국인_비율 = (int(stock_data['frgn_ntby_qty']) / int(stock_data['acml_vol'])) * 100
+        프로그램_비율 = (int(stock_data['pgtr_ntby_qty']) / int(stock_data['acml_vol'])) * 100
+        
+        if (수익률 >= 0.03 and 
+            외국인_비율 < 1.0 and 
+            프로그램_비율 < 1.0):
+            return {"action": "SELL", "reason": "수급이탈"}
+        
+        # === 정상 ===
+        self.redis.delete(f"stop:{position['id']}")
+        return {"action": "HOLD"}
 
-
-# 사용 예시
-sma20 = calculate_ma20_sma('005930', api)  # 삼성전자 SMA
-ema20 = calculate_ma20_ema('005930', api)  # 삼성전자 EMA (권장)
-
-print(f"SMA(20): {sma20:,.0f}원")
-print(f"EMA(20): {ema20:,.0f}원")
-```
-
-
-#### 3. **API 호출 제한**
-
-```
-- 5분 간격으로 호출 최소화
-- 20일 이평선 계산 결과 캐싱 (5분간 재사용)
-- 장 시작 전 모든 종목 일괄 계산
-- 중요도에 따라 우선순위 부여
-- 필요 시 SMA로 전환 (데이터량 1/3 감소)
-```
-
-#### 4. **시간대별 전략 조정**
-
-```
-09:00-10:00: 변동성 큰 시간대
-  → 급등 추격 가능, 신중한 진입
-
-10:00-14:00: 정상 매매 시간
-  → 모든 전략 적용
-
-14:00-15:20: 장 마감 임박
-  → 신규 진입 자제, 청산 위주
-```
-
-### 🔧 디버깅 팁
-
-```python
-# 로깅 필수
-import logging
-
-logging.info(f"[매수 시그널] 종목: {종목코드}, 가격: {현재가}, 
-              외국인: {외국인_순매수}, 프로그램: {프로그램_순매수}")
-
-logging.warning(f"[손절 실행] 종목: {종목코드}, 손실: {손익률}%")
-
-logging.error(f"[API 오류] 종목: {종목코드}, 에러: {error_msg}")
-```
-
-주의 사항
-- 캐싱은 현재 구현되어있는 REDIS를 활용 캐싱된게 없으면 그때서야 DB 조회 후에 캐싱 시도후 저장
-
+7️⃣ 핵심 요약표
+  구분   | 내용                             | 비고 | 
+진입 신호 | 20EMA 위 + 수급 3%/4.5% + 2회 연속  | 10분 
+확인수급  | 기준(외≥3% OR 프≥3%) AND (합≥4.5%) | 하이브리드
+괴리율   | 2% 이내                           | 늦은 진입 방지
+손절     | -3% 또는 EMA -3% 또는 추세 악화      |3단계 방어
+익절     | +8% 또는 수급 이탈(+3%↑)           | 2단계
+상태 관리 | Redis (TTL 15분)                 | 메모리 효율
+성능     | 0.0001초/종목                     | DB 캐싱

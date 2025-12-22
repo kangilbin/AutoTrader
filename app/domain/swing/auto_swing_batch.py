@@ -1,6 +1,6 @@
 """
 스윙 매매 배치 작업 (5분 간격)
-TYPE A (안정 진입) 및 TYPE B (모멘텀 추격) 전략 지원
+단일 20EMA 전략 지원
 """
 import logging
 from datetime import datetime, timedelta
@@ -11,9 +11,9 @@ from app.external.kis_api import get_target_price
 from app.common.database import Database
 from app.domain.swing.service import SwingService
 from app.domain.stock.service import StockService
-from app.domain.swing.strategies.type_a_strategy import TypeAStrategy
-from app.domain.swing.strategies.type_b_strategy import TypeBStrategy
+from app.domain.swing.strategies.single_ema_strategy import SingleEMAStrategy
 from app.domain.swing.mock_data_service import MockMarketDataService
+from app.module.redis_connection import Redis
 
 logger = logging.getLogger(__name__)
 
@@ -21,15 +21,18 @@ logger = logging.getLogger(__name__)
 async def trade_job():
     """
     매매 신호 확인 및 생성 (5분 단위)
-    - TYPE A: 안정적 진입 전략
-    - TYPE B: 모멘텀 추격 전략
+    - 단일 20EMA 전략
     """
     db = await Database.get_session()
+    redis_client = None
 
     try:
         swing_service = SwingService(db)
         stock_service = StockService(db)
         mock_service = MockMarketDataService()
+
+        # Redis 연결
+        redis_client = await Redis.get_connection()
 
         # 활성화된 스윙 목록 조회
         swing_list = await swing_service.get_active_swings()
@@ -43,6 +46,7 @@ async def trade_job():
                     stock_service,
                     swing_service,
                     mock_service,
+                    redis_client,
                     db
                 )
             except Exception as e:
@@ -65,6 +69,7 @@ async def process_single_swing(
     stock_service: StockService,
     swing_service: SwingService,
     mock_service: MockMarketDataService,
+    redis_client,
     db
 ):
     """
@@ -75,14 +80,14 @@ async def process_single_swing(
         stock_service: StockService 인스턴스
         swing_service: SwingService 인스턴스
         mock_service: MockMarketDataService 인스턴스
+        redis_client: Redis 클라이언트
         db: Database session
     """
     swing_id = swing.SWING_ID
     st_code = swing.ST_CODE
-    swing_type = swing.SWING_TYPE
     current_signal = swing.SIGNAL if hasattr(swing, 'SIGNAL') else 0
 
-    logger.info(f"[{st_code}] 처리 시작 (TYPE={swing_type}, SIGNAL={current_signal})")
+    logger.info(f"[{st_code}] 처리 시작 (SIGNAL={current_signal})")
 
     # === 1. 데이터 수집 ===
 
@@ -144,68 +149,73 @@ async def process_single_swing(
 
     # === 2. 전략 분석 ===
 
-    # 진입가 계산 (SIGNAL이 1 또는 2인 경우)
-    entry_price = None
-    if current_signal in (1, 2):
-        # 실제로는 TRADE_HISTORY에서 매수가 조회해야 함
-        # 간단히 INIT_AMOUNT / CUR_AMOUNT 기반 추정
-        # TODO: TRADE_HISTORY 테이블 연동
-        entry_price = Decimal(str(swing.INIT_AMOUNT))  # 임시: 초기 투자금을 진입가로 가정
+    # 필요한 데이터 추출
+    acml_vol = int(today_data.get("ACML_VOL", 0))
+    prdy_vrss_vol_rate = float(current_price_data.get("prdy_vrss_vol_rate", 100))
+    prdy_ctrt = float(current_price_data.get("prdy_ctrt", 0))
 
-    # TYPE별 전략 실행
-    if swing_type == 'A':
-        # TYPE A: 안정적 진입 전략
-        analysis = TypeAStrategy.analyze(
+    # State Transition Logic
+    new_signal = current_signal
+    signal = None
+    reason = None
+
+    # 포지션 없음 (대기 상태) - 진입 신호 확인
+    if current_signal == 0:
+        entry_result = await SingleEMAStrategy.check_entry_signal(
+            redis_client=redis_client,
+            symbol=st_code,
             df=df,
             current_price=current_price,
             frgn_ntby_qty=frgn_ntby_qty,
             pgtr_ntby_qty=pgtr_ntby_qty,
-            entry_price=entry_price,
-            current_signal=current_signal
+            acml_vol=acml_vol,
+            prdy_vrss_vol_rate=prdy_vrss_vol_rate,
+            prdy_ctrt=prdy_ctrt
         )
-    elif swing_type == 'B':
-        # TYPE B: 모멘텀 추격 전략
-        analysis = TypeBStrategy.analyze(
+
+        if entry_result and entry_result.get("action") == "BUY":
+            # 0 → 1: 첫 매수 신호 (2회 연속 확인 완료)
+            new_signal = 1
+            signal = "buy"
+            reason = f"진입 신호 (consecutive={entry_result.get('consecutive')})"
+            logger.info(f"[{st_code}] 신호 전환: 0 → 1 (매수 신호)")
+        else:
+            signal = "hold"
+            reason = "진입 조건 대기 중"
+
+    # 포지션 있음 (보유 중) - 매도 신호 확인
+    elif current_signal in (1, 2):
+        # 진입가 조회 (실제로는 TRADE_HISTORY에서 가져와야 함)
+        # TODO: TRADE_HISTORY 테이블 연동
+        entry_price = Decimal(str(swing.INIT_AMOUNT))  # 임시: 초기 투자금을 진입가로 가정
+
+        exit_result = await SingleEMAStrategy.check_exit_signal(
+            redis_client=redis_client,
+            position_id=swing_id,
+            symbol=st_code,
             df=df,
             current_price=current_price,
             entry_price=entry_price,
-            current_signal=current_signal
+            frgn_ntby_qty=frgn_ntby_qty,
+            pgtr_ntby_qty=pgtr_ntby_qty,
+            acml_vol=acml_vol
         )
-    else:
-        logger.warning(f"[{st_code}] 지원하지 않는 SWING_TYPE: {swing_type}")
-        return
 
-    # === 3. 신호 처리 (Signal-only mode, no execution) ===
-
-    signal = analysis.get("signal")
-    strength = analysis.get("strength")
-    reason = analysis.get("reason")
-
-    logger.info(
-        f"[{st_code}] 분석 결과: {signal.upper()} ({strength or 'N/A'}) - {reason}"
-    )
-
-    # State Transition Logic
-    new_signal = current_signal
-
-    if signal == "buy":
-        if current_signal == 0:
-            # 0 → 1: 첫 매수 신호
-            new_signal = 1
-            logger.info(f"[{st_code}] 신호 전환: 0 → 1 (첫 매수 신호)")
-        elif current_signal == 1 and strength == "strong":
-            # 1 → 2: 추가 매수 신호 (strong buy만)
-            new_signal = 2
-            logger.info(f"[{st_code}] 신호 전환: 1 → 2 (추가 매수 신호)")
-
-    elif signal == "sell":
-        if current_signal in (1, 2):
+        if exit_result.get("action") == "SELL":
             # 1/2 → 3: 매도 신호
             new_signal = 3
-            logger.info(f"[{st_code}] 신호 전환: {current_signal} → 3 (매도 신호)")
+            signal = "sell"
+            reason = exit_result.get("reason")
+            logger.info(f"[{st_code}] 신호 전환: {current_signal} → 3 (매도 신호: {reason})")
+        else:
+            signal = "hold"
+            reason = exit_result.get("reason", "정상 보유")
 
-            # 매도 완료 후 일정 시간 후 초기화 (다음 배치에서 처리)
-            # 여기서는 3으로만 전환, 실제 초기화는 별도 로직 또는 수동 처리
+    # === 3. 로깅 ===
+
+    logger.info(
+        f"[{st_code}] 분석 결과: {signal.upper() if signal else 'UNKNOWN'} - {reason}"
+    )
 
     # === 4. Database Update ===
 
