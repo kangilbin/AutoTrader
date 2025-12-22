@@ -9,12 +9,12 @@ Entry Conditions (all 5 must be met + 2회 연속 확인):
 5. 급등 필터: 당일 상승률 <= 7%
 6. 2회 연속 확인 (Redis 상태 관리)
 
-Risk Management:
-- Stop Loss 1: 고정 -3% 손절
-- Stop Loss 2: EMA -3% 이탈
-- Stop Loss 3: 추세 악화 (EMA 아래에서 악화 시)
-- Profit Taking 1: +8% 목표 익절
-- Profit Taking 2: +3% 이상에서 수급 이탈
+Exit Conditions (추세/수급 기반, 익절 없음):
+1. 고정 손절: -3%
+2. 수급 반전: 외국인 or 프로그램 순매도 -2% 이상
+3. EMA 이탈: 2회 연속 EMA 아래
+4. 수급 약화: 외국인 and 프로그램 모두 1% 미만
+5. 추세 악화: EMA 아래에서 가격 하락 + 이탈폭 증가
 """
 import pandas as pd
 import talib as ta
@@ -44,12 +44,11 @@ class SingleEMAStrategy:
     MAX_SURGE_RATIO = 0.07  # 급등 필터 7%
     CONSECUTIVE_REQUIRED = 2  # 2회 연속 확인
 
-    # 손절/익절
-    STOP_LOSS_FIXED = -0.03  # -3%
-    STOP_LOSS_EMA = -0.03  # EMA -3%
-    PROFIT_TARGET = 0.08  # +8%
-    PROFIT_MIN_FOR_EXIT = 0.03  # +3% (수급 이탈 시 최소 수익)
-    SUPPLY_EXIT_THRESHOLD = 1.0  # 수급 1% 미만
+    # 청산 조건
+    STOP_LOSS_FIXED = -0.03  # 고정 손절 -3%
+    SUPPLY_REVERSAL_THRESHOLD = -2.0  # 수급 반전 (순매도 -2%)
+    SUPPLY_WEAK_THRESHOLD = 1.0  # 수급 약화 (1% 미만)
+    EMA_BREACH_REQUIRED = 2  # EMA 이탈 2회 연속 확인
 
     @classmethod
     def get_realtime_ema20(cls, df: pd.DataFrame, current_price: float) -> Optional[float]:
@@ -111,58 +110,58 @@ class SingleEMAStrategy:
             매수 신호 정보 또는 None
         """
         # === EMA 계산 ===
-        현재가 = float(current_price)
-        실시간_ema20 = cls.get_realtime_ema20(df, 현재가)
+        curr_price = float(current_price)
+        realtime_ema20 = cls.get_realtime_ema20(df, curr_price)
 
-        if 실시간_ema20 is None:
+        if realtime_ema20 is None:
             logger.warning(f"[{symbol}] EMA 계산 불가")
             return None
 
         # === 조건 A: 가격 위치 ===
-        가격_조건 = 현재가 > 실시간_ema20
-        괴리율 = (현재가 - 실시간_ema20) / 실시간_ema20
-        괴리_조건 = 괴리율 <= cls.MAX_GAP_RATIO
+        price_condition = curr_price > realtime_ema20
+        gap_ratio = (curr_price - realtime_ema20) / realtime_ema20
+        gap_condition = gap_ratio <= cls.MAX_GAP_RATIO
 
         # === 조건 B: 수급 강도 ===
-        외국인_비율 = (frgn_ntby_qty / acml_vol * 100) if acml_vol > 0 else 0
-        프로그램_비율 = (pgtr_ntby_qty / acml_vol * 100) if acml_vol > 0 else 0
+        frgn_ratio = (frgn_ntby_qty / acml_vol * 100) if acml_vol > 0 else 0
+        pgm_ratio = (pgtr_ntby_qty / acml_vol * 100) if acml_vol > 0 else 0
 
-        수급_조건 = (
-            (외국인_비율 >= cls.FRGN_STRONG_THRESHOLD or 프로그램_비율 >= cls.PGM_STRONG_THRESHOLD) and
-            (외국인_비율 + 프로그램_비율 >= cls.TOTAL_THRESHOLD)
+        supply_condition = (
+            (frgn_ratio >= cls.FRGN_STRONG_THRESHOLD or pgm_ratio >= cls.PGM_STRONG_THRESHOLD) and
+            (frgn_ratio + pgm_ratio >= cls.TOTAL_THRESHOLD)
         )
 
         # === 조건 C: 수급 유지 ===
-        수급_유지 = True
+        supply_maintained = True
         prev_state_key = f"entry:{symbol}"
         prev_state_str = await redis_client.get(prev_state_key)
 
         if prev_state_str:
             prev_state = json.loads(prev_state_str)
-            이전_외국인_비율 = prev_state.get('curr_frgn_ratio', 0)
-            이전_프로그램_비율 = prev_state.get('curr_pgm_ratio', 0)
+            prev_frgn_ratio = prev_state.get('curr_frgn_ratio', 0)
+            prev_pgm_ratio = prev_state.get('curr_pgm_ratio', 0)
 
-            외국인_유지 = 외국인_비율 >= 이전_외국인_비율 * cls.MAINTAIN_RATIO
-            프로그램_유지 = 프로그램_비율 >= 이전_프로그램_비율 * cls.MAINTAIN_RATIO
+            frgn_maintained = frgn_ratio >= prev_frgn_ratio * cls.MAINTAIN_RATIO
+            pgm_maintained = pgm_ratio >= prev_pgm_ratio * cls.MAINTAIN_RATIO
 
-            수급_유지 = 외국인_유지 or 프로그램_유지
+            supply_maintained = frgn_maintained or pgm_maintained
 
         # === 조건 D: 거래량 ===
-        거래량_조건 = prdy_vrss_vol_rate >= (cls.VOLUME_RATIO_THRESHOLD * 100)
+        volume_condition = prdy_vrss_vol_rate >= (cls.VOLUME_RATIO_THRESHOLD * 100)
 
         # === 조건 E: 급등 필터 ===
-        급등_필터 = prdy_ctrt <= (cls.MAX_SURGE_RATIO * 100)
+        surge_filtered = prdy_ctrt <= (cls.MAX_SURGE_RATIO * 100)
 
         # === 전체 조건 ===
-        현재_신호 = (
-            가격_조건 and 괴리_조건 and
-            수급_조건 and 수급_유지 and
-            거래량_조건 and 급등_필터
+        current_signal = (
+            price_condition and gap_condition and
+            supply_condition and supply_maintained and
+            volume_condition and surge_filtered
         )
 
         # === 연속 카운트 ===
         consecutive = 0
-        if 현재_신호:
+        if current_signal:
             if prev_state_str:
                 prev_state = json.loads(prev_state_str)
                 if prev_state.get('curr_signal'):
@@ -174,12 +173,12 @@ class SingleEMAStrategy:
 
         # === 상태 저장 (TTL 15분 = 900초) ===
         new_state = {
-            'curr_signal': 현재_신호,
+            'curr_signal': current_signal,
             'consecutive_count': consecutive,
-            'curr_price': 현재가,
-            'curr_ema20': 실시간_ema20,
-            'curr_frgn_ratio': 외국인_비율,
-            'curr_pgm_ratio': 프로그램_비율,
+            'curr_price': curr_price,
+            'curr_ema20': realtime_ema20,
+            'curr_frgn_ratio': frgn_ratio,
+            'curr_pgm_ratio': pgm_ratio,
             'last_update': datetime.now().isoformat()
         }
         await redis_client.setex(prev_state_key, 900, json.dumps(new_state))
@@ -188,24 +187,24 @@ class SingleEMAStrategy:
         if consecutive >= cls.CONSECUTIVE_REQUIRED:
             logger.info(
                 f"[{symbol}] 매수 신호: consecutive={consecutive}, "
-                f"가격={현재가:,.0f}, EMA={실시간_ema20:,.0f}, "
-                f"외국인={외국인_비율:.2f}%, 프로그램={프로그램_비율:.2f}%"
+                f"가격={curr_price:,.0f}, EMA={realtime_ema20:,.0f}, "
+                f"외국인={frgn_ratio:.2f}%, 프로그램={pgm_ratio:.2f}%"
             )
             return {
                 'action': 'BUY',
-                'price': 현재가,
-                'ema20': 실시간_ema20,
-                'frgn_ratio': 외국인_비율,
-                'pgm_ratio': 프로그램_비율,
-                'gap_ratio': 괴리율,
+                'price': curr_price,
+                'ema20': realtime_ema20,
+                'frgn_ratio': frgn_ratio,
+                'pgm_ratio': pgm_ratio,
+                'gap_ratio': gap_ratio,
                 'consecutive': consecutive
             }
 
         # 조건 충족 중이지만 아직 2회 미달
-        if 현재_신호 and consecutive == 1:
+        if current_signal and consecutive == 1:
             logger.info(
                 f"[{symbol}] 신호 대기 중: consecutive=1/2, "
-                f"가격={현재가:,.0f}, EMA={실시간_ema20:,.0f}"
+                f"가격={curr_price:,.0f}, EMA={realtime_ema20:,.0f}"
             )
 
         return None
@@ -224,7 +223,14 @@ class SingleEMAStrategy:
         acml_vol: int
     ) -> Dict:
         """
-        매도 신호 체크
+        매도 신호 체크 (추세/수급 기반, 익절 없음)
+
+        청산 우선순위:
+        1. 고정 손절 -3%
+        2. 수급 반전 (순매도 -2% 이상)
+        3. EMA 이탈 (2회 연속)
+        4. 수급 약화 (둘 다 1% 미만)
+        5. 추세 악화 (EMA 아래 악화)
 
         Args:
             redis_client: Redis 클라이언트
@@ -240,95 +246,155 @@ class SingleEMAStrategy:
         Returns:
             매도 신호 정보
         """
-        현재가 = float(current_price)
-        매수가 = float(entry_price)
-        실시간_ema20 = cls.get_realtime_ema20(df, 현재가)
+        curr_price = float(current_price)
+        entry = float(entry_price)
+        realtime_ema20 = cls.get_realtime_ema20(df, curr_price)
 
-        if 실시간_ema20 is None:
+        if realtime_ema20 is None:
             logger.warning(f"[{symbol}] EMA 계산 불가, HOLD 유지")
             return {"action": "HOLD", "reason": "EMA 계산 불가"}
 
-        수익률 = (현재가 - 매수가) / 매수가
-        현재_이탈폭 = 실시간_ema20 - 현재가
+        profit_rate = (curr_price - entry) / entry
+        frgn_ratio = (frgn_ntby_qty / acml_vol * 100) if acml_vol > 0 else 0
+        pgm_ratio = (pgtr_ntby_qty / acml_vol * 100) if acml_vol > 0 else 0
 
-        # === 손절 1: 하드 스톱 ===
+        # ========================================
+        # 1. 고정 손절 -3% (최우선)
+        # ========================================
+        if profit_rate <= cls.STOP_LOSS_FIXED:
+            logger.warning(f"[{symbol}] 고정 손절: {profit_rate*100:.2f}%")
+            return {"action": "SELL", "reason": f"고정손절 (손실: {profit_rate*100:.2f}%)"}
 
-        # 고정 손절 -3%
-        if 수익률 <= cls.STOP_LOSS_FIXED:
-            logger.warning(f"[{symbol}] 고정 손절 -3%: {수익률*100:.2f}%")
-            return {"action": "SELL", "reason": f"고정손절-3% (손실: {수익률*100:.2f}%)"}
+        # ========================================
+        # 2. 수급 반전 (순매도 전환)
+        # ========================================
+        if frgn_ratio <= cls.SUPPLY_REVERSAL_THRESHOLD or pgm_ratio <= cls.SUPPLY_REVERSAL_THRESHOLD:
+            logger.warning(
+                f"[{symbol}] 수급 반전: 외국인={frgn_ratio:.2f}%, 프로그램={pgm_ratio:.2f}%"
+            )
+            return {
+                "action": "SELL",
+                "reason": f"수급반전 (외국인={frgn_ratio:.1f}%, 프로그램={pgm_ratio:.1f}%)"
+            }
 
-        # EMA 대폭 이탈 (EMA -3%)
-        ema_deviation = (현재가 - 실시간_ema20) / 실시간_ema20
-        if ema_deviation <= cls.STOP_LOSS_EMA:
-            logger.warning(f"[{symbol}] EMA 대폭 이탈: {ema_deviation*100:.2f}%")
-            return {"action": "SELL", "reason": f"EMA대폭이탈 (EMA대비: {ema_deviation*100:.2f}%)"}
+        # ========================================
+        # 3. EMA 이탈 (2회 연속 확인)
+        # ========================================
+        ema_key = f"ema_breach:{position_id}"
+        below_ema = curr_price < realtime_ema20
 
-        # === 손절 2: 추세 기반 ===
+        if below_ema:
+            prev_ema_str = await redis_client.get(ema_key)
 
-        # EMA 아래지만 -3%까지는 아닌 구간
-        if 0 < 현재_이탈폭 < 실시간_ema20 * 0.03:
-            stop_key = f"stop:{position_id}"
-            prev_stop_str = await redis_client.get(stop_key)
+            if prev_ema_str:
+                prev_ema = json.loads(prev_ema_str)
+                breach_count = prev_ema.get('breach_count', 0) + 1
 
-            if prev_stop_str:
-                prev_stop = json.loads(prev_stop_str)
-                이전_가격 = prev_stop['price']
-                이전_이탈폭 = prev_stop['gap']
-
-                # 추세 악화 확인
-                가격_하락 = 현재가 < 이전_가격
-                이탈_증가 = 현재_이탈폭 > 이전_이탈폭
-
-                if 가격_하락 and 이탈_증가:
-                    logger.warning(f"[{symbol}] 추세 악화 손절")
-                    return {"action": "SELL", "reason": "추세악화"}
+                if breach_count >= cls.EMA_BREACH_REQUIRED:
+                    logger.warning(
+                        f"[{symbol}] EMA 이탈 {breach_count}회: "
+                        f"현재가={curr_price:,.0f}, EMA={realtime_ema20:,.0f}"
+                    )
+                    return {
+                        "action": "SELL",
+                        "reason": f"EMA이탈 (현재가={curr_price:,.0f} < EMA={realtime_ema20:,.0f})"
+                    }
                 else:
-                    # 회복/횡보 중 - 상태 업데이트
+                    # 카운트 증가
                     await redis_client.setex(
-                        stop_key,
-                        600,  # TTL 10분
+                        ema_key,
+                        600,
                         json.dumps({
-                            'gap': 현재_이탈폭,
-                            'price': 현재가,
+                            'breach_count': breach_count,
+                            'price': curr_price,
+                            'ema': realtime_ema20,
                             'time': datetime.now().isoformat()
                         })
                     )
-                    return {"action": "HOLD", "reason": "추세 회복 대기"}
+                    logger.info(f"[{symbol}] EMA 이탈 {breach_count}/{cls.EMA_BREACH_REQUIRED}회")
+                    return {"action": "HOLD", "reason": f"EMA 이탈 대기 ({breach_count}/2)"}
             else:
                 # 첫 이탈 기록
                 await redis_client.setex(
-                    stop_key,
+                    ema_key,
                     600,
                     json.dumps({
-                        'gap': 현재_이탈폭,
-                        'price': 현재가,
+                        'breach_count': 1,
+                        'price': curr_price,
+                        'ema': realtime_ema20,
                         'time': datetime.now().isoformat()
                     })
                 )
-                return {"action": "HOLD", "reason": "첫 이탈 기록"}
+                logger.info(f"[{symbol}] EMA 첫 이탈 기록")
+                return {"action": "HOLD", "reason": "EMA 이탈 대기 (1/2)"}
+        else:
+            # EMA 위로 복귀 - 카운트 리셋
+            await redis_client.delete(ema_key)
 
-        # === 익절 ===
+        # ========================================
+        # 4. 수급 약화 (둘 다 1% 미만)
+        # ========================================
+        if frgn_ratio < cls.SUPPLY_WEAK_THRESHOLD and pgm_ratio < cls.SUPPLY_WEAK_THRESHOLD:
+            logger.warning(
+                f"[{symbol}] 수급 약화: 외국인={frgn_ratio:.2f}%, 프로그램={pgm_ratio:.2f}%"
+            )
+            return {
+                "action": "SELL",
+                "reason": f"수급약화 (외국인={frgn_ratio:.1f}%, 프로그램={pgm_ratio:.1f}%)"
+            }
 
-        # 목표 익절 +8%
-        if 수익률 >= cls.PROFIT_TARGET:
-            logger.info(f"[{symbol}] 목표 익절 +8%: {수익률*100:.2f}%")
-            return {"action": "SELL", "reason": f"목표익절+8% (수익: {수익률*100:.2f}%)"}
+        # ========================================
+        # 5. 추세 악화 (EMA 아래에서 가격 하락 + 이탈폭 증가)
+        # ========================================
+        if below_ema:
+            current_gap = realtime_ema20 - curr_price
+            trend_key = f"trend:{position_id}"
+            prev_trend_str = await redis_client.get(trend_key)
 
-        # 수급 이탈 익절 (+3% 이상에서)
-        외국인_비율 = (frgn_ntby_qty / acml_vol * 100) if acml_vol > 0 else 0
-        프로그램_비율 = (pgtr_ntby_qty / acml_vol * 100) if acml_vol > 0 else 0
+            if prev_trend_str:
+                prev_trend = json.loads(prev_trend_str)
+                prev_price = prev_trend['price']
+                prev_gap = prev_trend['gap']
 
-        if (수익률 >= cls.PROFIT_MIN_FOR_EXIT and
-            외국인_비율 < cls.SUPPLY_EXIT_THRESHOLD and
-            프로그램_비율 < cls.SUPPLY_EXIT_THRESHOLD):
-            logger.info(f"[{symbol}] 수급 이탈 익절: {수익률*100:.2f}%")
-            return {"action": "SELL", "reason": f"수급이탈 (수익: {수익률*100:.2f}%)"}
+                price_declined = curr_price < prev_price
+                gap_increased = current_gap > prev_gap
 
-        # === 정상 상태 - stop 키 삭제 ===
-        stop_key = f"stop:{position_id}"
-        await redis_client.delete(stop_key)
+                if price_declined and gap_increased:
+                    logger.warning(f"[{symbol}] 추세 악화")
+                    return {"action": "SELL", "reason": "추세악화"}
+                else:
+                    # 상태 업데이트
+                    await redis_client.setex(
+                        trend_key,
+                        600,
+                        json.dumps({
+                            'gap': current_gap,
+                            'price': curr_price,
+                            'time': datetime.now().isoformat()
+                        })
+                    )
+            else:
+                # 첫 기록
+                await redis_client.setex(
+                    trend_key,
+                    600,
+                    json.dumps({
+                        'gap': current_gap,
+                        'price': curr_price,
+                        'time': datetime.now().isoformat()
+                    })
+                )
+        else:
+            # EMA 위면 추세 키 삭제
+            await redis_client.delete(f"trend:{position_id}")
 
+        # ========================================
+        # 정상 보유 (조건 유지)
+        # ========================================
+        logger.info(
+            f"[{symbol}] HOLD: 수익률={profit_rate*100:.2f}%, "
+            f"외국인={frgn_ratio:.2f}%, 프로그램={pgm_ratio:.2f}%"
+        )
         return {"action": "HOLD", "reason": "정상"}
 
     @classmethod
@@ -353,10 +419,10 @@ class SingleEMAStrategy:
         Returns:
             간단한 분석 결과
         """
-        현재가 = float(current_price)
-        실시간_ema20 = cls.get_realtime_ema20(df, 현재가)
+        curr_price = float(current_price)
+        realtime_ema20 = cls.get_realtime_ema20(df, curr_price)
 
-        if 실시간_ema20 is None:
+        if realtime_ema20 is None:
             return {
                 "signal": "hold",
                 "strength": None,
@@ -367,73 +433,86 @@ class SingleEMAStrategy:
             }
 
         # 기본 조건 체크
-        가격_조건 = 현재가 > 실시간_ema20
-        괴리율 = (현재가 - 실시간_ema20) / 실시간_ema20
-        괴리_조건 = 괴리율 <= cls.MAX_GAP_RATIO
+        price_condition = curr_price > realtime_ema20
+        gap_ratio = (curr_price - realtime_ema20) / realtime_ema20
+        gap_condition = gap_ratio <= cls.MAX_GAP_RATIO
 
-        외국인_비율 = (frgn_ntby_qty / acml_vol * 100) if acml_vol > 0 else 0
-        프로그램_비율 = (pgtr_ntby_qty / acml_vol * 100) if acml_vol > 0 else 0
+        frgn_ratio = (frgn_ntby_qty / acml_vol * 100) if acml_vol > 0 else 0
+        pgm_ratio = (pgtr_ntby_qty / acml_vol * 100) if acml_vol > 0 else 0
 
-        수급_조건 = (
-            (외국인_비율 >= cls.FRGN_STRONG_THRESHOLD or 프로그램_비율 >= cls.PGM_STRONG_THRESHOLD) and
-            (외국인_비율 + 프로그램_비율 >= cls.TOTAL_THRESHOLD)
+        supply_condition = (
+            (frgn_ratio >= cls.FRGN_STRONG_THRESHOLD or pgm_ratio >= cls.PGM_STRONG_THRESHOLD) and
+            (frgn_ratio + pgm_ratio >= cls.TOTAL_THRESHOLD)
         )
 
-        거래량_조건 = prdy_vrss_vol_rate >= (cls.VOLUME_RATIO_THRESHOLD * 100)
-        급등_필터 = prdy_ctrt <= (cls.MAX_SURGE_RATIO * 100)
+        volume_condition = prdy_vrss_vol_rate >= (cls.VOLUME_RATIO_THRESHOLD * 100)
+        surge_filtered = prdy_ctrt <= (cls.MAX_SURGE_RATIO * 100)
 
-        score = sum([가격_조건, 괴리_조건, 수급_조건, 거래량_조건, 급등_필터])
+        score = sum([price_condition, gap_condition, supply_condition, volume_condition, surge_filtered])
 
         conditions = {
-            "price_above_ema": 가격_조건,
-            "gap_ok": 괴리_조건,
-            "supply_strong": 수급_조건,
-            "volume_sufficient": 거래량_조건,
-            "surge_filtered": 급등_필터
+            "price_above_ema": price_condition,
+            "gap_ok": gap_condition,
+            "supply_strong": supply_condition,
+            "volume_sufficient": volume_condition,
+            "surge_filtered": surge_filtered
         }
 
         indicators = {
-            "ema_20": 실시간_ema20,
-            "gap_ratio": 괴리율,
-            "frgn_ratio": 외국인_비율,
-            "pgm_ratio": 프로그램_비율,
+            "ema_20": realtime_ema20,
+            "gap_ratio": gap_ratio,
+            "frgn_ratio": frgn_ratio,
+            "pgm_ratio": pgm_ratio,
         }
 
         # 포지션이 있는 경우 손익 계산
         if entry_price:
-            수익률 = (현재가 - float(entry_price)) / float(entry_price)
-            indicators["profit_rate"] = 수익률
+            profit_rate = (curr_price - float(entry_price)) / float(entry_price)
+            indicators["profit_rate"] = profit_rate
 
             # 간단한 매도 조건 체크
-            if 수익률 <= cls.STOP_LOSS_FIXED:
+            # 1. 고정 손절
+            if profit_rate <= cls.STOP_LOSS_FIXED:
                 return {
                     "signal": "sell",
                     "strength": "strong",
                     "score": score,
                     "conditions": conditions,
                     "indicators": indicators,
-                    "reason": f"손절: 고정 -3% (현재 {수익률*100:.2f}%)"
+                    "reason": f"손절: 고정 -3% (현재 {profit_rate*100:.2f}%)"
                 }
 
-            ema_deviation = (현재가 - 실시간_ema20) / 실시간_ema20
-            if ema_deviation <= cls.STOP_LOSS_EMA:
+            # 2. 수급 반전
+            if frgn_ratio <= cls.SUPPLY_REVERSAL_THRESHOLD or pgm_ratio <= cls.SUPPLY_REVERSAL_THRESHOLD:
                 return {
                     "signal": "sell",
                     "strength": "strong",
                     "score": score,
                     "conditions": conditions,
                     "indicators": indicators,
-                    "reason": f"손절: EMA -3% 이탈 (현재 {ema_deviation*100:.2f}%)"
+                    "reason": f"수급 반전 (외국인={frgn_ratio:.1f}%, 프로그램={pgm_ratio:.1f}%)"
                 }
 
-            if 수익률 >= cls.PROFIT_TARGET:
+            # 3. EMA 이탈 (Redis 없이는 연속 확인 불가)
+            if curr_price < realtime_ema20:
                 return {
                     "signal": "sell",
-                    "strength": "strong",
+                    "strength": "weak",  # Redis 확인 필요
                     "score": score,
                     "conditions": conditions,
                     "indicators": indicators,
-                    "reason": f"익절: +8% 목표 (현재 {수익률*100:.2f}%)"
+                    "reason": f"EMA 이탈 가능성 (Redis 확인 필요)"
+                }
+
+            # 4. 수급 약화
+            if frgn_ratio < cls.SUPPLY_WEAK_THRESHOLD and pgm_ratio < cls.SUPPLY_WEAK_THRESHOLD:
+                return {
+                    "signal": "sell",
+                    "strength": "medium",
+                    "score": score,
+                    "conditions": conditions,
+                    "indicators": indicators,
+                    "reason": f"수급 약화 (외국인={frgn_ratio:.1f}%, 프로그램={pgm_ratio:.1f}%)"
                 }
 
         # 진입 신호 (단, Redis 없이는 연속 확인 불가)
