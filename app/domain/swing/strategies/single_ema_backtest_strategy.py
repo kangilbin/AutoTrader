@@ -88,6 +88,8 @@ class SingleEMABacktestStrategy(BacktestStrategy):
         # 상태 추적 변수
         entry_consecutive = 0  # 진입 조건 연속 충족 횟수
         ema_breach_count = 0  # EMA 이탈 연속 횟수
+        buy_count = 0  # 매수 횟수 (분할 매수용)
+        sell_count = 0  # 매도 횟수 (분할 매도용)
         entry_price = None  # 진입가
         prev_gap = None  # 이전 EMA 이탈폭 (추세 악화 체크용)
 
@@ -110,41 +112,8 @@ class SingleEMABacktestStrategy(BacktestStrategy):
             total_quantity = total_bought - total_sold
             has_position = total_quantity > 0
 
-            # === 포지션 없을 때: 진입 신호 체크 ===
-            if not has_position:
-                entry_signal = self._check_entry_conditions(row, prev_row)
-
-                if entry_signal:
-                    entry_consecutive += 1
-                else:
-                    entry_consecutive = 0
-
-                # 2일 연속 조건 충족 시 매수
-                if entry_consecutive >= self.CONSECUTIVE_REQUIRED and current_capital > 0:
-                    buy_amount = total_capital * buy_ratio
-                    buy_quantity = int(buy_amount / current_price)
-                    executed_amount = buy_quantity * current_price
-
-                    if buy_quantity > 0:
-                        current_capital -= executed_amount
-                        entry_price = current_price
-                        entry_consecutive = 0
-                        ema_breach_count = 0
-                        prev_gap = None
-
-                        trades.append({
-                            "date": current_date,
-                            "action": "BUY",
-                            "quantity": buy_quantity,
-                            "price": float(current_price),
-                            "amount": float(executed_amount),
-                            "current_capital": float(current_capital),
-                            "reason": f"매수 신호 ({self.CONSECUTIVE_REQUIRED}일 연속, "
-                                      f"OBV z={row['obv_z']:.2f}, 괴리율={row['gap_ratio']*100:.2f}%)",
-                        })
-
-            # === 포지션 있을 때: 청산 신호 체크 ===
-            else:
+            # === 1단계: 청산 신호 체크 (포지션 있을 때) ===
+            if has_position:
                 exit_signal, exit_reason = self._check_exit_conditions(
                     row, prev_row, entry_price, ema_breach_count, prev_gap
                 )
@@ -160,29 +129,99 @@ class SingleEMABacktestStrategy(BacktestStrategy):
 
                 if exit_signal:
                     curr_qty, curr_avg_cost = self._calculate_position_state(trades)
-                    sell_quantity = curr_qty
-                    sell_amount = sell_quantity * current_price
-                    realized_pnl = (current_price - curr_avg_cost) * sell_quantity
-                    realized_pnl_pct = ((current_price / curr_avg_cost) - 1) * 100 if curr_avg_cost > 0 else 0.0
 
-                    current_capital += sell_amount
+                    # 분할 매도 로직: 첫 매도는 sell_ratio만큼, 이후는 전량
+                    if sell_count == 0:
+                        sell_quantity = int(curr_qty * sell_ratio)
+                    else:
+                        sell_quantity = curr_qty
 
-                    trades.append({
-                        "date": current_date,
-                        "action": "SELL",
-                        "quantity": sell_quantity,
-                        "price": float(current_price),
-                        "amount": float(sell_amount),
-                        "current_capital": float(current_capital),
-                        "realized_pnl": float(realized_pnl),
-                        "realized_pnl_pct": round(realized_pnl_pct, 2),
-                        "reason": exit_reason,
-                    })
+                    # 매도 수량이 0보다 클 때만 실행
+                    if sell_quantity > 0:
+                        sell_amount = sell_quantity * current_price
+                        realized_pnl = (current_price - curr_avg_cost) * sell_quantity
+                        realized_pnl_pct = ((current_price / curr_avg_cost) - 1) * 100 if curr_avg_cost > 0 else 0.0
 
-                    # 상태 리셋
-                    entry_price = None
-                    ema_breach_count = 0
-                    prev_gap = None
+                        current_capital += sell_amount
+
+                        trades.append({
+                            "date": current_date,
+                            "action": "SELL",
+                            "quantity": sell_quantity,
+                            "price": float(current_price),
+                            "amount": float(sell_amount),
+                            "current_capital": float(current_capital),
+                            "realized_pnl": float(realized_pnl),
+                            "realized_pnl_pct": round(realized_pnl_pct, 2),
+                            "reason": f"{exit_reason} ({sell_count + 1}차 매도)",
+                        })
+
+                        # 매도 횟수 증가
+                        sell_count += 1
+
+                    # 포지션 완전 청산 시에만 상태 리셋
+                    remaining_qty = curr_qty - sell_quantity
+                    if remaining_qty <= 0:
+                        entry_price = None
+                        ema_breach_count = 0
+                        prev_gap = None
+                        sell_count = 0
+                        buy_count = 0  # 매수 횟수도 리셋
+
+            # === 2단계: 진입 신호 체크 (청산 후 포지션 재계산) ===
+            # 청산 후 포지션 상태 다시 확인
+            total_bought = sum(t["quantity"] for t in trades if t["action"] == "BUY")
+            total_sold = sum(t["quantity"] for t in trades if t["action"] == "SELL")
+            total_quantity = total_bought - total_sold
+            has_position = total_quantity > 0
+
+            # 포지션 없거나 2차 매수 가능한 경우
+            can_buy = (not has_position and buy_count == 0) or (has_position and buy_count < 2)
+
+            if can_buy and current_capital > 0:
+                entry_signal = self._check_entry_conditions(row, prev_row)
+
+                if entry_signal:
+                    entry_consecutive += 1
+                else:
+                    entry_consecutive = 0
+
+                # 조건 충족 시 매수
+                if entry_consecutive >= self.CONSECUTIVE_REQUIRED:
+                    # 분할 매수 로직: 1차는 buy_ratio만큼, 2차는 전량
+                    if buy_count == 0:
+                        buy_amount = current_capital * buy_ratio  # 1차: 비율만큼
+                    else:
+                        buy_amount = current_capital  # 2차: 남은 현금 전량
+
+                    buy_quantity = int(buy_amount / current_price)
+                    executed_amount = buy_quantity * current_price
+
+                    if buy_quantity > 0:
+                        current_capital -= executed_amount
+
+                        # 1차 매수 시에만 진입가 설정
+                        if buy_count == 0:
+                            entry_price = current_price
+                            sell_count = 0  # 매도 횟수 리셋
+
+                        entry_consecutive = 0
+                        ema_breach_count = 0
+                        prev_gap = None
+
+                        trades.append({
+                            "date": current_date,
+                            "action": "BUY",
+                            "quantity": buy_quantity,
+                            "price": float(current_price),
+                            "amount": float(executed_amount),
+                            "current_capital": float(current_capital),
+                            "reason": f"매수 신호 ({buy_count + 1}차, "
+                                      f"OBV z={row['obv_z']:.2f}, 괴리율={row['gap_ratio']*100:.2f}%)",
+                        })
+
+                        # 매수 횟수 증가
+                        buy_count += 1
 
         # 결과 포맷팅
         result = self._format_result(prices_df, params, trades, current_capital)
