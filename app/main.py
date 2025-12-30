@@ -25,6 +25,7 @@ from app.domain.routers import (
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):

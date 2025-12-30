@@ -186,7 +186,3 @@ app/
 ### 주식
 - `POST /stocks/order` - 주식 주문
 - `WebSocket /kis_socket` - 실시간 시세
-
-## 라이선스
-
-MIT License
