@@ -15,7 +15,7 @@ class StrategyFactory:
     _strategies: Dict[str, BacktestStrategy] = {
         "A": EMAStrategy(),
         "B": IchimokuStrategy(),
-        "C": SingleEMABacktestStrategy(),
+        "S": SingleEMABacktestStrategy(),
     }
     
     @classmethod

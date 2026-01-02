@@ -29,7 +29,7 @@ async def compute_backtest_offloaded(prices_df: pd.DataFrame, params: dict) -> d
     Returns:
         백테스트 결과
     """
-    swing_type = params.get("swing_type", "A")
+    swing_type = params.get("swing_type", "S")
 
     # 전략 팩토리에서 전략 객체 가져오기
     strategy = StrategyFactory.get_strategy(swing_type)
