@@ -28,5 +28,3 @@ async def schedule_start():
     scheduler.add_job(day_collect_job, CronTrigger(minute='31', hour='15', day_of_week='0-4'))
 
     scheduler.start()
-
-

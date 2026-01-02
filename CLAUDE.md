@@ -52,7 +52,9 @@ app/
 ├── main.py                  # FastAPI 앱 진입점, 라우터 등록
 ├── common/                  # 공통 인프라
 │   ├── database.py          # SQLAlchemy 비동기 설정, Database 싱글톤
-│   └── dependencies.py      # FastAPI 의존성 (get_db, get_current_user)
+│   ├── dependencies.py      # FastAPI 의존성 (get_db, get_current_user)
+│   ├── redis.py             # Redis 연결 관리, 싱글톤
+│   └── scheduler.py         # APScheduler 크론 작업 설정
 ├── exceptions/              # 예외 처리 (상세: exceptions/README.md)
 │   ├── base.py              # AppError 베이스 클래스
 │   ├── domain.py            # 도메인 예외 (4xx)
@@ -62,38 +64,39 @@ app/
 ├── core/                    # 앱 설정/유틸리티
 │   ├── config.py            # Pydantic Settings (환경변수)
 │   ├── response.py          # 표준 API 응답 헬퍼
-│   ├── security.py          # 암호화 유틸 (AES, 해싱)
+│   ├── security.py          # 암호화 유틸 (AES, 해싱, JWT)
 │   └── health.py            # 헬스체크 로직
 ├── external/                # 외부 API 통합
-│   └── kis_api.py           # KIS Open API 호출 (시세, 주문, 잔고)
+│   ├── kis_api.py           # KIS Open API 호출 (시세, 주문, 잔고)
+│   ├── http_client.py       # 범용 HTTP 클라이언트 (httpx 래퍼)
+│   └── headers.py           # KIS API 헤더 생성
 ├── infrastructure/
 │   └── database/
 │       └── tables.py        # SQLAlchemy 테이블 정의
-├── module/
-│   ├── schedules.py         # APScheduler 크론 작업
-│   └── redis_connection.py  # Redis 싱글톤
 ├── routers/                 # 비도메인 라우터
 │   ├── backtest_router.py   # 백테스팅 API
 │   └── health_router.py     # 헬스체크 API
-├── swing/                   # 스윙 매매 도메인
-│   ├── entity.py            # SwingTrade, EmaOption 엔티티
-│   ├── schemas.py           # Request/Response DTO
-│   ├── repository.py        # 데이터 접근 계층
-│   ├── service.py           # 비즈니스 로직
-│   ├── router.py            # API 엔드포인트
-│   ├── strategies/          # 매매 전략 구현
-│   │   ├── base_strategy.py
-│   │   ├── ema_strategy.py
-│   │   └── ichimoku_strategy.py
-│   ├── tech_analysis.py     # 기술 지표 계산
-│   ├── auto_swing_batch.py  # 정기 매매 배치
-│   └── backtest/            # 백테스팅 기능
-└── [domain]/                # user, account, auth, stock, order
-    ├── entity.py            # 도메인 엔티티 (비즈니스 로직 포함)
-    ├── schemas.py           # Pydantic DTO (Request/Response)
-    ├── repository.py        # 데이터 접근 계층
-    ├── service.py           # 비즈니스 로직 + 트랜잭션 관리
-    └── router.py            # API 엔드포인트
+├── domain/                  # 도메인별 모듈
+│   ├── routers.py           # 라우터 통합 (전체 등록)
+│   ├── swing/               # 스윙 매매 도메인
+│   │   ├── entity.py        # SwingTrade, EmaOption 엔티티
+│   │   ├── schemas.py       # Request/Response DTO
+│   │   ├── repository.py    # 데이터 접근 계층
+│   │   ├── service.py       # 비즈니스 로직
+│   │   ├── router.py        # API 엔드포인트
+│   │   ├── strategies/      # 매매 전략 구현
+│   │   │   ├── base_strategy.py
+│   │   │   ├── ema_strategy.py
+│   │   │   └── ichimoku_strategy.py
+│   │   ├── tech_analysis.py # 기술 지표 계산
+│   │   ├── auto_swing_batch.py  # 정기 매매 배치
+│   │   └── backtest/        # 백테스팅 기능
+│   └── [domain]/            # user, account, auth, stock, order
+│       ├── entity.py        # 도메인 엔티티 (비즈니스 로직 포함)
+│       ├── schemas.py       # Pydantic DTO (Request/Response)
+│       ├── repository.py    # 데이터 접근 계층
+│       ├── service.py       # 비즈니스 로직 + 트랜잭션 관리
+│       └── router.py        # API 엔드포인트
 ```
 
 ### 계층별 책임

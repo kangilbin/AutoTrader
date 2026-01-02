@@ -5,7 +5,7 @@ from typing import Any, Dict, Optional
 from sqlalchemy import text
 
 from app.common.database import Database
-from app.module.redis_connection import Redis
+from app.common.redis import Redis
 
 
 async def _check_redis(timeout_sec: float) -> Dict[str, Any]:

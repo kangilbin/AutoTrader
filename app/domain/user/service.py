@@ -22,7 +22,7 @@ from app.exceptions import (
     DuplicateError,
     DatabaseError,
 )
-from app.module.redis_connection import get_redis
+from app.common.redis import get_redis
 
 logger = logging.getLogger(__name__)
 settings = get_settings()

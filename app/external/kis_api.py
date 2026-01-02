@@ -5,9 +5,10 @@ from datetime import datetime, timedelta
 import logging
 
 from app.exceptions import ExternalServiceError
-from app.core import get_settings
+from app.core.config import get_settings
 from app.external.headers import kis_headers, kis_error_message
-from app.module import fetch, get_redis
+from app.external.http_client import fetch
+from app.common.redis import get_redis
 from app.domain.order.entity import Order, ModifyOrder
 from typing import List, Optional
 

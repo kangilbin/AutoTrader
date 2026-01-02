@@ -57,4 +57,3 @@ async def fetch(method: str, url: str, service_name: str = "External API", **kwa
             status_code=503,
             original_error=e
         )
-
