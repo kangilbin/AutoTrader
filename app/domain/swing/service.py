@@ -102,8 +102,10 @@ class SwingService:
             buy_list = await get_stock_balance(user_id)
 
             swing_dict = {swing.ST_CODE: swing for swing in swing_list}
+            buy_dict = {item.get("pdno"): item for item in buy_list if item.get("pdno")}
             results = []
 
+            # 1. buy_list 기준으로 처리 (기존 로직)
             for buy_item in buy_list:
                 st_code = buy_item.get("pdno")
                 if not st_code:
@@ -145,7 +147,26 @@ class SwingService:
                     }
                     results.append(result_data)
 
-                await self.db.commit()
+            # 2. swing_list에만 있는 항목 추가
+            for swing in swing_list:
+                if swing.ST_CODE not in buy_dict:
+                    init_amount = swing.INIT_AMOUNT if swing.INIT_AMOUNT else 1
+                    rate = float((swing.CUR_AMOUNT - swing.INIT_AMOUNT) / init_amount * 100)
+                    result_data = {
+                        "SWING_ID": swing.SWING_ID,
+                        "ST_CODE": swing.ST_CODE,
+                        "ACCOUNT_NO": swing.ACCOUNT_NO,
+                        "USE_YN": swing.USE_YN,
+                        "INIT_AMOUNT": swing.INIT_AMOUNT,
+                        "CUR_AMOUNT": swing.CUR_AMOUNT,
+                        "SWING_TYPE": swing.SWING_TYPE,
+                        "ST_NM": None,
+                        "QTY": 0,
+                        "RATE": rate,
+                    }
+                    results.append(result_data)
+
+            await self.db.commit()
             return results
 
         except SQLAlchemyError as e:
