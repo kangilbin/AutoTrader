@@ -77,6 +77,7 @@ class StockHistoryModel(Base):
     STCK_LWPR = Column(DECIMAL(15, 2), nullable=False, comment='주식 최저가')
     STCK_CLPR = Column(DECIMAL(15, 2), nullable=False, comment='주식 종가')
     ACML_VOL = Column(Integer, nullable=False, comment='누적 거래량')
+    FRGN_NTBY_QTY = Column(Integer, nullable=True, comment='외국인 순매수 수량')
     REG_DT = Column(DateTime, default=datetime.now, nullable=False, comment='등록일')
     MOD_DT = Column(DateTime, comment='수정일')
 
