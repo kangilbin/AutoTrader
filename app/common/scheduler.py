@@ -24,13 +24,7 @@ async def schedule_start():
         )
     )
 
-    # 15시 00분, 05분 추가 실행 (장 마감 직전/직후)
-    scheduler.add_job(
-        trade_job,
-        CronTrigger(minute='0,5', hour='15', day_of_week='mon-fri')
-    )
-
     # 일일 데이터 수집 (장 마감 후, 기존 유지)
-    scheduler.add_job(day_collect_job, CronTrigger(minute='31', hour='15', day_of_week='0-4'))
+    scheduler.add_job(day_collect_job, CronTrigger(minute='35', hour='15', day_of_week='0-4'))
 
     scheduler.start()
