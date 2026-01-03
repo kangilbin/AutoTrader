@@ -24,7 +24,6 @@ async def trade_job():
     - 단일 20EMA 전략
     """
     db = await Database.get_session()
-    redis_client = None
 
     try:
         swing_service = SwingService(db)
@@ -284,76 +283,20 @@ async def day_collect_job():
 
 async def ema_cache_warmup_job():
     """
-    EMA 캐시 워밍업 배치
+    EMA 캐시 워밍업 배치 (스케줄러에서 호출)
+
     - 실행 시점: 매일 08:30 (장 시작 전)
     - 대상: SWING_TRADE.USE_YN = 'Y'인 종목
     - 작업: 과거 120일 데이터로 EMA20 초기 계산 → Redis 저장
     """
-    import talib as ta
-    import numpy as np
-    from sqlalchemy import text
-
-    logger.info("=== EMA 캐시 워밍업 시작 ===")
-
     db = await Database.get_session()
-    redis_client = None
 
     try:
-        redis_client = await Redis.get_client()
+        redis_client = await Redis.get_connection()
+        swing_service = SwingService(db)
 
-        # 1. 활성 종목 조회 (USE_YN='Y')
-        query = text("""
-            SELECT DISTINCT ST_CODE
-            FROM SWING_TRADE
-            WHERE USE_YN = 'Y'
-        """)
-        result = await db.execute(query)
-        active_stocks = result.fetchall()
-
-        logger.info(f"활성 종목 수: {len(active_stocks)}개")
-
-        # 2. 각 종목별 EMA 초기화
-        stock_service = StockService(db)
-        success_count = 0
-        fail_count = 0
-
-        for row in active_stocks:
-            st_code = row.ST_CODE
-
-            try:
-                # 과거 120일 데이터 조회
-                start_date = datetime.now() - timedelta(days=120)
-                price_history = await stock_service.get_stock_history(st_code, start_date)
-
-                if not price_history or len(price_history) < 20:
-                    logger.warning(f"[{st_code}] 데이터 부족: {len(price_history) if price_history else 0}일")
-                    fail_count += 1
-                    continue
-
-                # EMA20 계산
-                df = pd.DataFrame(price_history)
-                close_prices = df["STCK_CLPR"].values.astype(float)
-                ema_array = ta.EMA(close_prices, timeperiod=20)
-
-                if len(ema_array) == 0 or np.isnan(ema_array[-1]):
-                    logger.warning(f"[{st_code}] EMA 계산 실패")
-                    fail_count += 1
-                    continue
-
-                ema20 = float(ema_array[-1])
-
-                # Redis 저장 (TTL: 7일)
-                cache_key = f"ema20:{st_code}"
-                await redis_client.setex(cache_key, 604800, str(ema20))
-
-                logger.info(f"[{st_code}] EMA20 초기화 완료: {ema20:.2f} (데이터: {len(price_history)}일)")
-                success_count += 1
-
-            except Exception as e:
-                logger.error(f"[{st_code}] EMA 초기화 실패: {e}")
-                fail_count += 1
-
-        logger.info(f"=== EMA 캐시 워밍업 완료: 성공 {success_count}, 실패 {fail_count} ===")
+        result = await swing_service.warmup_ema_cache(redis_client)
+        logger.info(f"EMA 캐시 워밍업 결과: {result}")
 
     except Exception as e:
         logger.error(f"EMA 캐시 워밍업 실패: {e}", exc_info=True)

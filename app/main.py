@@ -9,6 +9,7 @@ from app.common.database import Database
 from app.common.redis import Redis
 from app.common.scheduler import schedule_start
 from app.exceptions.handlers import register_exception_handlers
+from app.domain.swing.service import SwingService
 
 # 라우터 임포트
 from app.domain.routers import (
@@ -25,7 +26,6 @@ from app.domain.routers import (
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -35,6 +35,10 @@ async def lifespan(app: FastAPI):
     # 시작 시 리소스 초기화
     await Database.connect()
     await Redis.connect()
+
+    # EMA 캐시 워밍업 (애플리케이션 시작 시 1회 실행)
+    await _warmup_ema_cache()
+
     await schedule_start()
 
     logger.info("AutoTrader API started successfully")
@@ -47,6 +51,24 @@ async def lifespan(app: FastAPI):
         await Database.disconnect()
         await Redis.disconnect()
         logger.info("AutoTrader API shutdown complete")
+
+
+async def _warmup_ema_cache():
+    """EMA 캐시 워밍업 (시작 시 1회)"""
+    db = None
+    try:
+        db = await Database.get_session()
+        redis_client = await Redis.get_connection()
+        swing_service = SwingService(db)
+
+        result = await swing_service.warmup_ema_cache(redis_client)
+        logger.info(f"EMA 캐시 워밍업 완료: {result}")
+
+    except Exception as e:
+        logger.warning(f"EMA 캐시 워밍업 실패 (서비스는 계속 실행): {e}")
+    finally:
+        if db:
+            await db.close()
 
 
 app = FastAPI(
