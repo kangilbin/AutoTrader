@@ -7,12 +7,11 @@ from datetime import datetime, timedelta
 import pandas as pd
 from decimal import Decimal
 
-from app.external.kis_api import get_target_price
+from app.external.kis_api import get_target_price, get_inquire_price
 from app.common.database import Database
 from app.domain.swing.service import SwingService
 from app.domain.stock.service import StockService
 from app.domain.swing.strategies.single_ema_strategy import SingleEMAStrategy
-from app.domain.swing.mock_data_service import MockMarketDataService
 from app.common.redis import Redis
 
 logger = logging.getLogger(__name__)
@@ -28,7 +27,6 @@ async def trade_job():
     try:
         swing_service = SwingService(db)
         stock_service = StockService(db)
-        mock_service = MockMarketDataService()
 
         # Redis 연결
         redis_client = await Redis.get_connection()
@@ -44,7 +42,6 @@ async def trade_job():
                     swing,
                     stock_service,
                     swing_service,
-                    mock_service,
                     redis_client,
                     db
                 )
@@ -67,7 +64,6 @@ async def process_single_swing(
     swing,
     stock_service: StockService,
     swing_service: SwingService,
-    mock_service: MockMarketDataService,
     redis_client,
     db
 ):
@@ -78,7 +74,6 @@ async def process_single_swing(
         swing: SWING_TRADE 레코드 (Raw SQL result)
         stock_service: StockService 인스턴스
         swing_service: SwingService 인스턴스
-        mock_service: MockMarketDataService 인스턴스
         redis_client: Redis 클라이언트
         db: Database session
     """
@@ -104,8 +99,8 @@ async def process_single_swing(
     try:
         # KIS API를 통해 현재가 및 당일 데이터 조회
         # 관리자 계정 또는 해당 사용자의 API 키 사용
-        # 여기서는 간단히 get_target_price 사용 (실제로는 get_inquire_price 권장)
-        current_price_data = await get_target_price(st_code)
+        # 여기서는 간단히 get_inquire_price 사용 (실제로는 get_inquire_price 권장)
+        current_price_data = await get_inquire_price("mgnt", st_code)
 
         if not current_price_data:
             logger.warning(f"[{st_code}] 현재가 조회 실패")
@@ -136,15 +131,9 @@ async def process_single_swing(
         logger.error(f"[{st_code}] 현재가 조회 실패: {e}")
         return
 
-    # 1.3 외국인/기관 순매수 데이터 (Mock)
-    net_buying = mock_service.get_net_buying_data(
-        st_code,
-        float(current_price),
-        int(today_data.get("ACML_VOL", 0))
-    )
-
-    frgn_ntby_qty = net_buying.get("frgn_ntby_qty", 0)
-    pgtr_ntby_qty = net_buying.get("pgtr_ntby_qty", 0)
+    # 1.3 외국인/기관 순매수 데이터 (실제 API)
+    frgn_ntby_qty = int(current_price_data.get("frgn_ntby_qty", 0))
+    pgtr_ntby_qty = int(current_price_data.get("pgtr_ntby_qty", 0))
 
     # === 2. 전략 분석 ===
 
