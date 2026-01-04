@@ -59,7 +59,7 @@ class StockModel(Base):
 
     ST_CODE = Column(String(50), nullable=False, comment='종목 코드', primary_key=True)
     SD_CODE = Column(String(50), nullable=False, comment='주식 표준 코드')
-    NAME = Column(String(100), nullable=False, comment='종목명')
+    ST_NM = Column(String(100), nullable=False, comment='종목명')
     DATA_YN = Column(CHAR(1), nullable=False, default='N', comment='데이터 적재 여부')
     DEL_YN = Column(CHAR(1), nullable=False, default='N', comment='상장 폐지 여부')
     REG_DT = Column(DateTime, default=datetime.now, nullable=False, comment='등록일')
@@ -95,7 +95,9 @@ class SwingModel(Base):
     SWING_TYPE = Column(CHAR(1), nullable=False, comment='스윙 타입 (A: 이평선, B: 일목균형표)')
     BUY_RATIO = Column(Integer, nullable=False, comment='매수 비율')
     SELL_RATIO = Column(Integer, nullable=False, comment='매도 비율')
-    SIGNAL = Column(Integer, nullable=False, default=0, comment='매매 신호 상태 (0:대기, 1:1차매수, 2:2차매수, 3:매도)')
+    SIGNAL = Column(Integer, nullable=False, default=0, comment='매매 신호 상태 (0:대기, 1:1차매수, 2:2차매수, 3:1차매도)')
+    ENTRY_PRICE = Column(DECIMAL(15, 2), nullable=True, comment='평균 매수 단가')
+    HOLD_QTY = Column(Integer, nullable=True, default=0, comment='보유 수량')
     REG_DT = Column(DateTime, default=datetime.now, nullable=False, comment='등록일')
     MOD_DT = Column(DateTime, comment='수정일')
 
