@@ -11,7 +11,7 @@ from app.domain.account.repository import AccountRepository
 from app.domain.account.entity import Account
 from app.domain.account.schemas import AccountCreateRequest, AccountResponse
 from app.exceptions import ValidationError, NotFoundError, DatabaseError
-from app.module.redis_connection import get_redis
+from app.common.redis import get_redis
 
 logger = logging.getLogger(__name__)
 

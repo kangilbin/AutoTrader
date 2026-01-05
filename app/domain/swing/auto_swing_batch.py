@@ -13,7 +13,7 @@ from app.domain.swing.service import SwingService
 from app.domain.stock.service import StockService
 from app.domain.swing.strategies.single_ema_strategy import SingleEMAStrategy
 from app.domain.swing.mock_data_service import MockMarketDataService
-from app.module.redis_connection import Redis
+from app.common.redis import Redis
 
 logger = logging.getLogger(__name__)
 

@@ -11,7 +11,7 @@ import json
 from app.domain.stock.service import StockService
 from app.domain.swing.strategy_factory import StrategyFactory
 from app.domain.swing.schemas import SwingCreateRequest
-from app.module.redis_connection import get_redis
+from app.common.redis import get_redis
 
 # ===== 백테스트 잡 실행 환경 =====
 _EXECUTOR = ThreadPoolExecutor(max_workers=min(4, (os.cpu_count() or 2)))
