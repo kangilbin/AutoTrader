@@ -7,3 +7,10 @@ __pycache__/
 *.pyc
 auto_trader.egg-info/
 app/domain/swing/auto_swing_batch.py
+
+# 테스트 관련
+.pytest_cache/
+.coverage
+htmlcov/
+*.cover
+.hypothesis/
