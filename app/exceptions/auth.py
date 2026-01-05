@@ -63,3 +63,31 @@ class AuthorizationError(AppError):
             detail=detail or {"required_role": required_role} if required_role else None
         )
         self.required_role = required_role
+
+
+class DeviceNotAllowedError(AppError):
+    """
+    허용되지 않은 디바이스
+
+    사용처:
+    - X-Device-ID 헤더 누락
+    - 등록되지 않은 디바이스 ID
+    - 비활성화된 디바이스
+
+    HTTP: 403 Forbidden
+    """
+
+    def __init__(
+        self,
+        device_id: Optional[str] = None,
+        *,
+        message: str = "허용되지 않은 디바이스입니다",
+        detail: Optional[Any] = None
+    ):
+        super().__init__(
+            message,
+            error_code="DEVICE_NOT_ALLOWED",
+            status_code=403,
+            detail=detail or {"device_id": device_id} if device_id else None
+        )
+        self.device_id = device_id
