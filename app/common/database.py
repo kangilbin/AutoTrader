@@ -127,6 +127,18 @@ class TradeHistoryModel(Base):
     REG_DT = Column(DateTime, default=datetime.now, nullable=False, comment='등록일')
 
 
+class DeviceModel(Base):
+    """디바이스 화이트리스트 테이블"""
+    __tablename__ = "DEVICE"
+
+    DEVICE_ID = Column(String(100), primary_key=True, comment='디바이스 ID')
+    DEVICE_NAME = Column(String(100), nullable=False, comment='디바이스 이름')
+    USER_ID = Column(String(50), nullable=True, comment='사용자 ID (NULL=공용)')
+    ACTIVE_YN = Column(CHAR(1), default='Y', nullable=False, comment='활성 여부')
+    REG_DT = Column(DateTime, default=datetime.now, nullable=False, comment='등록일')
+    MOD_DT = Column(DateTime, comment='수정일')
+
+
 # ==================== Database Connection ====================
 
 class Database:
