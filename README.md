@@ -111,29 +111,43 @@ docker run -p 8000:8000 auto-trader
 
 ```
 app/
-├── main.py                 # FastAPI 앱 진입점
-├── api/                    # 외부 API 통합
-│   ├── kis_open_api.py     # KIS OAuth 토큰 관리
-│   └── local_stock_api.py  # KIS 국내 주식 API
-├── infrastructure/
-│   ├── database/           # DB 연결 및 테이블 정의
-│   └── security/           # JWT, 암호화 유틸
-├── module/
-│   ├── schedules.py        # APScheduler 작업
-│   └── redis_connection.py # Redis 연결
-├── swing/                  # 스윙 매매 도메인
-│   ├── strategies/         # 매매 전략
-│   │   ├── base_strategy.py
-│   │   ├── ema_strategy.py
-│   │   └── ichimoku_strategy.py
-│   ├── tech_analysis.py    # 기술 지표 계산
-│   ├── auto_swing_batch.py # 자동 매매 배치
-│   └── backtest/           # 백테스팅
-├── user/                   # 사용자 도메인
-├── account/                # 계좌 도메인
-├── auth/                   # 인증 도메인
-├── stock/                  # 주식 도메인
-└── order/                  # 주문 도메인
+├── main.py                  # FastAPI 앱 진입점
+├── common/                  # 공통 인프라
+│   ├── database.py          # DB 연결 관리
+│   ├── redis.py             # Redis 연결 관리
+│   ├── scheduler.py         # 스케줄러 설정
+│   └── dependencies.py      # FastAPI 의존성
+├── core/                    # 앱 설정 및 유틸리티
+│   ├── config.py            # 환경 변수 설정
+│   ├── security.py          # JWT, 암호화
+│   ├── response.py          # API 응답 헬퍼
+│   └── health.py            # 헬스체크
+├── external/                # 외부 API 통합
+│   ├── kis_api.py           # KIS API 호출
+│   ├── http_client.py       # HTTP 클라이언트
+│   └── headers.py           # API 헤더 생성
+├── exceptions/              # 예외 처리
+│   ├── domain.py            # 도메인 예외
+│   ├── infrastructure.py    # 인프라 예외
+│   ├── auth.py              # 인증 예외
+│   └── handlers.py          # 전역 핸들러
+├── domain/                  # 비즈니스 도메인
+│   ├── swing/               # 스윙 매매
+│   │   ├── entity.py        # 도메인 엔티티
+│   │   ├── repository.py    # 데이터 접근
+│   │   ├── service.py       # 비즈니스 로직
+│   │   ├── router.py        # API 엔드포인트
+│   │   ├── strategies/      # 매매 전략
+│   │   ├── auto_swing_batch.py # 자동 매매
+│   │   └── backtest/        # 백테스팅
+│   ├── user/                # 사용자 관리
+│   ├── account/             # 계좌 관리
+│   ├── auth/                # 인증키 관리
+│   ├── stock/               # 주식 데이터
+│   └── order/               # 주문 처리
+└── infrastructure/
+    └── database/
+        └── tables.py        # DB 테이블 정의
 ```
 
 ## 매매 전략
