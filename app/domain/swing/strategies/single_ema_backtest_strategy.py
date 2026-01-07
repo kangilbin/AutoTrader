@@ -7,10 +7,10 @@
 Entry Conditions (백테스팅 대체):
 1. 가격 위치: 현재가 > EMA20, 괴리율 <= 2%
 2. 수급 강도: OBV z-score > 1.0 + 거래량 증가
-3. 수급 유지: OBV 연속 상승 (2일)
+3. 수급 유지: OBV 전일 대비 상승 (일봉 특성상 1일 체크로 충분)
 4. 거래량: 20일 평균 대비 120% 이상
 5. 급등 필터: 당일 상승률 <= 7%
-6. 2일 연속 확인
+6. 연속 확인: CONSECUTIVE_REQUIRED 횟수만큼 조건 충족 필요
 
 Exit Conditions (백테스팅 대체):
 1. 고정 손절: -3%
@@ -82,7 +82,6 @@ class SingleEMABacktestStrategy(BacktestStrategy):
         eval_df = df[df["STCK_BSOP_DATE"] >= eval_start].copy()
 
         trades: List[Dict] = []
-        total_capital = initial_capital
         current_capital = initial_capital
 
         # 상태 추적 변수
@@ -179,7 +178,7 @@ class SingleEMABacktestStrategy(BacktestStrategy):
             can_buy = (not has_position and buy_count == 0) or (has_position and buy_count < 2)
 
             if can_buy and current_capital > 0:
-                entry_signal = self._check_entry_conditions(row, prev_row)
+                entry_signal = self._check_entry_conditions(row)
 
                 if entry_signal:
                     entry_consecutive += 1
@@ -279,14 +278,14 @@ class SingleEMABacktestStrategy(BacktestStrategy):
 
         return df
 
-    def _check_entry_conditions(self, row: pd.Series, prev_row: pd.Series) -> bool:
+    def _check_entry_conditions(self, row: pd.Series) -> bool:
         """
         진입 조건 체크 (6개 조건)
 
         1. 가격 위치: 현재가 > EMA20
         2. 괴리율: <= 2%
         3. 수급 강도: OBV z-score > 1.0
-        4. 수급 유지: OBV 연속 상승
+        4. 수급 유지: OBV 전일 대비 상승 (obv_diff > 0으로 이미 계산됨)
         5. 거래량: 20일 평균 대비 120%
         6. 급등 필터: 상승률 <= 7%
         """
