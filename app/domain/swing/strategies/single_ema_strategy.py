@@ -53,7 +53,10 @@ class SingleEMAStrategy:
     @classmethod
     def get_realtime_ema20(cls, df: pd.DataFrame, current_price: float) -> Optional[float]:
         """
-        실시간 EMA20 계산
+        실시간 EMA20 계산 (레거시 - DataFrame 기반)
+
+        ⚠️ 주의: 이 메서드는 캐싱을 사용하지 않습니다.
+        실전 매매에서는 get_realtime_ema20_cached() 사용 권장
 
         Args:
             df: 과거 주가 데이터 (OHLCV)
@@ -78,6 +81,98 @@ class SingleEMAStrategy:
             return None
 
         return float(ema_array[-1])
+
+    @classmethod
+    async def get_realtime_ema20_cached(
+        cls,
+        redis_client,
+        st_code: str,
+        current_price: float,
+        stock_service=None
+    ) -> Optional[float]:
+        """
+        실시간 EMA20 조회 (캐시 우선 전략)
+
+        1. Redis 캐시 조회 (워밍업 배치로 사전 계산됨)
+        2. 캐시 히트: 점진적 계산 (어제 EMA + 오늘 종가)
+        3. 캐시 미스: Fallback으로 즉시 계산 (DB 조회)
+
+        Args:
+            redis_client: Redis 클라이언트
+            st_code: 종목 코드
+            current_price: 현재가
+            stock_service: StockService 인스턴스 (fallback용, 선택적)
+
+        Returns:
+            실시간 EMA20 값 또는 None
+        """
+        cache_key = f"ema20:{st_code}"
+
+        # ========================================
+        # 1단계: 캐시 조회 (대부분 여기서 히트)
+        # ========================================
+        try:
+            cached_ema_str = await redis_client.get(cache_key)
+
+            if cached_ema_str:
+                # ✅ 캐시 히트 (배치로 사전 계산됨)
+                prev_ema = float(cached_ema_str)
+                k = 2 / (cls.EMA_PERIOD + 1)  # 0.0952 for period=20
+
+                # 점진적 계산: EMA(오늘) = 오늘종가 × k + EMA(어제) × (1-k)
+                new_ema = (current_price * k) + (prev_ema * (1 - k))
+
+                # 업데이트 (TTL: 7일)
+                await redis_client.setex(cache_key, 604800, str(new_ema))
+
+                logger.debug(f"[{st_code}] EMA20 캐시 히트: {prev_ema:.2f} → {new_ema:.2f}")
+                return new_ema
+
+        except Exception as e:
+            logger.warning(f"[{st_code}] Redis 조회 실패: {e}, Fallback 실행")
+
+        # ========================================
+        # 2단계: 캐시 미스 - Fallback (거의 발생 안 함)
+        # ========================================
+        logger.warning(f"[{st_code}] EMA20 캐시 미스! Fallback 실행...")
+
+        if stock_service is None:
+            logger.error(f"[{st_code}] stock_service 없음, EMA 계산 불가")
+            return None
+
+        # 즉시 계산 (배치 실패 시 대비)
+        try:
+            from datetime import datetime, timedelta
+            import pandas as pd
+
+            start_date = datetime.now() - timedelta(days=120)
+            price_history = await stock_service.get_stock_history(st_code, start_date)
+
+            if not price_history or len(price_history) < cls.EMA_PERIOD:
+                logger.error(f"[{st_code}] 데이터 부족: {len(price_history) if price_history else 0}일")
+                return None
+
+            df = pd.DataFrame(price_history)
+            close_prices = df["STCK_CLPR"].values.astype(float)
+            ema_array = ta.EMA(close_prices, timeperiod=cls.EMA_PERIOD)
+
+            if len(ema_array) == 0 or np.isnan(ema_array[-1]):
+                logger.error(f"[{st_code}] EMA 계산 실패")
+                return None
+
+            prev_ema = float(ema_array[-1])
+            k = 2 / (cls.EMA_PERIOD + 1)
+            new_ema = (current_price * k) + (prev_ema * (1 - k))
+
+            # 캐시 저장
+            await redis_client.setex(cache_key, 604800, str(new_ema))
+
+            logger.info(f"[{st_code}] Fallback 계산 완료: {new_ema:.2f} (데이터: {len(price_history)}일)")
+            return new_ema
+
+        except Exception as e:
+            logger.error(f"[{st_code}] Fallback 계산 실패: {e}", exc_info=True)
+            return None
 
     @classmethod
     async def check_entry_signal(
