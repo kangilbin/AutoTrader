@@ -18,7 +18,7 @@ class SwingTrade:
     use_yn: str = "Y"
     init_amount: Decimal = Decimal(0)
     cur_amount: Decimal = Decimal(0)
-    swing_type: str = "A"  # A: 이평선, B: 일목균형표
+    swing_type: str = "S"  # S: 단일 이평선, B: 일목균형표
     buy_ratio: int = 50
     sell_ratio: int = 50
     signal: int = 0  # 매매 신호 상태 (0:대기, 1:1차매수, 2:2차매수, 3:매도)
@@ -33,8 +33,8 @@ class SwingTrade:
             raise ValidationError("계좌번호는 필수입니다")
         if not self.st_code:
             raise ValidationError("종목코드는 필수입니다")
-        if self.swing_type not in ('A', 'B'):
-            raise ValidationError("스윙 타입은 A 또는 B여야 합니다")
+        if self.swing_type not in ('S', 'A', 'B'):
+            raise ValidationError("스윙 타입은 [S,A,B]여야 합니다")
         if not (0 <= self.buy_ratio <= 100):
             raise ValidationError("매수 비율은 0~100 사이여야 합니다")
         if not (0 <= self.sell_ratio <= 100):
@@ -57,6 +57,10 @@ class SwingTrade:
     def is_ema_strategy(self) -> bool:
         """이평선 전략 여부"""
         return self.swing_type == 'A'
+
+    def is_single_ema_strategy(self) -> bool:
+        """단일 이평선 전략 여부"""
+        return self.swing_type == 'S'
 
     def is_ichimoku_strategy(self) -> bool:
         """일목균형표 전략 여부"""
