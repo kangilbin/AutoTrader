@@ -121,3 +121,18 @@ class SwingRepository:
         result = await self.db.execute(query)
         await self.db.flush()
         return result.rowcount
+
+    async def find_active_stock_codes(self) -> List[str]:
+        """
+        활성화된 종목 코드 목록 조회 (EMA 캐시 워밍업용)
+
+        Returns:
+            USE_YN='Y'인 고유 종목 코드 리스트
+        """
+        query = (
+            select(SwingModel.ST_CODE)
+            .filter(SwingModel.USE_YN == 'Y')
+            .distinct()
+        )
+        result = await self.db.execute(query)
+        return [row[0] for row in result.all()]
