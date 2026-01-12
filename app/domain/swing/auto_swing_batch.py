@@ -265,6 +265,7 @@ async def day_collect_job():
                         "STCK_LWPR": response.get('stck_lwpr'),
                         "STCK_CLPR": response.get('stck_clpr'),
                         "ACML_VOL": response.get('acml_vol'),
+                        "FRGN_NTBY_QTY": response.get('frgn_ntby_qty'),
                         "REG_DT": datetime.now()
                     }]
                     await stock_service.save_history_bulk(history_data)
