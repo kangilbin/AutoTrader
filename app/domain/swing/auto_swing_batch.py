@@ -1,6 +1,13 @@
 """
 스윙 매매 배치 작업 (5분 간격)
-단일 20EMA 전략 지원
+단일 20EMA 전략 + 분할 매수/매도 지원
+
+SIGNAL 상태:
+- 0: 대기 (포지션 없음)
+- 1: 1차 매수 완료 (부분 포지션)
+- 2: 2차 매수 완료 (전체 포지션)
+- 3: 1차 매도 완료 (부분 청산)
+- → 0: 2차 매도 후 사이클 완료
 """
 import logging
 from datetime import datetime, timedelta
@@ -12,6 +19,7 @@ from app.common.database import Database
 from app.domain.swing.service import SwingService
 from app.domain.stock.service import StockService
 from app.domain.swing.strategies.single_ema_strategy import SingleEMAStrategy
+from app.domain.swing.order_executor import SwingOrderExecutor
 from app.common.redis import Redis
 
 logger = logging.getLogger(__name__)
@@ -68,10 +76,16 @@ async def process_single_swing(
     db
 ):
     """
-    개별 스윙 매매 신호 처리
+    개별 스윙 매매 신호 처리 + 분할 매수/매도 실행
+
+    SIGNAL 상태 머신:
+    - 0 + BUY신호 → 1차 매수 실행 → SIGNAL=1
+    - 1 + BUY유지 → 2차 매수 실행 → SIGNAL=2
+    - 1/2 + SELL신호 → 1차 매도 실행 → SIGNAL=3
+    - 3 → 2차 매도 실행 → SIGNAL=0
 
     Args:
-        swing: SWING_TRADE 레코드 (Raw SQL result)
+        swing: SWING_TRADE 레코드 (Raw SQL result with USER_ID, API_KEY, SECRET_KEY)
         stock_service: StockService 인스턴스
         swing_service: SwingService 인스턴스
         redis_client: Redis 클라이언트
@@ -79,13 +93,17 @@ async def process_single_swing(
     """
     swing_id = swing.SWING_ID
     st_code = swing.ST_CODE
+    user_id = swing.USER_ID if hasattr(swing, 'USER_ID') else None
     current_signal = swing.SIGNAL if hasattr(swing, 'SIGNAL') else 0
+    init_amount = Decimal(str(swing.INIT_AMOUNT)) if hasattr(swing, 'INIT_AMOUNT') else Decimal(0)
+    buy_ratio = swing.BUY_RATIO if hasattr(swing, 'BUY_RATIO') else 50
+    sell_ratio = swing.SELL_RATIO if hasattr(swing, 'SELL_RATIO') else 50
 
-    logger.info(f"[{st_code}] 처리 시작 (SIGNAL={current_signal})")
+    logger.info(f"[{st_code}] 처리 시작 (SIGNAL={current_signal}, BUY_RATIO={buy_ratio}%, SELL_RATIO={sell_ratio}%)")
 
     # === 1. 데이터 수집 ===
 
-    # 1.1 주가 데이터 조회 (과거 120일, 충분한 버퍼)
+    # 1.1 주가 데이터 조회 (과거 120일)
     start_date = datetime.now() - timedelta(days=120)
     price_history = await stock_service.get_stock_history(st_code, start_date)
 
@@ -97,9 +115,6 @@ async def process_single_swing(
 
     # 1.2 현재가 조회
     try:
-        # KIS API를 통해 현재가 및 당일 데이터 조회
-        # 관리자 계정 또는 해당 사용자의 API 키 사용
-        # 여기서는 간단히 get_inquire_price 사용 (실제로는 get_inquire_price 권장)
         current_price_data = await get_inquire_price("mgnt", st_code)
 
         if not current_price_data:
@@ -112,7 +127,7 @@ async def process_single_swing(
             logger.warning(f"[{st_code}] 현재가가 0입니다")
             return
 
-        # 당일 데이터로 DataFrame 업데이트 (최신 데이터 반영)
+        # 당일 데이터로 DataFrame 업데이트
         today_data = {
             "ST_CODE": st_code,
             "STCK_BSOP_DATE": datetime.now().strftime('%Y%m%d'),
@@ -123,7 +138,6 @@ async def process_single_swing(
             "ACML_VOL": current_price_data.get("acml_vol", 0)
         }
 
-        # 기존 DataFrame에 오늘 데이터 추가 (중복 제거)
         df = pd.concat([df, pd.DataFrame([today_data])], ignore_index=True)
         df = df.drop_duplicates(subset=['STCK_BSOP_DATE'], keep='last')
 
@@ -131,23 +145,20 @@ async def process_single_swing(
         logger.error(f"[{st_code}] 현재가 조회 실패: {e}")
         return
 
-    # 1.3 외국인/기관 순매수 데이터 (실제 API)
+    # 1.3 외국인/기관 순매수 데이터
     frgn_ntby_qty = int(current_price_data.get("frgn_ntby_qty", 0))
     pgtr_ntby_qty = int(current_price_data.get("pgtr_ntby_qty", 0))
-
-    # === 2. 전략 분석 ===
-
-    # 필요한 데이터 추출
     acml_vol = int(today_data.get("ACML_VOL", 0))
     prdy_vrss_vol_rate = float(current_price_data.get("prdy_vrss_vol_rate", 100))
     prdy_ctrt = float(current_price_data.get("prdy_ctrt", 0))
 
-    # State Transition Logic
-    new_signal = current_signal
-    signal = None
-    reason = None
+    # === 2. SIGNAL 상태별 처리 ===
 
-    # 포지션 없음 (대기 상태) - 진입 신호 확인
+    new_signal = current_signal
+
+    # ------------------------------------------
+    # SIGNAL 0: 대기 상태 - 1차 매수 신호 확인
+    # ------------------------------------------
     if current_signal == 0:
         entry_result = await SingleEMAStrategy.check_entry_signal(
             redis_client=redis_client,
@@ -162,50 +173,157 @@ async def process_single_swing(
         )
 
         if entry_result and entry_result.get("action") == "BUY":
-            # 0 → 1: 첫 매수 신호 (2회 연속 확인 완료)
-            new_signal = 1
-            signal = "buy"
-            reason = f"진입 신호 (consecutive={entry_result.get('consecutive')})"
-            logger.info(f"[{st_code}] 신호 전환: 0 → 1 (매수 신호)")
+            logger.info(f"[{st_code}] 1차 매수 신호 발생!")
+
+            # 1차 매수 실행
+            if user_id:
+                order_result = await SwingOrderExecutor.execute_first_buy(
+                    user_id=user_id,
+                    st_code=st_code,
+                    current_price=current_price,
+                    init_amount=init_amount,
+                    buy_ratio=buy_ratio
+                )
+
+                if order_result.get("success"):
+                    new_signal = 1
+                    logger.info(f"[{st_code}] 1차 매수 완료: {order_result}")
+                else:
+                    logger.error(f"[{st_code}] 1차 매수 실패: {order_result.get('reason')}")
+            else:
+                logger.warning(f"[{st_code}] USER_ID 없음, 주문 실행 불가")
         else:
-            signal = "hold"
-            reason = "진입 조건 대기 중"
+            logger.debug(f"[{st_code}] 진입 조건 대기 중")
 
-    # 포지션 있음 (보유 중) - 매도 신호 확인
-    elif current_signal in (1, 2):
-        # 진입가 조회 (실제로는 TRADE_HISTORY에서 가져와야 함)
-        # TODO: TRADE_HISTORY 테이블 연동
-        entry_price = Decimal(str(swing.INIT_AMOUNT))  # 임시: 초기 투자금을 진입가로 가정
-
+    # ------------------------------------------
+    # SIGNAL 1: 1차 매수 완료 - 2차 매수 또는 매도 확인
+    # ------------------------------------------
+    elif current_signal == 1:
+        # 먼저 매도 신호 확인
         exit_result = await SingleEMAStrategy.check_exit_signal(
             redis_client=redis_client,
             position_id=swing_id,
             symbol=st_code,
             df=df,
             current_price=current_price,
-            entry_price=entry_price,
+            entry_price=current_price,  # TODO: 실제 진입가 사용
             frgn_ntby_qty=frgn_ntby_qty,
             pgtr_ntby_qty=pgtr_ntby_qty,
             acml_vol=acml_vol
         )
 
         if exit_result.get("action") == "SELL":
-            # 1/2 → 3: 매도 신호
-            new_signal = 3
-            signal = "sell"
-            reason = exit_result.get("reason")
-            logger.info(f"[{st_code}] 신호 전환: {current_signal} → 3 (매도 신호: {reason})")
+            # 1차 매도 실행
+            logger.info(f"[{st_code}] 1차 매도 신호 발생! (사유: {exit_result.get('reason')})")
+
+            if user_id:
+                order_result = await SwingOrderExecutor.execute_first_sell(
+                    user_id=user_id,
+                    st_code=st_code,
+                    sell_ratio=sell_ratio
+                )
+
+                if order_result.get("success"):
+                    new_signal = 3
+                    logger.info(f"[{st_code}] 1차 매도 완료: {order_result}")
+                else:
+                    logger.error(f"[{st_code}] 1차 매도 실패: {order_result.get('reason')}")
+            else:
+                logger.warning(f"[{st_code}] USER_ID 없음, 주문 실행 불가")
+
         else:
-            signal = "hold"
-            reason = exit_result.get("reason", "정상 보유")
+            # 매도 신호 없으면 2차 매수 조건 확인
+            entry_result = await SingleEMAStrategy.check_entry_signal(
+                redis_client=redis_client,
+                symbol=st_code,
+                df=df,
+                current_price=current_price,
+                frgn_ntby_qty=frgn_ntby_qty,
+                pgtr_ntby_qty=pgtr_ntby_qty,
+                acml_vol=acml_vol,
+                prdy_vrss_vol_rate=prdy_vrss_vol_rate,
+                prdy_ctrt=prdy_ctrt
+            )
 
-    # === 3. 로깅 ===
+            if entry_result and entry_result.get("action") == "BUY":
+                logger.info(f"[{st_code}] 2차 매수 신호 발생!")
 
-    logger.info(
-        f"[{st_code}] 분석 결과: {signal.upper() if signal else 'UNKNOWN'} - {reason}"
-    )
+                if user_id:
+                    order_result = await SwingOrderExecutor.execute_second_buy(
+                        user_id=user_id,
+                        st_code=st_code,
+                        current_price=current_price,
+                        init_amount=init_amount,
+                        buy_ratio=buy_ratio
+                    )
 
-    # === 4. Database Update ===
+                    if order_result.get("success"):
+                        new_signal = 2
+                        logger.info(f"[{st_code}] 2차 매수 완료: {order_result}")
+                    else:
+                        logger.error(f"[{st_code}] 2차 매수 실패: {order_result.get('reason')}")
+                else:
+                    logger.warning(f"[{st_code}] USER_ID 없음, 주문 실행 불가")
+            else:
+                logger.debug(f"[{st_code}] 보유 유지 (1차 매수 상태)")
+
+    # ------------------------------------------
+    # SIGNAL 2: 2차 매수 완료 - 매도 신호만 확인
+    # ------------------------------------------
+    elif current_signal == 2:
+        exit_result = await SingleEMAStrategy.check_exit_signal(
+            redis_client=redis_client,
+            position_id=swing_id,
+            symbol=st_code,
+            df=df,
+            current_price=current_price,
+            entry_price=current_price,  # TODO: 실제 진입가 사용
+            frgn_ntby_qty=frgn_ntby_qty,
+            pgtr_ntby_qty=pgtr_ntby_qty,
+            acml_vol=acml_vol
+        )
+
+        if exit_result.get("action") == "SELL":
+            logger.info(f"[{st_code}] 1차 매도 신호 발생! (사유: {exit_result.get('reason')})")
+
+            if user_id:
+                order_result = await SwingOrderExecutor.execute_first_sell(
+                    user_id=user_id,
+                    st_code=st_code,
+                    sell_ratio=sell_ratio
+                )
+
+                if order_result.get("success"):
+                    new_signal = 3
+                    logger.info(f"[{st_code}] 1차 매도 완료: {order_result}")
+                else:
+                    logger.error(f"[{st_code}] 1차 매도 실패: {order_result.get('reason')}")
+            else:
+                logger.warning(f"[{st_code}] USER_ID 없음, 주문 실행 불가")
+        else:
+            logger.debug(f"[{st_code}] 보유 유지 (2차 매수 상태)")
+
+    # ------------------------------------------
+    # SIGNAL 3: 1차 매도 완료 - 2차 매도 실행
+    # ------------------------------------------
+    elif current_signal == 3:
+        logger.info(f"[{st_code}] 2차 매도 실행 (잔량 전부)")
+
+        if user_id:
+            order_result = await SwingOrderExecutor.execute_second_sell(
+                user_id=user_id,
+                st_code=st_code
+            )
+
+            if order_result.get("success"):
+                new_signal = 0  # 사이클 완료, 대기 상태로 복귀
+                logger.info(f"[{st_code}] 2차 매도 완료, 사이클 종료: {order_result}")
+            else:
+                logger.error(f"[{st_code}] 2차 매도 실패: {order_result.get('reason')}")
+        else:
+            logger.warning(f"[{st_code}] USER_ID 없음, 주문 실행 불가")
+
+    # === 3. SIGNAL 상태 업데이트 ===
 
     if new_signal != current_signal:
         try:
@@ -217,15 +335,10 @@ async def process_single_swing(
                 }
             )
             await db.commit()
-            logger.info(f"[{st_code}] SIGNAL 업데이트 완료: {current_signal} → {new_signal}")
+            logger.info(f"[{st_code}] SIGNAL 업데이트: {current_signal} → {new_signal}")
         except Exception as e:
             await db.rollback()
             logger.error(f"[{st_code}] SIGNAL 업데이트 실패: {e}", exc_info=True)
-
-    # === 5. 로깅 (신호 기록) ===
-
-    # TODO: 신호 이력 테이블에 저장 (선택 사항)
-    # SIGNAL_HISTORY 테이블 생성하여 모든 신호 기록
 
     logger.info(f"[{st_code}] 처리 완료")
 
