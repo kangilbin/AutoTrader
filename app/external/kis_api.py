@@ -373,6 +373,68 @@ async def get_inquire_daily_ccld_obj(user_id: str, inqr_strt_dt=None, inqr_end_d
     return body
 
 
+async def check_order_execution(user_id: str, order_no: str, max_retry: int = 3, delay: float = 1.0) -> Optional[dict]:
+    """
+    주문 체결 확인 (폴링)
+
+    Args:
+        user_id: 사용자 ID
+        order_no: 주문번호 (ODNO)
+        max_retry: 최대 재시도 횟수
+        delay: 재시도 간격 (초)
+
+    Returns:
+        체결 정보 또는 None
+        {
+            "order_no": 주문번호,
+            "st_code": 종목코드,
+            "avg_price": 평균체결가,
+            "executed_qty": 체결수량,
+            "executed_amt": 체결금액,
+            "trade_type": 매매구분 (01:매도, 02:매수)
+        }
+    """
+    import asyncio
+
+    for attempt in range(max_retry):
+        try:
+            result = await get_inquire_daily_ccld_obj(user_id)
+
+            if not result or "output1" not in result:
+                logger.warning(f"[체결확인] 응답 없음, 재시도 {attempt + 1}/{max_retry}")
+                await asyncio.sleep(delay)
+                continue
+
+            # 주문번호로 체결 내역 찾기
+            for order in result.get("output1", []):
+                if order.get("odno") == order_no:
+                    executed_qty = int(order.get("tot_ccld_qty", 0))
+
+                    if executed_qty > 0:
+                        # 체결 완료
+                        return {
+                            "order_no": order_no,
+                            "st_code": order.get("pdno"),
+                            "avg_price": int(order.get("avg_prvs", 0)),
+                            "executed_qty": executed_qty,
+                            "executed_amt": int(order.get("tot_ccld_amt", 0)),
+                            "trade_type": order.get("sll_buy_dvsn_cd")  # 01:매도, 02:매수
+                        }
+                    else:
+                        # 미체결 상태
+                        logger.info(f"[체결확인] 주문 {order_no} 미체결, 재시도 {attempt + 1}/{max_retry}")
+                        break
+
+            await asyncio.sleep(delay)
+
+        except Exception as e:
+            logger.error(f"[체결확인] 오류: {e}, 재시도 {attempt + 1}/{max_retry}")
+            await asyncio.sleep(delay)
+
+    logger.warning(f"[체결확인] 주문 {order_no} 체결 확인 실패 (max_retry 초과)")
+    return None
+
+
 async def get_target_price(code: str):
     """종목 일별 시세 조회"""
     redis = await get_redis()
