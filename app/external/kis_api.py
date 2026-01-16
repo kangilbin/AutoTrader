@@ -1,7 +1,7 @@
 """
 KIS (한국투자증권) API 통합 모듈
 """
-from datetime import datetime, timedelta
+from datetime import datetime
 import logging
 
 from app.exceptions import ExternalServiceError
@@ -329,8 +329,10 @@ async def get_inquire_daily_ccld_obj(user_id: str, inqr_strt_dt=None, inqr_end_d
     user_data, access_data = await _get_user_auth(user_id)
     if access_data.get("simulation_yn") == "Y":
         url = settings.DEV_API_URL
+        tr_id = "VTSC9215R"
     else:
         url = settings.REAL_API_URL
+        tr_id = "CTSC9215R"
 
     path = '/uapi/domestic-stock/v1/trading/inquire-daily-ccld'
     api_url = f"{url}/{path}"
@@ -340,13 +342,6 @@ async def get_inquire_daily_ccld_obj(user_id: str, inqr_strt_dt=None, inqr_end_d
 
     if inqr_end_dt is None:
         inqr_end_dt = datetime.today().strftime("%Y%m%d")
-
-    current_date = datetime.today()
-    three_months_ago = current_date - timedelta(days=90)
-    if datetime.strptime(inqr_strt_dt, "%Y%m%d") > three_months_ago:
-        tr_id = "CTSC9215R"
-    else:
-        tr_id = "TTTC0081R"
 
     headers = kis_headers(
         access_data,
