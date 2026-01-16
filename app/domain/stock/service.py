@@ -56,4 +56,8 @@ class StockService:
 
     async def get_stock_history(self, code: str, start_date: datetime) -> List[dict]:
         """일별 데이터 조회"""
-        return await self.repo.find_history(code, start_date)
+        try:
+            return await self.repo.find_history(code, start_date)
+        except SQLAlchemyError as e:
+            logger.error(f"일별 데이터 조회 실패: {e}", exc_info=True)
+            raise DatabaseError("일별 조회를 실패했습니다")
