@@ -1,6 +1,7 @@
 """
 Swing Service - 비즈니스 로직 및 트랜잭션 관리
 """
+from dateutil.relativedelta import relativedelta
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import SQLAlchemyError, IntegrityError
 from typing import List, Dict, Any
@@ -17,6 +18,7 @@ from app.domain.swing.entity import SwingTrade, EmaOption
 from app.domain.swing.schemas import SwingCreateRequest, SwingResponse
 from app.exceptions import DatabaseError, NotFoundError, DuplicateError
 from app.external.kis_api import get_stock_balance
+from app.common.redis import Redis
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +58,10 @@ class SwingService:
                 await self.repo.save_ema_option(ema)
 
             await self.db.commit()
+
+            # 등록된 종목의 EMA20 캐싱
+            await self.cache_single_ema(request.ST_CODE)
+
             return SwingResponse.model_validate(db_swing).model_dump()
 
         except IntegrityError as e:
@@ -262,6 +268,58 @@ class SwingService:
             logger.error(f"신호 초기화 실패: {e}", exc_info=True)
             raise DatabaseError("신호 초기화에 실패했습니다")
 
+    async def cache_single_ema(self, st_code: str) -> bool:
+        """
+        단일 종목 EMA20 캐싱 (스윙 등록 시 호출)
+
+        Args:
+            st_code: 종목 코드
+
+        Returns:
+            캐싱 성공 여부
+        """
+        from app.domain.stock.service import StockService
+
+        try:
+            stock_service = StockService(self.db)
+            redis_client = await Redis.get_connection()
+
+            # 과거 3년 데이터 조회
+            start_date = datetime.now() - relativedelta(years=3)
+            price_history = await stock_service.get_stock_history(st_code, start_date)
+
+            if not price_history or len(price_history) < 20:
+                logger.warning(
+                    f"[{st_code}] EMA 캐싱 스킵 - 데이터 부족: "
+                    f"{len(price_history) if price_history else 0}일"
+                )
+                return False
+
+            # EMA20 계산
+            df = pd.DataFrame(price_history)
+            close_prices = df["STCK_CLPR"].values.astype(float)
+            ema_array = ta.EMA(close_prices, timeperiod=20)
+
+            if len(ema_array) == 0 or np.isnan(ema_array[-1]):
+                logger.warning(f"[{st_code}] EMA 계산 실패")
+                return False
+
+            ema20 = float(ema_array[-1])
+
+            # Redis 저장 (TTL: 7일 = 604800초)
+            cache_key = f"ema20:{st_code}"
+            await redis_client.setex(cache_key, 604800, str(ema20))
+
+            logger.info(
+                f"[{st_code}] EMA20 캐싱 완료: {ema20:.2f} "
+                f"(데이터: {len(price_history)}일)"
+            )
+            return True
+
+        except Exception as e:
+            logger.error(f"[{st_code}] EMA 캐싱 실패: {e}")
+            return False
+
     async def warmup_ema_cache(self, redis_client) -> Dict[str, Any]:
         """
         EMA 캐시 워밍업 (애플리케이션 시작 시 또는 스케줄 배치)
@@ -295,8 +353,8 @@ class SwingService:
             # 2. 각 종목별 EMA20 계산 및 캐싱
             for st_code in active_codes:
                 try:
-                    # 과거 120일 데이터 조회
-                    start_date = datetime.now() - timedelta(days=120)
+                    # 과거 3년 데이터 조회
+                    start_date = datetime.now() - relativedelta(year=3)
                     price_history = await stock_service.get_stock_history(st_code, start_date)
 
                     if not price_history or len(price_history) < 20:
