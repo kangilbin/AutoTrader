@@ -111,7 +111,7 @@ class SwingService:
             swing_list = await self.repo.find_all_by_account_no(account_no)
             buy_list = await get_stock_balance(user_id)
 
-            swing_dict = {swing.ST_CODE: swing for swing in swing_list}
+            swing_dict = {swing["ST_CODE"]: swing for swing in swing_list}
             buy_dict = {item.get("pdno"): item for item in buy_list if item.get("pdno")}
             results = []
 
@@ -127,7 +127,7 @@ class SwingService:
                         account_no=account_no,
                         st_code=st_code,
                         init_amount=Decimal(0),
-                        swing_type='B'
+                        swing_type='S'
                     )
                     swing.use_yn = 'N'
                     db_swing = await self.repo.save(swing)
@@ -135,44 +135,49 @@ class SwingService:
                     result_data = {
                         **swing_result,
                         "ST_NM": buy_item.get("prdt_name"),
-                        "QTY": buy_item.get("hldg_qty"),
+                        "HLDG_QTY": buy_item.get("hldg_qty"),
+                        "EVLU_AMT": buy_item.get("evlu_amt"),
                     }
                     results.append(result_data)
                 else:
                     # 기존 데이터 merge
                     data = swing_dict[st_code]
-                    init_amount = data.INIT_AMOUNT if data.INIT_AMOUNT else 1
-                    rate = float((data.CUR_AMOUNT - data.INIT_AMOUNT) / init_amount * 100)
+                    init_amount = data["INIT_AMOUNT"] if data["INIT_AMOUNT"] else 1
+                    rate = float((data["CUR_AMOUNT"] - data["INIT_AMOUNT"]) / init_amount * 100)
                     result_data = {
-                        "SWING_ID": data.SWING_ID,
-                        "ST_CODE": data.ST_CODE,
-                        "ACCOUNT_NO": data.ACCOUNT_NO,
-                        "USE_YN": data.USE_YN,
-                        "INIT_AMOUNT": data.INIT_AMOUNT,
-                        "CUR_AMOUNT": data.CUR_AMOUNT,
-                        "SWING_TYPE": data.SWING_TYPE,
+                        **data,
+                        # "SWING_ID": data["SWING_ID"],
+                        # "ST_CODE": data["ST_CODE"],
+                        # "ACCOUNT_NO": data["ACCOUNT_NO"],
+                        # "USE_YN": data["USE_YN"],
+                        # "INIT_AMOUNT": data["INIT_AMOUNT"],
+                        # "CUR_AMOUNT": data["CUR_AMOUNT"],
+                        # "SWING_TYPE": data["SWING_TYPE"],
                         "ST_NM": buy_item.get("prdt_name"),
-                        "QTY": buy_item.get("hldg_qty"),
-                        "RATE": rate,
+                        "HLDG_QTY": buy_item.get("hldg_qty"),
+                        "EVLU_AMT": buy_item.get("evlu_amt"),
+                        "EVLU_PFLS_RT": rate,
+                        "EVLU_PFLS_AMT": data["INIT_AMOUNT"] - data["CUR_AMOUNT"],
                     }
                     results.append(result_data)
 
             # 2. swing_list에만 있는 항목 추가
             for swing in swing_list:
-                if swing.ST_CODE not in buy_dict:
-                    init_amount = swing.INIT_AMOUNT if swing.INIT_AMOUNT else 1
-                    rate = float((swing.CUR_AMOUNT - swing.INIT_AMOUNT) / init_amount * 100)
+                if swing["ST_CODE"] not in buy_dict:
+                    init_amount = swing["INIT_AMOUNT"] if swing["INIT_AMOUNT"] else 1
+                    rate = float((swing["CUR_AMOUNT"] - swing["INIT_AMOUNT"]) / init_amount * 100)
                     result_data = {
-                        "SWING_ID": swing.SWING_ID,
-                        "ST_CODE": swing.ST_CODE,
-                        "ACCOUNT_NO": swing.ACCOUNT_NO,
-                        "USE_YN": swing.USE_YN,
-                        "INIT_AMOUNT": swing.INIT_AMOUNT,
-                        "CUR_AMOUNT": swing.CUR_AMOUNT,
-                        "SWING_TYPE": swing.SWING_TYPE,
-                        "ST_NM": None,
-                        "QTY": 0,
-                        "RATE": rate,
+                        **swing,
+                        # "SWING_ID": swing["SWING_ID"],
+                        # "ST_CODE": swing["ST_CODE"],
+                        # "ST_NM": swing["ST_NM"],
+                        # "ACCOUNT_NO": swing["ACCOUNT_NO"],
+                        # "USE_YN": swing["USE_YN"],
+                        # "INIT_AMOUNT": swing["INIT_AMOUNT"],
+                        # "CUR_AMOUNT": swing["CUR_AMOUNT"],
+                        # "SWING_TYPE": swing["SWING_TYPE"],
+                        "EVLU_PFLS_RT": rate,
+                        "EVLU_PFLS_AMT": swing["INIT_AMOUNT"] - swing["CUR_AMOUNT"],
                     }
                     results.append(result_data)
 

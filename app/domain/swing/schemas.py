@@ -34,6 +34,7 @@ class SwingResponse(BaseModel):
     """스윙 전략 응답"""
     SWING_ID: Optional[int] = None
     ST_CODE: Optional[str] = None
+    ST_NM: Optional[str] = None
     ACCOUNT_NO: Optional[str] = None
     USE_YN: Optional[str] = None
     INIT_AMOUNT: Optional[Decimal] = None
