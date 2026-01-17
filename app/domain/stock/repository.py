@@ -34,16 +34,16 @@ class StockRepository:
         query = text("""
             SELECT *
             FROM STOCK_INFO
-            WHERE NAME RLIKE make_search_pattern(:initial)
+            WHERE ST_NM RLIKE make_search_pattern(:initial)
             ORDER BY
                 CASE
-                    WHEN REGEXP_INSTR(NAME, make_search_pattern(:initial)) = 1 THEN 1
-                    WHEN REGEXP_INSTR(NAME, make_search_pattern(:initial)) > 1 THEN 2
+                    WHEN REGEXP_INSTR(ST_NM, make_search_pattern(:initial)) = 1 THEN 1
+                    WHEN REGEXP_INSTR(ST_NM, make_search_pattern(:initial)) > 1 THEN 2
                     ELSE 3
                 END,
-                REGEXP_INSTR(NAME, make_search_pattern(:initial)),
-                NAME
-            /*LIMIT 20*/
+                REGEXP_INSTR(ST_NM, make_search_pattern(:initial)),
+                ST_NM
+            LIMIT 20
         """)
         rows = await self.db.execute(query, {"initial": initial})
         return [StockResponse.model_validate(row).model_dump() for row in rows]
