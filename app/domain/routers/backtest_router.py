@@ -12,7 +12,7 @@ from app.domain.swing.backtest.backtest_service import start_backtest_job, get_b
 from app.core.response import success_response
 from app.exceptions import DatabaseError, NotFoundError
 
-router = APIRouter(prefix="/backtest", tags=["Backtest"])
+router = APIRouter(prefix="/backtesting", tags=["Backtest"])
 
 
 @router.post("")
