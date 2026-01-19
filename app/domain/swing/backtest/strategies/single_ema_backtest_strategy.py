@@ -72,7 +72,7 @@ class SingleEMABacktestStrategy(BacktestStrategy):
         initial_capital = params["init_amount"]
         buy_ratio = params["buy_ratio"]
         sell_ratio = params["sell_ratio"]
-        eval_start = params["eval_start"]
+        eval_start = pd.to_datetime(params["eval_start"])
 
         df = prices_df.copy()
         df = self._prepare_data(df)
@@ -349,7 +349,11 @@ class SingleEMABacktestStrategy(BacktestStrategy):
         ema_20 = row["ema_20"]
         obv_z = row["obv_z"]
 
+        # NaN 체크 및 진입가 검증
         if entry_price is None or pd.isna(entry_price):
+            return False, ""
+
+        if pd.isna(ema_20) or pd.isna(obv_z):
             return False, ""
 
         profit_rate = (current_price - entry_price) / entry_price
