@@ -38,7 +38,7 @@ class TradingStrategyFactory:
             swing_type: SWING_TRADE.SWING_TYPE
                 - 'A': 이평선 전략
                 - 'B': 일목균형표 전략 (현재 SingleEMAStrategy 사용)
-                - 'C': 단일 20EMA 전략
+                - 'S': 단일 20EMA 전략
                 - 기타: SingleEMAStrategy (기본값)
 
         Returns:

@@ -210,13 +210,33 @@ class SwingService:
         """활성화된 스윙 목록 조회 (배치용)"""
         return await self.repo.find_active_swings()
 
+    async def get_pending_sell_swings(self) -> List:
+        """매도 대기 중인 스윙 목록 조회 (SIGNAL 4/5)"""
+        return await self.repo.find_pending_sell_swings()
+
+    async def get_holding_swings(self) -> List:
+        """포지션 보유 중인 스윙 목록 조회 (SIGNAL 1/2)"""
+        return await self.repo.find_holding_swings()
+
+    async def get_swings_by_signals(self, signals: List[int]) -> List:
+        """특정 SIGNAL 값의 스윙 목록 조회"""
+        return await self.repo.find_swings_by_signals(signals)
+
     async def transition_signal(self, swing_id: int, new_signal: int, reason: str = None) -> dict:
         """
         신호 상태 전환 (유효성 검증 포함)
 
+        SIGNAL 상태:
+        - 0: 대기 (포지션 없음)
+        - 1: 1차 매수 완료
+        - 2: 2차 매수 완료
+        - 3: 장중 손절 완료
+        - 4: 1차 매도 대기 (50% 매도 대기, 종가 확정)
+        - 5: 2차 매도 대기 (전량 매도 대기, 종가 확정)
+
         Args:
             swing_id: 스윙 ID
-            new_signal: 새로운 신호 값 (0, 1, 2, 3)
+            new_signal: 새로운 신호 값 (0, 1, 2, 3, 4, 5)
             reason: 전환 사유 (로깅용)
 
         Returns:
@@ -235,12 +255,14 @@ class SwingService:
 
             current_signal = swing.SIGNAL if hasattr(swing, 'SIGNAL') else 0
 
-            # 상태 전환 유효성 검증
+            # 상태 전환 유효성 검증 (확장된 규칙)
             valid_transitions = {
-                0: [1],        # 대기 → 1차 매수만 가능
-                1: [2, 3],     # 1차 매수 → 2차 매수 또는 매도
-                2: [3],        # 2차 매수 → 매도만 가능
-                3: [0]         # 매도 → 초기화만 가능
+                0: [1],           # 대기 → 1차 매수만 가능
+                1: [2, 3, 4, 5],  # 1차 매수 → 2차 매수, 장중손절, 1차/2차 매도대기
+                2: [3, 4, 5],     # 2차 매수 → 장중손절, 1차/2차 매도대기
+                3: [0],           # 장중 손절 → 초기화
+                4: [1, 0],        # 1차 매도 대기 → 잔량보유(50%매도후), 전량청산
+                5: [0]            # 2차 매도 대기 → 전량 청산(초기화)
             }
 
             if new_signal not in valid_transitions.get(current_signal, []):

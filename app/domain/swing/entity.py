@@ -21,7 +21,7 @@ class SwingTrade:
     swing_type: str = "S"  # S: 단일 이평선, B: 일목균형표
     buy_ratio: int = 50
     sell_ratio: int = 50
-    signal: int = 0  # 매매 신호 상태 (0:대기, 1:1차매수, 2:2차매수, 3:매도)
+    signal: int = 0  # 매매 신호 상태 (0:대기, 1:1차매수, 2:2차매수, 3:장중손절, 4:1차매도대기, 5:2차매도대기)
     reg_dt: Optional[datetime] = field(default_factory=datetime.now)
     mod_dt: Optional[datetime] = None
 
@@ -100,8 +100,24 @@ class SwingTrade:
         return self.signal == 2
 
     def is_sold(self) -> bool:
-        """매도 완료 여부"""
+        """매도 완료 여부 (장중 손절)"""
         return self.signal == 3
+
+    def is_first_sell_pending(self) -> bool:
+        """1차 매도 대기 여부 (50% 매도 대기)"""
+        return self.signal == 4
+
+    def is_second_sell_pending(self) -> bool:
+        """2차 매도 대기 여부 (전량 매도 대기)"""
+        return self.signal == 5
+
+    def is_sell_pending(self) -> bool:
+        """매도 대기 여부 (4 또는 5)"""
+        return self.signal in (4, 5)
+
+    def has_position(self) -> bool:
+        """포지션 보유 여부 (매수 상태 또는 매도 대기 상태)"""
+        return self.signal in (1, 2, 4, 5)
 
     def transition_to_first_buy(self) -> None:
         """1차 매수 상태로 전환"""
@@ -118,10 +134,43 @@ class SwingTrade:
         self.mod_dt = datetime.now()
 
     def transition_to_sold(self) -> None:
-        """매도 완료 상태로 전환"""
+        """매도 완료 상태로 전환 (장중 손절 시)"""
         if self.signal not in (1, 2):
             raise ValidationError(f"매도는 매수 완료 상태(1,2)에서만 가능합니다. 현재 상태: {self.signal}")
         self.signal = 3
+        self.mod_dt = datetime.now()
+
+    def transition_to_first_sell_pending(self) -> None:
+        """1차 매도 대기 상태로 전환 (SIGNAL 4)
+
+        종가 기준 2/3 조건 충족 시 호출
+        다음날 시초에 50% 매도 실행
+        """
+        if self.signal not in (1, 2):
+            raise ValidationError(f"1차 매도 대기는 매수 상태(1,2)에서만 가능합니다. 현재 상태: {self.signal}")
+        self.signal = 4
+        self.mod_dt = datetime.now()
+
+    def transition_to_second_sell_pending(self) -> None:
+        """2차 매도 대기 상태로 전환 (SIGNAL 5)
+
+        종가 기준 3/3 조건 충족 시 호출
+        다음날 시초에 전량 매도 실행
+        """
+        if self.signal not in (1, 2):
+            raise ValidationError(f"2차 매도 대기는 매수 상태(1,2)에서만 가능합니다. 현재 상태: {self.signal}")
+        self.signal = 5
+        self.mod_dt = datetime.now()
+
+    def transition_to_first_buy_after_partial_sell(self) -> None:
+        """50% 매도 후 잔량 보유 상태로 전환 (SIGNAL 4 → 1)
+
+        1차 매도 실행 후 잔량 보유 상태로 복귀
+        다음 종가에 재판단
+        """
+        if self.signal != 4:
+            raise ValidationError(f"잔량 보유 전환은 1차 매도 대기 상태(4)에서만 가능합니다. 현재 상태: {self.signal}")
+        self.signal = 1
         self.mod_dt = datetime.now()
 
     def reset_signal(self) -> None:
