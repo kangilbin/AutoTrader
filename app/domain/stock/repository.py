@@ -2,7 +2,7 @@
 Stock Repository - 데이터 접근 계층
 """
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update, text
+from sqlalchemy import select, update, text, func
 from sqlalchemy.dialects.mysql import insert as mysql_insert
 from typing import Optional, List
 from datetime import datetime
@@ -85,3 +85,61 @@ class StockRepository:
         )
         result = await self.db.execute(query)
         return [StockHistoryResponse.model_validate(row).model_dump() for row in result.scalars().all()]
+
+    async def get_foreign_net_buy_sum(
+        self,
+        symbol: str,
+        start_date: str,
+        end_date: Optional[str] = None
+    ) -> int:
+        """
+        외국인 순매수량 합산
+
+        Args:
+            symbol: 종목 코드
+            start_date: 시작일 (YYYYMMDD)
+            end_date: 종료일 (YYYYMMDD, None이면 오늘까지)
+
+        Returns:
+            외국인 순매수량 합계
+        """
+        query = select(func.sum(StockHistoryModel.FRGN_NTBY_QTY))
+        query = query.where(StockHistoryModel.ST_CODE == symbol)
+        query = query.where(StockHistoryModel.STCK_BSOP_DATE >= start_date)
+
+        if end_date:
+            query = query.where(StockHistoryModel.STCK_BSOP_DATE <= end_date)
+
+        result = await self.db.execute(query)
+        return result.scalar() or 0
+
+    async def get_stock_volume_sum(
+        self,
+        symbol: str,
+        start_date: str,
+        end_date: Optional[str] = None
+    ) -> tuple[int, int]:
+        """
+        외국인 순매수량 및 누적 거래량 합산
+
+        Args:
+            symbol: 종목 코드
+            start_date: 시작일 (YYYYMMDD)
+            end_date: 종료일 (YYYYMMDD, None이면 오늘까지)
+
+        Returns:
+            (외국인 순매수량 합계, 거래량 합계)
+        """
+        query = select(
+            func.sum(StockHistoryModel.FRGN_NTBY_QTY).label('total_frgn'),
+            func.sum(StockHistoryModel.ACML_VOL).label('total_vol')
+        )
+        query = query.where(StockHistoryModel.ST_CODE == symbol)
+        query = query.where(StockHistoryModel.STCK_BSOP_DATE >= start_date)
+
+        if end_date:
+            query = query.where(StockHistoryModel.STCK_BSOP_DATE <= end_date)
+
+        result = await self.db.execute(query)
+        data = result.one()
+        return (data.total_frgn or 0, data.total_vol or 0)

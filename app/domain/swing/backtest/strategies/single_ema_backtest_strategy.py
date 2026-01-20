@@ -5,12 +5,10 @@
 외국인/프로그램 수급 데이터 대신 OBV(On Balance Volume)를 사용.
 
 Entry Conditions (1차 매수):
-1. 가격 위치: 현재가 > EMA20, 괴리율 <= 2%
-2. 수급 강도: OBV z-score > 1.0
-3. 수급 유지: OBV 전일 대비 상승
-4. 거래량: 전일 대비 120% 이상 (실전 매매와 동일)
-5. 급등 필터: 당일 상승률 <= 7%
-6. 연속 확인: 1회 (일봉 기준)
+1. EMA 추세: 현재가 > EMA20 (추세 확인)
+2. 수급 강도: OBV z-score > 1.0 (거래량 강도 포함)
+3. 급등 필터: 당일 상승률 <= 5%
+4. 연속 확인: 1회 (일봉 기준)
 
 Entry Conditions (2차 매수):
 1. 가격 범위: 1차 매수가 대비 +1% ~ +4%
@@ -36,14 +34,12 @@ from .base_strategy import BacktestStrategy
 class SingleEMABacktestStrategy(BacktestStrategy):
     """단일 20EMA 백테스팅 전략"""
 
-    # === 기본 파라미터 (실전 매매와 동일) ===
+    # === 기본 파라미터 ===
     EMA_PERIOD = 20
 
-    # 진입 조건
-    MAX_GAP_RATIO = 0.02  # 괴리율 2% 이내
-    VOLUME_RATIO_THRESHOLD = 1.2  # 거래량 전일 대비 120% 이상
-    MAX_SURGE_RATIO = 0.07  # 급등 필터 7%
-    CONSECUTIVE_REQUIRED = 1  # 조건 충족 시 즉시 진입 (일봉 기준, 다른 조건들이 필터링)
+    # 1차 매수 진입 조건
+    MAX_SURGE_RATIO = 0.05  # 급등 필터 5%
+    CONSECUTIVE_REQUIRED = 1  # 조건 충족 시 즉시 진입 (일봉 기준)
 
     # 청산 조건
     STOP_LOSS_FIXED = -0.03  # 고정 손절 -3%
@@ -304,51 +300,33 @@ class SingleEMABacktestStrategy(BacktestStrategy):
 
     def _check_entry_conditions(self, row: pd.Series) -> bool:
         """
-        진입 조건 체크 (6개 조건)
+        진입 조건 체크 (3개 조건)
 
-        1. 가격 위치: 현재가 > EMA20
-        2. 괴리율: <= 2%
-        3. 수급 강도: OBV z-score > 1.0
-        4. 수급 유지: OBV 전일 대비 상승 (obv_diff > 0으로 이미 계산됨)
-        5. 거래량: 전일 대비 120% (실전 매매와 동일)
-        6. 급등 필터: 상승률 <= 7%
+        1. EMA 추세: 현재가 > EMA20
+        2. 수급 강도: OBV z-score > 1.0 (거래량 강도 포함)
+        3. 급등 필터: 당일 상승률 <= 5%
         """
         # NaN 체크
-        if pd.isna(row["ema_20"]) or pd.isna(row["obv_z"]) or pd.isna(row["prdy_vol_ratio"]):
+        if pd.isna(row["ema_20"]) or pd.isna(row["obv_z"]):
             return False
 
         current_price = row["STCK_CLPR"]
         ema_20 = row["ema_20"]
-        gap_ratio = row["gap_ratio"]
         obv_z = row["obv_z"]
-        obv_rising = row["obv_rising"]
-        prdy_vol_ratio = row["prdy_vol_ratio"]
         daily_return = row["daily_return"] if not pd.isna(row["daily_return"]) else 0
 
-        # 조건 1: 가격 위치
+        # 조건 1: EMA 추세
         price_above_ema = current_price > ema_20
 
-        # 조건 2: 괴리율
-        gap_ok = gap_ratio <= self.MAX_GAP_RATIO
-
-        # 조건 3: 수급 강도 (OBV z-score)
+        # 조건 2: 수급 강도 (OBV z-score)
         supply_strong = obv_z > self.OBV_Z_BUY_THRESHOLD
 
-        # 조건 4: 수급 유지 (OBV 상승)
-        supply_maintained = obv_rising
-
-        # 조건 5: 거래량 (전일 대비, 실전 매매와 동일)
-        volume_sufficient = prdy_vol_ratio >= self.VOLUME_RATIO_THRESHOLD
-
-        # 조건 6: 급등 필터
+        # 조건 3: 급등 필터
         surge_filtered = daily_return <= self.MAX_SURGE_RATIO
 
         return all([
             price_above_ema,
-            gap_ok,
             supply_strong,
-            supply_maintained,
-            volume_sufficient,
             surge_filtered
         ])
 

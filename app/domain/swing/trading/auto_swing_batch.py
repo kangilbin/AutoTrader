@@ -251,7 +251,8 @@ async def process_single_swing(
         else:
             # 매도 신호 없으면 2차 매수 조건 확인
             entry_result = await strategy.check_second_buy_signal(
-                db=db,
+                swing_repository=swing_service.repo,
+                stock_repository=stock_service.repo,
                 redis_client=redis_client,
                 swing_id=swing_id,
                 symbol=st_code,
