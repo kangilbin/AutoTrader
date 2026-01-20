@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 
 from app.common.database import Database
 from app.common.redis import Redis
-from app.common.scheduler import schedule_start
+# from app.common.scheduler import schedule_start
 from app.common.middleware import DeviceAuthMiddleware
 from app.exceptions.handlers import register_exception_handlers
 from app.domain.swing.service import SwingService
@@ -20,7 +20,7 @@ from app.domain.routers import (
     stock_router,
     order_router,
     swing_router,
-    device_router,
+    # device_router,
     backtest_router,
     health_router,
 )
@@ -41,7 +41,7 @@ async def lifespan(app: FastAPI):
     # EMA 캐시 워밍업 (애플리케이션 시작 시 1회 실행)
     await _warmup_ema_cache()
 
-    await schedule_start()
+    # await schedule_start()
 
     logger.info("AutoTrader API started successfully")
 
