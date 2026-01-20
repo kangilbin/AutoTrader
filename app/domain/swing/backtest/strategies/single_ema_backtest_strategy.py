@@ -24,9 +24,10 @@ Exit Conditions:
 4. 수급 약화: OBV 정체 (z-score 0 근처) + EMA 하회
 5. 추세 악화: EMA 아래에서 가격 하락 + 이탈폭 증가
 """
+import logging
+from datetime import datetime
 import pandas as pd
 import talib as ta
-import numpy as np
 from typing import Dict, List, Optional, Tuple
 from .base_strategy import BacktestStrategy
 
@@ -113,6 +114,9 @@ class SingleEMABacktestStrategy(BacktestStrategy):
             current_date = row["STCK_BSOP_DATE"]
             ema_20 = row["ema_20"]
 
+            if current_date > datetime(2025, 9, 8):
+                logging.info("확인해볼까용")
+
             # 현재 포지션 계산
             total_bought = sum(t["quantity"] for t in trades if t["action"] == "BUY")
             total_sold = sum(t["quantity"] for t in trades if t["action"] == "SELL")
@@ -174,6 +178,9 @@ class SingleEMABacktestStrategy(BacktestStrategy):
                         prev_gap = None
                         sell_count = 0
                         buy_count = 0  # 매수 횟수도 리셋
+                    else:
+                        # 포지션이 남아있으면 1차 매수 조건부터 다시 체크
+                        buy_count = 0
 
             # === 2단계: 진입 신호 체크 (청산 후 포지션 재계산) ===
             # 청산 후 포지션 상태 다시 확인
