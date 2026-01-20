@@ -46,11 +46,10 @@ class SingleEMAStrategy(TradingStrategy):
     CONSECUTIVE_REQUIRED = 2  # 2회 연속 확인
 
     # 2차 매수 진입 조건
-    SECOND_BUY_PRICE_GAIN_MIN = 0.02  # 최소 2% 상승
-    SECOND_BUY_PRICE_GAIN_MAX = 0.07  # 최대 7% 상승
-    SECOND_BUY_EMA_GAP_RATIO = 0.03  # EMA 괴리율 3% 이내
-    SECOND_BUY_FRGN_THRESHOLD = 3.5  # 외국인 3.5% 이상 (1차보다 엄격)
-    SECOND_BUY_VOLUME_RATIO = 1.5  # 거래량 150% 이상
+    SECOND_BUY_PRICE_GAIN_MIN = 0.01  # 최소 1% 상승
+    SECOND_BUY_PRICE_GAIN_MAX = 0.04  # 최대 4% 상승
+    SECOND_BUY_FRGN_THRESHOLD = 1.2  # 외국인 1.2% 이상 (1차보다 완화, 거래량 강도 포함)
+    SECOND_BUY_SAFETY_MARGIN = 0.04  # 손절가 위 4% 안전 마진
     SECOND_BUY_TIME_MIN = 600  # 최소 10분 경과 (같은 날)
 
     # 청산 조건
@@ -507,16 +506,15 @@ class SingleEMAStrategy(TradingStrategy):
         1차 매수 이후 추가 매수 기회 포착
 
         Conditions (all must pass):
-        1. 가격 범위: 1차 매수가 대비 +2% ~ +7%
-        2. EMA 위치: 현재가 > EMA20, 괴리율 ≤ 3%
-        3. 거래량: 전일 대비 150% 이상
-        4. 리스크: 평균 단가가 손절가 위 1% 이상
+        1. 가격 범위: 1차 매수가 대비 +1% ~ +4%
+        2. EMA 위치: 현재가 > EMA20 (추세 확인)
+        3. 수급 강도: 1차 매수 시점 이후 외국인 누적 ≥ 1.2% (거래량 강도 포함)
+        4. 손절 안전거리: 현재가 >= 손절가 × 1.04 (4% 안전 마진)
         5. 시간 간격: 같은 날이면 10분 이상 경과
-        6. 수급 강도: 1차 매수 시점 이후 외국인 누적 ≥ 3.5%
 
         Args:
             db: 데이터베이스 세션
-            redis_client: Redis 클라이언트
+            redis_client: Redis 클라이언트   
             swing_id: 스윙 ID
             symbol: 종목 코드
             df: 주가 데이터
@@ -590,7 +588,7 @@ class SingleEMAStrategy(TradingStrategy):
             return None
 
         # ========================================
-        # 3. EMA 위치 체크
+        # 3. EMA 위치 체크 (추세 확인)
         # ========================================
         realtime_ema20 = cls.get_realtime_ema20(df, curr_price)
 
@@ -602,59 +600,11 @@ class SingleEMAStrategy(TradingStrategy):
             logger.debug(f"[{symbol}] EMA 아래: 현재가={curr_price:,.0f}, EMA={realtime_ema20:,.0f}")
             return None
 
-        ema_gap_ratio = (curr_price - realtime_ema20) / realtime_ema20
-
-        if ema_gap_ratio > cls.SECOND_BUY_EMA_GAP_RATIO:
-            logger.debug(
-                f"[{symbol}] EMA 괴리율 초과: {ema_gap_ratio*100:.2f}% "
-                f"(최대 {cls.SECOND_BUY_EMA_GAP_RATIO*100}%)"
-            )
-            return None
-
         # ========================================
-        # 4. 거래량 체크
-        # ========================================
-        if prdy_vrss_vol_rate < (cls.SECOND_BUY_VOLUME_RATIO * 100):
-            logger.debug(
-                f"[{symbol}] 거래량 부족: {prdy_vrss_vol_rate:.0f}% "
-                f"(최소 {cls.SECOND_BUY_VOLUME_RATIO*100}% 필요)"
-            )
-            return None
-
-        # ========================================
-        # 5. 리스크 체크 (평균 단가가 손절가 위 1%)
-        # ========================================
-        # 2차 매수 후 예상 평균 단가 계산 (50% 추가 매수 가정)
-        additional_qty = hold_qty * 0.5  # 50% 추가
-        expected_avg_price = (entry * hold_qty + curr_price * additional_qty) / (hold_qty + additional_qty)
-        stop_loss_price = entry * (1 + cls.STOP_LOSS_FIXED)  # -3% 손절가
-        risk_threshold = stop_loss_price * 1.01  # 손절가 위 1%
-
-        if expected_avg_price < risk_threshold:
-            logger.debug(
-                f"[{symbol}] 리스크 초과: 예상평균={expected_avg_price:,.0f}, "
-                f"기준={risk_threshold:,.0f}"
-            )
-            return None
-
-        # ========================================
-        # 6. 시간 간격 체크 (같은 날만)
-        # ========================================
-        if first_buy_date_str == today_str:
-            elapsed_seconds = (datetime.now() - first_buy_dt).total_seconds()
-
-            if elapsed_seconds < cls.SECOND_BUY_TIME_MIN:
-                logger.debug(
-                    f"[{symbol}] 시간 간격 부족: {elapsed_seconds/60:.1f}분 "
-                    f"(최소 {cls.SECOND_BUY_TIME_MIN/60}분 필요)"
-                )
-                return None
-
-        # ========================================
-        # 7. 수급 강도 체크 (1차 매수 이후 누적)
+        # 4. 수급 강도 체크 (1차 매수 이후 누적)
         # ========================================
         try:
-            # 7-1. STOCK_DAY_HISTORY에서 1차 매수일 ~ 어제까지 누적
+            # 6-1. STOCK_DAY_HISTORY에서 1차 매수일 ~ 어제까지 누적
             yesterday_str = (datetime.now() - pd.Timedelta(days=1)).strftime('%Y%m%d')
 
             # 1차 매수가 어제 이전인 경우에만 DB 조회
@@ -684,7 +634,7 @@ class SingleEMAStrategy(TradingStrategy):
                 past_vol = 0
                 logger.debug(f"[{symbol}] 1차 매수가 당일, 과거 데이터 없음")
 
-            # 7-2. 당일 실시간 데이터 추가
+            # 6-2. 당일 실시간 데이터 추가
             total_frgn = past_frgn + frgn_ntby_qty
             total_vol = past_vol + acml_vol
 
@@ -711,12 +661,38 @@ class SingleEMAStrategy(TradingStrategy):
             return None
 
         # ========================================
+        # 5. 손절 안전거리 체크 (현재가 >= 손절가 × 1.04)
+        # ========================================
+        stop_loss_price = entry * (1 + cls.STOP_LOSS_FIXED)  # -3% 손절가
+        safety_threshold = stop_loss_price * (1 + cls.SECOND_BUY_SAFETY_MARGIN)  # 손절가 위 4%
+
+        if curr_price < safety_threshold:
+            logger.debug(
+                f"[{symbol}] 손절 안전거리 부족: 현재가={curr_price:,.0f}, "
+                f"안전 기준={safety_threshold:,.0f}"
+            )
+            return None
+
+        # ========================================
+        # 6. 시간 간격 체크 (같은 날만)
+        # ========================================
+        if first_buy_date_str == today_str:
+            elapsed_seconds = (datetime.now() - first_buy_dt).total_seconds()
+
+            if elapsed_seconds < cls.SECOND_BUY_TIME_MIN:
+                logger.debug(
+                    f"[{symbol}] 시간 간격 부족: {elapsed_seconds/60:.1f}분 "
+                    f"(최소 {cls.SECOND_BUY_TIME_MIN/60}분 필요)"
+                )
+                return None
+
+        # ========================================
         # ✅ 모든 조건 충족
         # ========================================
         logger.info(
             f"[{symbol}] 2차 매수 신호 발생: "
-            f"가격상승={price_gain*100:.2f}%, EMA갭={ema_gap_ratio*100:.2f}%, "
-            f"거래량={prdy_vrss_vol_rate:.0f}%, 외국인={cumulative_frgn_ratio:.2f}%"
+            f"가격상승={price_gain*100:.2f}%, "
+            f"외국인={cumulative_frgn_ratio:.2f}%"
         )
 
         return {
@@ -724,10 +700,7 @@ class SingleEMAStrategy(TradingStrategy):
             'price': curr_price,
             'ema20': realtime_ema20,
             'price_gain': price_gain,
-            'ema_gap_ratio': ema_gap_ratio,
             'frgn_ratio': cumulative_frgn_ratio,
-            'volume_ratio': prdy_vrss_vol_rate,
-            'expected_avg_price': expected_avg_price,
             'first_buy_date': first_buy_dt.strftime('%Y-%m-%d %H:%M:%S')
         }
 
