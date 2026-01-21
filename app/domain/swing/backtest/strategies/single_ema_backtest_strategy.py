@@ -28,9 +28,9 @@ Exit Conditions:
 import logging
 from datetime import datetime
 import pandas as pd
-import talib as ta
 from typing import Dict, List, Optional, Tuple
 from .base_strategy import BacktestStrategy
+from app.domain.swing.indicators import TechnicalIndicators
 
 
 class SingleEMABacktestStrategy(BacktestStrategy):
@@ -55,7 +55,7 @@ class SingleEMABacktestStrategy(BacktestStrategy):
 
     # === 진입 조건 필터 ===
     MAX_GAP_RATIO = 0.05  # 괴리율 5% 이하만 진입 (과열 필터)
-    ADX_THRESHOLD = 25  # ADX 25 이상 (횡보장 차단)
+    ADX_THRESHOLD = 18  # ADX 25 이상 (횡보장 차단)
 
     # === 손절 조건 ===
     ATR_MULTIPLIER = 1.0  # EMA-ATR 손절 배수
@@ -131,14 +131,11 @@ class SingleEMABacktestStrategy(BacktestStrategy):
             current_date = row["STCK_BSOP_DATE"]
             ema_20 = row["ema_20"]
 
-            if current_date > datetime(2025, 9, 8):
+            if current_date > datetime(2025, 5, 27):
                 logging.info("확인해볼까용")
 
             # 현재 포지션 계산
-            total_bought = sum(t["quantity"] for t in trades if t["action"] == "BUY")
-            total_sold = sum(t["quantity"] for t in trades if t["action"] == "SELL")
-            total_quantity = total_bought - total_sold
-            has_position = total_quantity > 0
+            total_quantity, has_position = self._calculate_position(trades)
 
             # === 1단계: 청산 신호 체크 (포지션 있을 때) ===
             if has_position:
@@ -215,11 +212,7 @@ class SingleEMABacktestStrategy(BacktestStrategy):
                         # sell_count=1 유지 (2차 매도 위해)
 
             # === 2단계: 진입 신호 체크 (청산 후 포지션 재계산) ===
-            # 청산 후 포지션 상태 다시 확인
-            total_bought = sum(t["quantity"] for t in trades if t["action"] == "BUY")
-            total_sold = sum(t["quantity"] for t in trades if t["action"] == "SELL")
-            total_quantity = total_bought - total_sold
-            has_position = total_quantity > 0
+            total_quantity, has_position = self._calculate_position(trades)
 
             # 포지션 없거나 2차 매수 가능한 경우
             can_buy = (not has_position and buy_count == 0) or (has_position and buy_count < 2)
@@ -292,9 +285,7 @@ class SingleEMABacktestStrategy(BacktestStrategy):
                         buy_count += 1
 
         # 백테스트 종료 시점에 보유 주식이 있는 경우, 최종일 종가로 평가하여 자본금에 합산
-        total_bought = sum(t["quantity"] for t in trades if t["action"] == "BUY")
-        total_sold = sum(t["quantity"] for t in trades if t["action"] == "SELL")
-        remaining_qty = total_bought - total_sold
+        remaining_qty, _ = self._calculate_position(trades)
 
         final_capital = current_capital
         if remaining_qty > 0 and not eval_df.empty:
@@ -336,6 +327,13 @@ class SingleEMABacktestStrategy(BacktestStrategy):
 
         return result
 
+    def _calculate_position(self, trades: List[Dict]) -> Tuple[int, bool]:
+        """현재 포지션 계산"""
+        total_bought = sum(t["quantity"] for t in trades if t["action"] == "BUY")
+        total_sold = sum(t["quantity"] for t in trades if t["action"] == "SELL")
+        total_quantity = total_bought - total_sold
+        return total_quantity, total_quantity > 0
+
     def _prepare_data(self, df: pd.DataFrame) -> pd.DataFrame:
         """데이터 전처리"""
         if "STCK_BSOP_DATE" in df.columns:
@@ -350,74 +348,50 @@ class SingleEMABacktestStrategy(BacktestStrategy):
         return df
 
     def _calculate_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
-        """기술 지표 계산"""
-        close = df["STCK_CLPR"].values.astype(float)
-        high = df["STCK_HGPR"].values.astype(float)
-        low = df["STCK_LWPR"].values.astype(float)
-        volume = df["ACML_VOL"].values.astype(float)
+        """기술 지표 계산 (공통 모듈 사용)"""
+        # 공통 지표 계산 (EMA, ATR, ADX, DI, OBV, OBV z-score, 괴리율)
+        df = TechnicalIndicators.prepare_indicators_from_df(
+            df,
+            ema_period=self.EMA_PERIOD,
+            atr_period=14,
+            adx_period=14,
+            obv_lookback=self.OBV_LOOKBACK
+        )
 
-        # EMA 20
-        df["ema_20"] = pd.Series(ta.EMA(close, timeperiod=self.EMA_PERIOD), index=df.index)
-
-        # ATR (변동성 지표)
-        df["atr"] = pd.Series(ta.ATR(high, low, close, timeperiod=14), index=df.index)
-
-        # ADX (추세 강도)
-        df["adx"] = pd.Series(ta.ADX(high, low, close, timeperiod=14), index=df.index)
-        df["plus_di"] = pd.Series(ta.PLUS_DI(high, low, close, timeperiod=14), index=df.index)
-        df["minus_di"] = pd.Series(ta.MINUS_DI(high, low, close, timeperiod=14), index=df.index)
-
-        # 괴리율
-        df["gap_ratio"] = (df["STCK_CLPR"] - df["ema_20"]) / df["ema_20"]
-
-        # 전일 대비 등락률
+        # 백테스트 전용 추가 지표
         df["daily_return"] = df["STCK_CLPR"].pct_change()
-
-        # OBV
-        df["obv"] = pd.Series(ta.OBV(close, volume), index=df.index)
-
-        # OBV z-score
-        epsilon = 1e-9
-        obv_diff = df["obv"].diff()
-        obv_mean = obv_diff.rolling(self.OBV_LOOKBACK, min_periods=3).mean()
-        obv_std = obv_diff.rolling(self.OBV_LOOKBACK, min_periods=3).std().replace(0, epsilon).fillna(epsilon)
-        df["obv_z"] = ((obv_diff - obv_mean) / obv_std).fillna(0.0)
-
-        # OBV 변화 (상승 여부)
-        df["obv_rising"] = obv_diff > 0
-
-        # 거래량 비율 (실전 매매와 동일: 전일 대비)
+        df["obv_rising"] = df["obv"].diff() > 0
         df["prdy_vol_ratio"] = df["ACML_VOL"] / df["ACML_VOL"].shift(1)
 
         return df
 
     def _check_entry_conditions(self, row: pd.Series) -> bool:
         """
-        진입 조건 체크 (6개 조건)
+        진입 조건 체크 (5개 조건)
 
-        1. EMA 추세: 현재가 > EMA20
+        1. EMA 근접/돌파: 현재가 >= EMA20 * 0.995
         2. 수급 강도: OBV z-score > 1.0 (거래량 강도 포함)
         3. 급등 필터: 당일 상승률 <= 5%
         4. 괴리율 필터: 괴리율 <= 5% (과열 방지)
-        5. 추세 강도: ADX > 25 (횡보장 차단)
-        6. 추세 방향: +DI > -DI (상승 추세 확인)
+        5. 추세 방향: +DI > -DI (상승 추세 확인)
+
+        * ADX는 추세 확인용 후행지표로 청산 조건에서 활용
         """
         # NaN 체크
         if (pd.isna(row["ema_20"]) or pd.isna(row["obv_z"]) or pd.isna(row["gap_ratio"]) or
-            pd.isna(row["adx"]) or pd.isna(row["plus_di"]) or pd.isna(row["minus_di"])):
+            pd.isna(row["plus_di"]) or pd.isna(row["minus_di"])):
             return False
 
         current_price = row["STCK_CLPR"]
         ema_20 = row["ema_20"]
         obv_z = row["obv_z"]
         gap_ratio = row["gap_ratio"]
-        adx = row["adx"]
         plus_di = row["plus_di"]
         minus_di = row["minus_di"]
         daily_return = row["daily_return"] if not pd.isna(row["daily_return"]) else 0
 
-        # 조건 1: EMA 추세
-        price_above_ema = current_price > ema_20
+        # 조건 1: EMA 근접/돌파 (0.5% 이내 근접 허용 - 다른 보조지표로 추세 확인됨)
+        price_near_ema = current_price >= ema_20 * 0.995
 
         # 조건 2: 수급 강도 (OBV z-score)
         supply_strong = obv_z > self.OBV_Z_BUY_THRESHOLD
@@ -428,18 +402,14 @@ class SingleEMABacktestStrategy(BacktestStrategy):
         # 조건 4: 괴리율 과열 필터
         gap_filtered = gap_ratio <= self.MAX_GAP_RATIO
 
-        # 조건 5: 추세 강도 (ADX > 25)
-        trend_strong = adx > self.ADX_THRESHOLD
-
-        # 조건 6: 추세 방향 (상승 추세)
+        # 조건 5: 추세 방향 (상승 추세)
         trend_upward = plus_di > minus_di
 
         return all([
-            price_above_ema,
+            price_near_ema,
             supply_strong,
             surge_filtered,
             gap_filtered,
-            trend_strong,
             trend_upward
         ])
 
@@ -460,8 +430,8 @@ class SingleEMABacktestStrategy(BacktestStrategy):
         1. 고정 손절: -3%
         2. 수급 반전: OBV z-score < -1.0
         3. EMA-ATR 손절: 현재가 <= EMA - (ATR × 배수)
-        4. 수급 약화: OBV 정체 + EMA 하회
-        5. 추세 악화: EMA 아래 + 가격 하락 + 이탈폭 증가
+        4. 추세 전환: +DI < -DI (하락 추세 전환)
+        5. 추세 약화: ADX < 20 (추세 소멸)
 
         [2차 매도 조건]
         1. 1차 매도가 대비 -2% 추가 하락
@@ -471,6 +441,9 @@ class SingleEMABacktestStrategy(BacktestStrategy):
         ema_20 = row["ema_20"]
         atr = row["atr"]
         obv_z = row["obv_z"]
+        adx = row["adx"]
+        plus_di = row["plus_di"]
+        minus_di = row["minus_di"]
 
         # === 1차 매도 조건 ===
         if sell_count == 0:
@@ -478,7 +451,7 @@ class SingleEMABacktestStrategy(BacktestStrategy):
             if entry_price is None or pd.isna(entry_price):
                 return False, ""
 
-            if pd.isna(ema_20) or pd.isna(obv_z) or pd.isna(atr):
+            if pd.isna(ema_20) or pd.isna(obv_z) or pd.isna(atr) or pd.isna(adx) or pd.isna(plus_di) or pd.isna(minus_di):
                 return False, ""
 
             profit_rate = (current_price - entry_price) / entry_price
@@ -491,26 +464,19 @@ class SingleEMABacktestStrategy(BacktestStrategy):
             if obv_z <= self.OBV_Z_SELL_THRESHOLD:
                 return True, f"수급 반전 (OBV z={obv_z:.2f})"
 
-            # 3. EMA-ATR 동적 손절 (핵심!)
+            # 3. EMA-ATR 동적 손절
             ema_stop_loss = ema_20 - (atr * self.ATR_MULTIPLIER)
             if current_price <= ema_stop_loss:
                 gap_pct = abs((current_price - ema_20) / ema_20) * 100
                 return True, f"EMA-ATR 손절 (이탈 {gap_pct:.1f}%, ATR {atr:.0f})"
 
-            # 4. 수급 약화 + EMA 하회
-            below_ema = current_price < ema_20
-            if abs(obv_z) < self.OBV_Z_WEAK_THRESHOLD and below_ema:
-                return True, f"수급 약화 + EMA 하회 (OBV z={obv_z:.2f})"
+            # 4. 추세 전환: +DI < -DI (하락 추세 전환)
+            if minus_di > plus_di:
+                return True, f"추세 전환 (+DI={plus_di:.1f} < -DI={minus_di:.1f})"
 
-            # 5. 추세 악화
-            if below_ema and prev_gap is not None:
-                current_gap = ema_20 - current_price
-                prev_price = prev_row["STCK_CLPR"] if prev_row is not None else current_price
-                price_declined = current_price < prev_price
-                gap_increased = current_gap > prev_gap
-
-                if price_declined and gap_increased:
-                    return True, "추세 악화 (가격 하락 + 이탈폭 증가)"
+            # 5. 추세 약화: ADX < 20 (추세 소멸)
+            if adx < 20:
+                return True, f"추세 약화 (ADX={adx:.1f})"
 
         # === 2차 매도 조건 ===
         else:
