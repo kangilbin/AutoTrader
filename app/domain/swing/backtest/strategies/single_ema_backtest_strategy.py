@@ -8,19 +8,20 @@ Entry Conditions (1차 매수):
 1. EMA 추세: 현재가 > EMA20 (추세 확인)
 2. 수급 강도: OBV z-score > 1.0 (거래량 강도 포함)
 3. 급등 필터: 당일 상승률 <= 5%
-4. 연속 확인: 1회 (일봉 기준)
+4. 괴리율 필터: EMA 괴리율 <= 5% (고점 매수 방지)
+5. 추세 강도: ADX > 25 (횡보장 차단)
+6. 추세 방향: +DI > -DI (상승 추세 확인)
 
 Entry Conditions (2차 매수):
-1. 가격 범위: 1차 매수가 대비 +1% ~ +4%
+1. 가격 범위: 1차 매수가 대비 +1% ~ +6%
 2. EMA 위치: 현재가 > EMA20 (추세 확인)
-3. 수급 강도: OBV z-score >= 1.3 (1차보다 엄격, 거래량 강도 포함)
+3. 수급 강도: OBV z-score >= 1.1 (거래량 강도 포함)
 4. 손절 안전거리: 현재가 >= 손절가 × 1.04 (4% 안전 마진)
-5. 시간 간격: 같은 날이면 연속 체크로 자연스럽게 간격 확보
 
 Exit Conditions:
 1. 고정 손절: -3%
 2. 수급 반전: OBV z-score < -1.0
-3. EMA 이탈: 2일 연속 EMA 아래
+3. EMA-ATR 손절: 현재가 <= EMA - (ATR × 1.0)
 4. 수급 약화: OBV 정체 (z-score 0 근처) + EMA 하회
 5. 추세 악화: EMA 아래에서 가격 하락 + 이탈폭 증가
 """
@@ -52,11 +53,22 @@ class SingleEMABacktestStrategy(BacktestStrategy):
     OBV_Z_WEAK_THRESHOLD = 0.3  # 수급 약화 판단 기준
     OBV_LOOKBACK = 7  # OBV z-score 계산 기간
 
+    # === 진입 조건 필터 ===
+    MAX_GAP_RATIO = 0.05  # 괴리율 5% 이하만 진입 (과열 필터)
+    ADX_THRESHOLD = 25  # ADX 25 이상 (횡보장 차단)
+
+    # === 손절 조건 ===
+    ATR_MULTIPLIER = 1.0  # EMA-ATR 손절 배수
+
     # === 2차 매수 조건 ===
     SECOND_BUY_PRICE_GAIN_MIN = 0.01  # 최소 1% 상승
-    SECOND_BUY_PRICE_GAIN_MAX = 0.04  # 최대 4% 상승
-    SECOND_BUY_OBV_THRESHOLD = 1.3  # OBV z-score 1.3 이상 (1차보다 엄격, 거래량 강도 포함)
+    SECOND_BUY_PRICE_GAIN_MAX = 0.06  # 최대 6% 상승 (완화)
+    SECOND_BUY_OBV_THRESHOLD = 1.1  # OBV z-score 1.1 이상 (완화)
     SECOND_BUY_SAFETY_MARGIN = 0.04  # 손절가 위 4% 안전 마진
+
+    # === 2차 매도 조건 ===
+    SECOND_SELL_DROP_THRESHOLD = -0.02  # 1차 매도가 대비 -2% 추가 하락
+    SECOND_SELL_OBV_THRESHOLD = -1.5  # 수급 급락 기준
 
     def __init__(self):
         super().__init__("단일 20EMA 전략")
@@ -100,6 +112,7 @@ class SingleEMABacktestStrategy(BacktestStrategy):
         sell_count = 0  # 매도 횟수 (분할 매도용)
         entry_price = None  # 진입가
         prev_gap = None  # 이전 EMA 이탈폭 (추세 악화 체크용)
+        first_sell_price = None  # 1차 매도가 (2차 매도 조건용)
 
         for i in range(len(eval_df)):
             idx = eval_df.index[i]
@@ -126,7 +139,8 @@ class SingleEMABacktestStrategy(BacktestStrategy):
             # === 1단계: 청산 신호 체크 (포지션 있을 때) ===
             if has_position:
                 exit_signal, exit_reason = self._check_exit_conditions(
-                    row, prev_row, entry_price, ema_breach_count, prev_gap
+                    row, prev_row, entry_price, ema_breach_count, prev_gap,
+                    sell_count, first_sell_price
                 )
 
                 # EMA 이탈 카운트 업데이트
@@ -173,14 +187,21 @@ class SingleEMABacktestStrategy(BacktestStrategy):
                     # 포지션 완전 청산 시에만 상태 리셋
                     remaining_qty = curr_qty - sell_quantity
                     if remaining_qty <= 0:
+                        # 완전 청산
                         entry_price = None
                         ema_breach_count = 0
                         prev_gap = None
                         sell_count = 0
-                        buy_count = 0  # 매수 횟수도 리셋
-                    else:
-                        # 포지션이 남아있으면 1차 매수 조건부터 다시 체크
                         buy_count = 0
+                        first_sell_price = None
+                    else:
+                        # 1차 매도 후 포지션 남음
+                        first_sell_price = current_price  # 1차 매도가 저장
+                        entry_price = None  # 진입가 리셋 (재진입 대기)
+                        ema_breach_count = 0
+                        prev_gap = None
+                        buy_count = 0  # 재진입 대기
+                        # sell_count=1 유지 (2차 매도 위해)
 
             # === 2단계: 진입 신호 체크 (청산 후 포지션 재계산) ===
             # 청산 후 포지션 상태 다시 확인
@@ -220,10 +241,17 @@ class SingleEMABacktestStrategy(BacktestStrategy):
                     if buy_quantity > 0:
                         current_capital -= executed_amount
 
-                        # 1차 매수 시에만 진입가 설정
+                        # 1차/2차 매수 시 진입가 설정
                         if buy_count == 0:
+                            # 1차 매수: 진입가 설정
                             entry_price = current_price
                             sell_count = 0  # 매도 횟수 리셋
+                        else:
+                            # 2차 매수: 평균 단가 재계산
+                            curr_qty, curr_avg_cost = self._calculate_position_state(trades)
+                            total_cost = (curr_avg_cost * curr_qty) + executed_amount
+                            total_qty = curr_qty + buy_quantity
+                            entry_price = total_cost / total_qty
 
                         entry_consecutive = 0
                         ema_breach_count = 0
@@ -267,7 +295,7 @@ class SingleEMABacktestStrategy(BacktestStrategy):
             df["STCK_BSOP_DATE"] = pd.to_datetime(df["STCK_BSOP_DATE"])
             df = df.sort_values("STCK_BSOP_DATE").reset_index(drop=True)
 
-        for col in ["STCK_CLPR", "ACML_VOL"]:
+        for col in ["STCK_CLPR", "STCK_HGPR", "STCK_LWPR", "ACML_VOL"]:
             if col in df.columns:
                 df[col] = pd.to_numeric(df[col], errors="coerce")
 
@@ -276,10 +304,20 @@ class SingleEMABacktestStrategy(BacktestStrategy):
     def _calculate_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
         """기술 지표 계산"""
         close = df["STCK_CLPR"].values.astype(float)
+        high = df["STCK_HGPR"].values.astype(float)
+        low = df["STCK_LWPR"].values.astype(float)
         volume = df["ACML_VOL"].values.astype(float)
 
         # EMA 20
         df["ema_20"] = pd.Series(ta.EMA(close, timeperiod=self.EMA_PERIOD), index=df.index)
+
+        # ATR (변동성 지표)
+        df["atr"] = pd.Series(ta.ATR(high, low, close, timeperiod=14), index=df.index)
+
+        # ADX (추세 강도)
+        df["adx"] = pd.Series(ta.ADX(high, low, close, timeperiod=14), index=df.index)
+        df["plus_di"] = pd.Series(ta.PLUS_DI(high, low, close, timeperiod=14), index=df.index)
+        df["minus_di"] = pd.Series(ta.MINUS_DI(high, low, close, timeperiod=14), index=df.index)
 
         # 괴리율
         df["gap_ratio"] = (df["STCK_CLPR"] - df["ema_20"]) / df["ema_20"]
@@ -307,19 +345,27 @@ class SingleEMABacktestStrategy(BacktestStrategy):
 
     def _check_entry_conditions(self, row: pd.Series) -> bool:
         """
-        진입 조건 체크 (3개 조건)
+        진입 조건 체크 (6개 조건)
 
         1. EMA 추세: 현재가 > EMA20
         2. 수급 강도: OBV z-score > 1.0 (거래량 강도 포함)
         3. 급등 필터: 당일 상승률 <= 5%
+        4. 괴리율 필터: 괴리율 <= 5% (과열 방지)
+        5. 추세 강도: ADX > 25 (횡보장 차단)
+        6. 추세 방향: +DI > -DI (상승 추세 확인)
         """
         # NaN 체크
-        if pd.isna(row["ema_20"]) or pd.isna(row["obv_z"]):
+        if (pd.isna(row["ema_20"]) or pd.isna(row["obv_z"]) or pd.isna(row["gap_ratio"]) or
+            pd.isna(row["adx"]) or pd.isna(row["plus_di"]) or pd.isna(row["minus_di"])):
             return False
 
         current_price = row["STCK_CLPR"]
         ema_20 = row["ema_20"]
         obv_z = row["obv_z"]
+        gap_ratio = row["gap_ratio"]
+        adx = row["adx"]
+        plus_di = row["plus_di"]
+        minus_di = row["minus_di"]
         daily_return = row["daily_return"] if not pd.isna(row["daily_return"]) else 0
 
         # 조건 1: EMA 추세
@@ -331,10 +377,22 @@ class SingleEMABacktestStrategy(BacktestStrategy):
         # 조건 3: 급등 필터
         surge_filtered = daily_return <= self.MAX_SURGE_RATIO
 
+        # 조건 4: 괴리율 과열 필터
+        gap_filtered = gap_ratio <= self.MAX_GAP_RATIO
+
+        # 조건 5: 추세 강도 (ADX > 25)
+        trend_strong = adx > self.ADX_THRESHOLD
+
+        # 조건 6: 추세 방향 (상승 추세)
+        trend_upward = plus_di > minus_di
+
         return all([
             price_above_ema,
             supply_strong,
-            surge_filtered
+            surge_filtered,
+            gap_filtered,
+            trend_strong,
+            trend_upward
         ])
 
     def _check_exit_conditions(
@@ -343,58 +401,87 @@ class SingleEMABacktestStrategy(BacktestStrategy):
         prev_row: pd.Series,
         entry_price: float,
         ema_breach_count: int,
-        prev_gap: Optional[float]
+        prev_gap: Optional[float],
+        sell_count: int,
+        first_sell_price: Optional[float] = None
     ) -> Tuple[bool, str]:
         """
-        청산 조건 체크 (5개 조건, 우선순위 순)
+        청산 조건 체크 (1차/2차 매도 조건 분리)
 
-        1. 고정 손절 -3%
-        2. 수급 반전 (OBV z-score < -1.0)
-        3. EMA 이탈 (2일 연속)
-        4. 수급 약화 (OBV 정체)
-        5. 추세 악화 (EMA 아래 + 가격 하락 + 이탈폭 증가)
+        [1차 매도 조건]
+        1. 고정 손절: -3%
+        2. 수급 반전: OBV z-score < -1.0
+        3. EMA-ATR 손절: 현재가 <= EMA - (ATR × 배수)
+        4. 수급 약화: OBV 정체 + EMA 하회
+        5. 추세 악화: EMA 아래 + 가격 하락 + 이탈폭 증가
+
+        [2차 매도 조건]
+        1. 1차 매도가 대비 -2% 추가 하락
+        2. 수급 급락: OBV z-score < -1.5
         """
         current_price = row["STCK_CLPR"]
         ema_20 = row["ema_20"]
+        atr = row["atr"]
         obv_z = row["obv_z"]
 
-        # NaN 체크 및 진입가 검증
-        if entry_price is None or pd.isna(entry_price):
-            return False, ""
+        # === 1차 매도 조건 ===
+        if sell_count == 0:
+            # NaN 체크 및 진입가 검증
+            if entry_price is None or pd.isna(entry_price):
+                return False, ""
 
-        if pd.isna(ema_20) or pd.isna(obv_z):
-            return False, ""
+            if pd.isna(ema_20) or pd.isna(obv_z) or pd.isna(atr):
+                return False, ""
 
-        profit_rate = (current_price - entry_price) / entry_price
+            profit_rate = (current_price - entry_price) / entry_price
 
-        # 1. 고정 손절
-        if profit_rate <= self.STOP_LOSS_FIXED:
-            return True, f"고정 손절 ({profit_rate*100:.2f}%)"
+            # 1. 고정 손절 -3% (백업)
+            if profit_rate <= self.STOP_LOSS_FIXED:
+                return True, f"고정 손절 ({profit_rate*100:.2f}%)"
 
-        # 2. 수급 반전
-        if obv_z <= self.OBV_Z_SELL_THRESHOLD:
-            return True, f"수급 반전 (OBV z={obv_z:.2f})"
+            # 2. 수급 반전
+            if obv_z <= self.OBV_Z_SELL_THRESHOLD:
+                return True, f"수급 반전 (OBV z={obv_z:.2f})"
 
-        # 3. EMA 이탈 (2일 연속)
-        below_ema = current_price < ema_20
-        if below_ema and ema_breach_count + 1 >= self.EMA_BREACH_REQUIRED:
-            return True, f"EMA 이탈 ({ema_breach_count + 1}일 연속)"
+            # 3. EMA-ATR 동적 손절 (핵심!)
+            ema_stop_loss = ema_20 - (atr * self.ATR_MULTIPLIER)
+            if current_price <= ema_stop_loss:
+                gap_pct = abs((current_price - ema_20) / ema_20) * 100
+                return True, f"EMA-ATR 손절 (이탈 {gap_pct:.1f}%, ATR {atr:.0f})"
 
-        # 4. 수급 약화
-        if abs(obv_z) < self.OBV_Z_WEAK_THRESHOLD:
-            # 추가 조건: 가격이 EMA 아래일 때만 청산
-            if below_ema:
+            # 4. 수급 약화 + EMA 하회
+            below_ema = current_price < ema_20
+            if abs(obv_z) < self.OBV_Z_WEAK_THRESHOLD and below_ema:
                 return True, f"수급 약화 + EMA 하회 (OBV z={obv_z:.2f})"
 
-        # 5. 추세 악화
-        if below_ema and prev_gap is not None:
-            current_gap = ema_20 - current_price
-            prev_price = prev_row["STCK_CLPR"] if prev_row is not None else current_price
-            price_declined = current_price < prev_price
-            gap_increased = current_gap > prev_gap
+            # 5. 추세 악화
+            if below_ema and prev_gap is not None:
+                current_gap = ema_20 - current_price
+                prev_price = prev_row["STCK_CLPR"] if prev_row is not None else current_price
+                price_declined = current_price < prev_price
+                gap_increased = current_gap > prev_gap
 
-            if price_declined and gap_increased:
-                return True, "추세 악화 (가격 하락 + 이탈폭 증가)"
+                if price_declined and gap_increased:
+                    return True, "추세 악화 (가격 하락 + 이탈폭 증가)"
+
+        # === 2차 매도 조건 ===
+        else:
+            # 1차 매도가 대비 추가 하락만 체크
+            if first_sell_price is None:
+                return False, ""
+
+            if pd.isna(obv_z):
+                return False, ""
+
+            additional_drop = (current_price - first_sell_price) / first_sell_price
+
+            # 1. 1차 매도가 대비 -2% 추가 하락
+            if additional_drop <= self.SECOND_SELL_DROP_THRESHOLD:
+                return True, f"추가 하락 ({additional_drop*100:.2f}%)"
+
+            # 2. 수급 급락
+            if obv_z <= self.SECOND_SELL_OBV_THRESHOLD:
+                return True, f"수급 급락 (OBV z={obv_z:.2f})"
 
         return False, ""
 
