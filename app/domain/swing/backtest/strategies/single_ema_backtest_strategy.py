@@ -176,7 +176,7 @@ class SingleEMABacktestStrategy(BacktestStrategy):
                             "price": float(current_price),
                             "amount": float(sell_amount),
                             "current_capital": float(current_capital),
-                            "realized_pnl": float(realized_pnl), # 실형 손익
+                            "realized_pnl": float(realized_pnl), # 실현 손익
                             "realized_pnl_pct": round(realized_pnl_pct, 2), # 실현 수익률
                             "reason": f"{exit_reason} ({sell_count + 1}차 매도)",
                         })
@@ -278,8 +278,37 @@ class SingleEMABacktestStrategy(BacktestStrategy):
                         # 매수 횟수 증가
                         buy_count += 1
 
-        # 결과 포맷팅
-        result = self._format_result(prices_df, params, trades, current_capital)
+        # 백테스트 종료 시점에 보유 주식이 있는 경우, 최종일 종가로 평가하여 자본금에 합산
+        total_bought = sum(t["quantity"] for t in trades if t["action"] == "BUY")
+        total_sold = sum(t["quantity"] for t in trades if t["action"] == "SELL")
+        remaining_qty = total_bought - total_sold
+
+        final_capital = current_capital
+        if remaining_qty > 0 and not eval_df.empty:
+            last_row = eval_df.iloc[-1]
+            last_price = last_row["STCK_CLPR"]
+            liquidation_value = remaining_qty * last_price
+            final_capital += liquidation_value
+
+            # 명확성을 위해 최종 청산 거래 기록 추가
+            _, current_avg_cost = self._calculate_position_state(trades)
+            realized_pnl = (last_price - current_avg_cost) * remaining_qty
+            realized_pnl_pct = ((last_price / current_avg_cost) - 1) * 100 if current_avg_cost > 0 else 0.0
+
+            trades.append({
+                "date": last_row["STCK_BSOP_DATE"],
+                "action": "LIQUIDATION",
+                "quantity": remaining_qty,
+                "price": float(last_price),
+                "amount": float(liquidation_value),
+                "current_capital": float(final_capital),
+                "realized_pnl": float(realized_pnl),
+                "realized_pnl_pct": round(realized_pnl_pct, 2),
+                "reason": "백테스트 종료, 최종 보유분 청산",
+            })
+
+        # 결과 포맷팅 (최종 평가 자본금 사용)
+        result = self._format_result(prices_df, params, trades, final_capital)
         result["parameters"].update({
             "EMA_PERIOD": self.EMA_PERIOD,
             "MAX_SURGE_RATIO": self.MAX_SURGE_RATIO,
