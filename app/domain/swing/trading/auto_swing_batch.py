@@ -454,11 +454,12 @@ async def day_collect_job():
 
 async def ema_cache_warmup_job():
     """
-    EMA 캐시 워밍업 배치 (스케줄러에서 호출)
+    지표 캐시 워밍업 배치 (스케줄러에서 호출)
 
     - 실행 시점: 매일 08:30 (장 시작 전)
     - 대상: SWING_TRADE.USE_YN = 'Y'인 종목
-    - 작업: 과거 120일 데이터로 EMA20 초기 계산 → Redis 저장
+    - 작업: 과거 3년 데이터로 지표 계산 → Redis 저장
+    - 저장 지표: EMA20, ADX, +DI, -DI (오늘/어제 2일치)
     """
     db = await Database.get_session()
 
@@ -467,10 +468,10 @@ async def ema_cache_warmup_job():
         swing_service = SwingService(db)
 
         result = await swing_service.warmup_ema_cache(redis_client)
-        logger.info(f"EMA 캐시 워밍업 결과: {result}")
+        logger.info(f"지표 캐시 워밍업 결과: {result}")
 
     except Exception as e:
-        logger.error(f"EMA 캐시 워밍업 실패: {e}", exc_info=True)
+        logger.error(f"지표 캐시 워밍업 실패: {e}", exc_info=True)
     finally:
         await db.close()
 
