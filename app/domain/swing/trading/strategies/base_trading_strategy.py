@@ -29,7 +29,6 @@ class TradingStrategy(ABC):
         df: pd.DataFrame,
         current_price: Decimal,
         frgn_ntby_qty: int,
-        pgtr_ntby_qty: int,
         acml_vol: int,
         prdy_vrss_vol_rate: float,
         prdy_ctrt: float
@@ -43,7 +42,6 @@ class TradingStrategy(ABC):
             df: 주가 데이터
             current_price: 현재가
             frgn_ntby_qty: 외국인 순매수량
-            pgtr_ntby_qty: 프로그램 순매수량
             acml_vol: 누적거래량
             prdy_vrss_vol_rate: 전일대비 거래량 비율
             prdy_ctrt: 전일대비 상승률
@@ -64,7 +62,6 @@ class TradingStrategy(ABC):
         current_price: Decimal,
         entry_price: Decimal,
         frgn_ntby_qty: int,
-        pgtr_ntby_qty: int,
         acml_vol: int
     ) -> Dict:
         """
@@ -78,7 +75,6 @@ class TradingStrategy(ABC):
             current_price: 현재가
             entry_price: 진입가
             frgn_ntby_qty: 외국인 순매수량
-            pgtr_ntby_qty: 프로그램 순매수량
             acml_vol: 누적거래량
 
         Returns:
