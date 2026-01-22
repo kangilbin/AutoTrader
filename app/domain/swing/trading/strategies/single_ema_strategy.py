@@ -2,13 +2,12 @@
 단일 20EMA 매매 전략 (Single EMA Strategy)
 
 **매수 조건 (Entry Conditions):**
-1. EMA 추세: 현재가 > 실시간 EMA20
+1. EMA 추세: 현재가 >= 실시간 EMA20 * 0.995 (0.5% 여유)
 2. 수급 강도: (외국인 >= 1.5%) AND (OBV z-score >= 1.0)
 3. 급등 필터: 당일 상승률 <= 5%
 4. 괴리율 필터: EMA 괴리율 <= 5%
-5. 추세 강도: ADX > 25
-6. 추세 방향: +DI > -DI
-7. 연속 확인: 2회 (Redis 상태 관리)
+5. 추세 방향: +DI > -DI
+6. 연속 확인: 2회 (Redis 상태 관리, 5분 주기 노이즈 필터링)
 
 **매도 조건 (Exit Conditions) - 이원화된 하이브리드 전략:**
 
@@ -61,7 +60,6 @@ class SingleEMAStrategy(TradingStrategy):
     OBV_Z_BUY_THRESHOLD = 1.0
     MAX_SURGE_RATIO = 0.05
     MAX_GAP_RATIO = 0.05
-    ADX_THRESHOLD = 25
     CONSECUTIVE_REQUIRED = 2
 
     # 2차 매수 조건
@@ -133,7 +131,6 @@ class SingleEMAStrategy(TradingStrategy):
             if realtime_ema20 is None: return None
 
             obv_z = last_row.get('obv_z', 0)
-            adx = last_row.get('adx', 0)
             plus_di = last_row.get('plus_di', 0)
             minus_di = last_row.get('minus_di', 0)
             gap_ratio = TechnicalIndicators.calculate_gap_ratio(curr_price, realtime_ema20)
@@ -142,15 +139,14 @@ class SingleEMAStrategy(TradingStrategy):
             return None
 
         # 조건 검증
-        price_above_ema = curr_price > realtime_ema20
+        price_above_ema = curr_price >= realtime_ema20 * 0.995  # 0.5% 여유
         frgn_ratio = (frgn_ntby_qty / acml_vol * 100) if acml_vol > 0 else 0
         supply_strong = (frgn_ratio >= cls.FRGN_STRONG_THRESHOLD) and (obv_z >= cls.OBV_Z_BUY_THRESHOLD)
         surge_filtered = prdy_ctrt <= (cls.MAX_SURGE_RATIO * 100)
         gap_filtered = gap_ratio <= cls.MAX_GAP_RATIO
-        trend_strong = adx > cls.ADX_THRESHOLD
         trend_upward = plus_di > minus_di
 
-        current_signal = all([price_above_ema, supply_strong, surge_filtered, gap_filtered, trend_strong, trend_upward])
+        current_signal = all([price_above_ema, supply_strong, surge_filtered, gap_filtered, trend_upward])
 
         # 연속성 체크 (Redis)
         prev_state_key = f"entry:{symbol}"
