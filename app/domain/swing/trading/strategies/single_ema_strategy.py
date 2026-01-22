@@ -65,12 +65,19 @@ class SingleEMAStrategy(TradingStrategy):
     CONSECUTIVE_REQUIRED = 2
 
     # 2차 매수 조건
-    SECOND_BUY_PRICE_GAIN_MIN = 0.01
-    SECOND_BUY_PRICE_GAIN_MAX = 0.04
-    SECOND_BUY_FRGN_THRESHOLD = 1.2
-    SECOND_BUY_OBV_THRESHOLD = 0.9
+    # [시나리오 A] 추세 강화형
+    SECOND_BUY_PRICE_GAIN_MIN = 0.02
+    SECOND_BUY_PRICE_GAIN_MAX = 0.08
+    SECOND_BUY_FRGN_THRESHOLD = 1.5
+    SECOND_BUY_OBV_THRESHOLD = 1.2
     SECOND_BUY_SAFETY_MARGIN = 0.04
     SECOND_BUY_TIME_MIN = 600
+
+    # [시나리오 B] 조정 매수형
+    PULLBACK_BUY_PRICE_RANGE = (-0.01, 0.01)  # 진입가 ±1%
+    PULLBACK_BUY_FRGN_MIN = 0.5               # 외국인 최소 요구치
+    PULLBACK_BUY_OBV_MIN = 0.5                # OBV z-score 최소 요구치
+    PULLBACK_BUY_ATR_MULTIPLIER = 0.5         # ATR 안전 거리
 
     # 매도 조건 (이원화)
     # [1차 방어선]
@@ -205,9 +212,71 @@ class SingleEMAStrategy(TradingStrategy):
         acml_vol: int,
         prdy_vrss_vol_rate: float
     ) -> Optional[Dict]:
-        """2차 매수 신호 체크 (필요 시 구현)"""
-        # 이 예제에서는 2차 매수 로직은 생략하고 매도 로직에 집중합니다.
-        return None
+        """
+        2차 매수 신호 체크 (하이브리드: 추세 강화형 + 조정 매수형)
+
+        시나리오 A: 추세 강화형 (2~8% 상승)
+        시나리오 B: 건강한 조정 후 반등 (진입가 ±1%)
+        """
+        try:
+            curr_price = float(current_price)
+            entry = float(entry_price)
+            price_change = (curr_price - entry) / entry
+
+            # 지표 계산
+            if 'obv_z' not in df.columns or 'adx' not in df.columns or 'atr' not in df.columns:
+                df = TechnicalIndicators.prepare_indicators_from_df(df, atr_period=14)
+
+            last_row = df.iloc[-1]
+            realtime_ema20 = cls.get_realtime_ema20(df, curr_price)
+            if realtime_ema20 is None:
+                return None
+
+            obv_z = last_row.get('obv_z', 0)
+            atr = last_row.get('atr', 0)
+            plus_di = last_row.get('plus_di', 0)
+            minus_di = last_row.get('minus_di', 0)
+            frgn_ratio = (frgn_ntby_qty / acml_vol * 100) if acml_vol > 0 else 0
+
+            # === 시나리오 A: 추세 강화형 (2~8% 상승) ===
+            if cls.SECOND_BUY_PRICE_GAIN_MIN <= price_change <= cls.SECOND_BUY_PRICE_GAIN_MAX:
+                # 조건: EMA 위 + 강한 수급 + 안전 마진
+                if curr_price > realtime_ema20:
+                    if frgn_ratio >= cls.SECOND_BUY_FRGN_THRESHOLD and obv_z >= cls.SECOND_BUY_OBV_THRESHOLD:
+                        stop_loss_price = entry * (1 + cls.STOP_LOSS_FIXED)
+                        safety_threshold = stop_loss_price * (1 + cls.SECOND_BUY_SAFETY_MARGIN)
+                        if curr_price >= safety_threshold:
+                            logger.info(f"[{symbol}] ✅ 2차 매수 신호 (추세 강화형): {price_change*100:.2f}% 상승")
+                            return {
+                                'action': 'BUY',
+                                'price': curr_price,
+                                'reason': f"2차매수(추세강화 +{price_change*100:.1f}%)"
+                            }
+
+            # === 시나리오 B: 건강한 조정 후 반등 (진입가 ±1%) ===
+            if cls.PULLBACK_BUY_PRICE_RANGE[0] <= price_change <= cls.PULLBACK_BUY_PRICE_RANGE[1]:
+                # 조건 1: EMA 위에서 지지 (0.5% 여유)
+                if curr_price >= realtime_ema20 * 0.995:
+                    # 조건 2: 수급 유지 (외국인 OR OBV)
+                    supply_ok = (frgn_ratio > cls.PULLBACK_BUY_FRGN_MIN) or (obv_z > cls.PULLBACK_BUY_OBV_MIN)
+                    if supply_ok:
+                        # 조건 3: 추세 유지
+                        if plus_di > minus_di:
+                            # 조건 4: ATR 대비 안전 거리
+                            atr_support = realtime_ema20 - (atr * cls.PULLBACK_BUY_ATR_MULTIPLIER)
+                            if curr_price > atr_support:
+                                logger.info(f"[{symbol}] ✅ 2차 매수 신호 (조정 매수형): 진입가 근처 지지")
+                                return {
+                                    'action': 'BUY',
+                                    'price': curr_price,
+                                    'reason': f"2차매수(조정반등 {price_change*100:+.1f}%)"
+                                }
+
+            return None
+
+        except Exception as e:
+            logger.error(f"[{symbol}] 2차 매수 신호 체크 실패: {e}", exc_info=True)
+            return None
 
     # ========================================
     # 매도 신호 로직 (핵심: 이원화된 하이브리드 전략)
