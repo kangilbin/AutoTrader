@@ -457,7 +457,7 @@ class SwingService:
                             "today": float(today['minus_di']),
                             "yesterday": float(yesterday['minus_di'])
                         },
-                        "date": today['STCK_BSOP_DATE'].strftime('%Y%m%d')
+                        "date": today['STCK_BSOP_DATE']
                     }
 
                     await redis_client.setex(

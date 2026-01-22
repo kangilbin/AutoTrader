@@ -56,10 +56,12 @@ class SingleEMABacktestStrategy(BacktestStrategy):
     SECOND_BUY_OBV_THRESHOLD = 1.2
     SECOND_BUY_SAFETY_MARGIN = 0.04
 
-    # [시나리오 B] 조정 매수형
-    PULLBACK_BUY_PRICE_RANGE = (-0.01, 0.01)  # 진입가 ±1%
-    PULLBACK_BUY_OBV_MIN = 0.5                # 수급 최소 요구치
-    PULLBACK_BUY_ATR_MULTIPLIER = 0.5         # ATR 안전 거리
+    # [시나리오 B] 눌림목 매수형 (건강한 조정 후 반등)
+    PULLBACK_BUY_DROP_MIN = -0.025            # 진입가 대비 최대 하락폭 (-2.5%, 손절 전 안전마진)
+    PULLBACK_BUY_DROP_MAX = -0.01             # 진입가 대비 최소 하락폭 (-1.0%, 조정 인정 최소선)
+    PULLBACK_BUY_EMA_TOLERANCE = 0.98         # EMA 대비 허용 하한 (EMA × 0.98)
+    PULLBACK_BUY_OBV_MIN = 0.0                # 수급 최소 요구치 (중립 이상)
+    PULLBACK_BUY_REBOUND_RATIO = 1.01         # 저점 대비 반등 비율 (1%)
 
     # === 거래 비용 ===
     COMMISSION_RATE = 0.00147
@@ -106,7 +108,7 @@ class SingleEMABacktestStrategy(BacktestStrategy):
                 immediate_sell_signal, reason = self._check_immediate_sell_conditions(row, entry_price)
 
                 if immediate_sell_signal:
-                    sell_price = min(entry_price * (1 + self.STOP_LOSS_FIXED), row["STCK_OPPR"]) # 갭하락 고려
+                    sell_price = min(entry_price * (1 + self.STOP_LOSS_FIXED), row["STCK_OPRC"]) # 갭하락 고려
                     current_capital = self._execute_sell(trades, current_date, sell_price, current_capital, reason, sell_all=True)
 
                     # 상태 초기화
@@ -165,7 +167,6 @@ class SingleEMABacktestStrategy(BacktestStrategy):
                         # 매수 시 모든 매도 신호 리셋
                         eod_signal_dates = {k: None for k in eod_signal_dates}
 
-
         # 최종 청산 및 결과 포맷팅
         final_capital = self._liquidate_final_position(trades, eval_df, current_capital)
         result = self._format_result(prices_df, params, trades, final_capital)
@@ -174,16 +175,17 @@ class SingleEMABacktestStrategy(BacktestStrategy):
     def _check_immediate_sell_conditions(self, row: pd.Series, entry_price: float) -> Tuple[bool, str]:
         """[1차 방어선] 저가 기준 즉시 매도 조건 체크"""
         low_price = row["STCK_LWPR"]
-        
+
         # 1. 고정 손절
         if low_price <= entry_price * (1 + self.STOP_LOSS_FIXED):
             return True, f"고정손절({self.STOP_LOSS_FIXED*100:.2f}%)"
 
-        # 2. EMA-ATR 동적 손절
-        ema_stop_loss = row["ema_20"] - (row["atr"] * self.ATR_MULTIPLIER)
-        if low_price <= ema_stop_loss:
-            return True, "EMA-ATR손절"
-            
+        # 2. EMA-ATR 동적 손절 (NaN 체크)
+        if pd.notna(row["ema_20"]) and pd.notna(row["atr"]):
+            ema_stop_loss = row["ema_20"] - (row["atr"] * self.ATR_MULTIPLIER)
+            if low_price <= ema_stop_loss:
+                return True, "EMA-ATR손절"
+
         return False, ""
 
     def _update_and_check_eod_sell_signals(self, row, prev_row, current_date, eod_signal_dates, position_status, entry_price, first_sell_price) -> Tuple[Optional[str], str]:
@@ -218,16 +220,26 @@ class SingleEMABacktestStrategy(BacktestStrategy):
 
     @staticmethod
     def _check_ema_breach_eod(row: pd.Series) -> bool:
+        if pd.isna(row['ema_20']):
+            return False
         return row['STCK_CLPR'] < row['ema_20']
 
     @staticmethod
     def _check_trend_weakness_eod(row: pd.Series, prev_row: pd.Series) -> bool:
+        # NaN 체크
+        required_cols = ['adx', 'minus_di', 'plus_di']
+        if any(pd.isna(row[col]) for col in required_cols):
+            return False
+        if any(pd.isna(prev_row[col]) for col in required_cols):
+            return False
         # 백테스트에서는 데이터프레임의 이전 row를 활용하여 2일 연속을 체크
         is_today_weak = row['adx'] < 20 and row['minus_di'] > row['plus_di']
         is_yesterday_weak = prev_row['adx'] < 20 and prev_row['minus_di'] > prev_row['plus_di']
         return is_today_weak and is_yesterday_weak
 
     def _check_supply_weakness_eod(self, row: pd.Series) -> bool:
+        if pd.isna(row['obv_z']):
+            return False
         return row['obv_z'] < self.OBV_Z_SELL_THRESHOLD
 
     def _calculate_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -269,17 +281,17 @@ class SingleEMABacktestStrategy(BacktestStrategy):
                 if current_price >= safety_threshold:
                     return True
 
-        # === 시나리오 B: 건강한 조정 후 반등 (진입가 ±1%) ===
-        if self.PULLBACK_BUY_PRICE_RANGE[0] <= price_change <= self.PULLBACK_BUY_PRICE_RANGE[1]:
-            # 조건 1: EMA 위에서 지지 (0.5% 여유)
-            if current_price >= row["ema_20"] * 0.995:
-                # 조건 2: 수급 유지
+        # === 시나리오 B: 눌림목 매수 (건강한 조정 후 반등) ===
+        # 가격 조건: 진입가 대비 -2.5% ~ -1.0% 하락 (손절 -3% 전 안전마진 확보)
+        if self.PULLBACK_BUY_DROP_MIN <= price_change <= self.PULLBACK_BUY_DROP_MAX:
+            # 조건 1: EMA 지지 (EMA 2% 이내)
+            if current_price >= row["ema_20"] * self.PULLBACK_BUY_EMA_TOLERANCE:
+                # 조건 2: 수급 유지 (중립 이상)
                 if row["obv_z"] > self.PULLBACK_BUY_OBV_MIN:
                     # 조건 3: 추세 유지
                     if row["plus_di"] > row["minus_di"]:
-                        # 조건 4: ATR 대비 안전 거리
-                        atr_support = row["ema_20"] - (row["atr"] * self.PULLBACK_BUY_ATR_MULTIPLIER)
-                        if current_price > atr_support:
+                        # 조건 4: 반등 신호 (저점 대비 1% 이상 회복)
+                        if current_price >= row["STCK_LWPR"] * self.PULLBACK_BUY_REBOUND_RATIO:
                             return True
 
         return False
@@ -288,7 +300,7 @@ class SingleEMABacktestStrategy(BacktestStrategy):
         if "STCK_BSOP_DATE" in df.columns:
             df["STCK_BSOP_DATE"] = pd.to_datetime(df["STCK_BSOP_DATE"])
             df = df.sort_values("STCK_BSOP_DATE").reset_index(drop=True)
-        for col in ["STCK_CLPR", "STCK_HGPR", "STCK_LWPR", "STCK_OPPR", "ACML_VOL"]:
+        for col in ["STCK_CLPR", "STCK_HGPR", "STCK_LWPR", "STCK_OPRC", "ACML_VOL"]:
             if col in df.columns:
                 df[col] = pd.to_numeric(df[col], errors="coerce")
         return df
