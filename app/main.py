@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 from app.common.database import Database
 from app.common.redis import Redis
 from app.common.scheduler import schedule_start
+from app.common.middleware import DeviceAuthMiddleware
 from app.exceptions.handlers import register_exception_handlers
 from app.domain.swing.service import SwingService
 
@@ -19,6 +20,7 @@ from app.domain.routers import (
     stock_router,
     order_router,
     swing_router,
+    device_router,
     backtest_router,
     health_router,
 )
@@ -81,6 +83,9 @@ app = FastAPI(
 # 전역 예외 핸들러 등록
 register_exception_handlers(app)
 
+# 디바이스 인증 미들웨어 등록 (모든 요청에 적용)
+app.add_middleware(DeviceAuthMiddleware)
+
 # 라우터 등록
 app.include_router(health_router)
 app.include_router(user_router)
@@ -89,6 +94,7 @@ app.include_router(account_router)
 app.include_router(stock_router)
 app.include_router(order_router)
 app.include_router(swing_router)
+app.include_router(device_router)
 app.include_router(backtest_router)
 
 
