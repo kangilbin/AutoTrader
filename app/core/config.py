@@ -39,6 +39,13 @@ class Settings(BaseSettings):
     # AES Encryption
     AES_SECRET_KEY: Optional[str] = None
 
+    # Email
+    SMTP_HOST: str = "smtp.gmail.com"  # Gmail SMTP 서버
+    SMTP_PORT: int = 587
+    SMTP_USER: Optional[str] = None  # 발신자 이메일 (환경변수에서 설정)
+    SMTP_PASSWORD: Optional[str] = None  # 앱 비밀번호 (환경변수에서 설정)
+    ADMIN_EMAIL: str = "kib3388@naver.com"  # 관리자 이메일
+
     # App
     DEBUG: bool = False
     APP_NAME: str = "AutoTrader"

@@ -23,6 +23,7 @@ from app.exceptions import (
     DatabaseError,
 )
 from app.common.redis import get_redis
+from app.common.email import EmailService
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -53,6 +54,20 @@ class UserService:
             # 저장
             db_user = await self.repo.save(user)
             await self.db.commit()
+
+            # 디바이스 정보가 있으면 관리자에게 이메일 발송
+            if request.DEVICE_ID and request.DEVICE_NAME:
+                try:
+                    EmailService.send_device_registration_notification(
+                        user_id=request.USER_ID,
+                        user_name=request.USER_NAME,
+                        device_id=request.DEVICE_ID,
+                        device_name=request.DEVICE_NAME
+                    )
+                    logger.info(f"디바이스 등록 알림 이메일 발송 완료: {request.USER_ID}")
+                except Exception as e:
+                    # 이메일 발송 실패해도 회원가입은 성공으로 처리
+                    logger.warning(f"이메일 발송 실패 (회원가입은 성공): {e}")
 
             return UserResponse.model_validate(db_user).model_dump()
         except SQLAlchemyError as e:

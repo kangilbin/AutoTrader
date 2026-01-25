@@ -13,6 +13,9 @@ class UserCreateRequest(BaseModel):
     USER_NAME: str
     PHONE: str
     PASSWORD: str
+    # 디바이스 정보 (선택적)
+    DEVICE_ID: Optional[str] = None
+    DEVICE_NAME: Optional[str] = None
 
 
 class UserLoginRequest(BaseModel):
