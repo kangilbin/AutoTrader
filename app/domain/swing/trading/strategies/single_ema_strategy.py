@@ -9,13 +9,16 @@
 5. 추세 방향: +DI > -DI
 6. 연속 확인: 2회 (Redis 상태 관리, 5분 주기 노이즈 필터링)
 
+**2차 매수 조건 (20분 경과 후):**
+- **시나리오 A (추세 강화형):** EMA + ATR × (0.3~2.0), ADX > 25, 외국인 >= 1.5%, OBV z-score >= 1.2
+- **시나리오 B (눌림목 반등):** EMA ± ATR × 0.5, 18 <= ADX <= 23, 장중 저가 대비 0.4% 반등
+
 **매도 조건 (Exit Conditions) - 이원화된 하이브리드 전략:**
 
 **[1차 방어선] 장중 즉시 매도 (5분마다 체크, OR 조건)**
 *   목표: 급락 사고 방어
-1.  **고정 손절:** -3%
-2.  **EMA-ATR 동적 손절:** 현재가 <= EMA - (ATR × 1.0)
-3.  **급격한 수급 반전:** 외국인 순매도 비율 <= -2.0%
+1.  **EMA-ATR 동적 손절:** 현재가 <= EMA - (ATR × 1.0)
+2.  **급격한 수급 반전:** 외국인 순매도 비율 <= -2.0%
 
 **[2차 방어선] 장 마감 매도 (매일 종가에 체크, 교차 검증)**
 *   목표: 노이즈를 제거한 추세 이탈 '확정'
@@ -25,7 +28,6 @@
     -   추세 약화 (ADX/DMI 2일 연속 약세)
     -   수급 이탈 (OBV z-score 또는 일일 외국인 순매수 비율)
 2.  **2차 전량 매도:** 1차 매도 후, 아래 조건 중 하나라도 충족 시
-    -   -3% 고정 손절 도달
     -   장 마감 시, 위 3개 조건이 **모두** 충족
     -   1차 매도가 대비 -2% 추가 하락
 """
@@ -63,23 +65,27 @@ class SingleEMAStrategy(TradingStrategy):
     CONSECUTIVE_REQUIRED = 2
 
     # 2차 매수 조건
-    # [시나리오 A] 추세 강화형
-    SECOND_BUY_PRICE_GAIN_MIN = 0.02
-    SECOND_BUY_PRICE_GAIN_MAX = 0.08
-    SECOND_BUY_FRGN_THRESHOLD = 1.5
-    SECOND_BUY_OBV_THRESHOLD = 1.2
-    SECOND_BUY_SAFETY_MARGIN = 0.04
-    SECOND_BUY_TIME_MIN = 600
+    # [시나리오 A] 추세 강화형 (EMA-ATR 가드레일)
+    TREND_BUY_ATR_LOWER = 0.3        # 하한: EMA + ATR × 0.3 (추세 가속 최소선)
+    TREND_BUY_ATR_UPPER = 2.0        # 상한: EMA + ATR × 2.0 (과열 방지선)
+    TREND_BUY_FRGN_THRESHOLD = 1.5   # 외국인 비율 최소값
+    TREND_BUY_OBV_THRESHOLD = 1.2    # OBV z-score 최소값
+    TREND_BUY_ADX_MIN = 25           # ADX 최소값 (강한 추세)
 
-    # [시나리오 B] 조정 매수형
-    PULLBACK_BUY_PRICE_RANGE = (-0.01, 0.01)  # 진입가 ±1%
-    PULLBACK_BUY_FRGN_MIN = 0.5               # 외국인 최소 요구치
-    PULLBACK_BUY_OBV_MIN = 0.5                # OBV z-score 최소 요구치
-    PULLBACK_BUY_ATR_MULTIPLIER = 0.5         # ATR 안전 거리
+    # [시나리오 B] 눌림목 반등 (EMA-ATR 가드레일)
+    PULLBACK_BUY_ATR_LOWER = -0.5    # 하한: EMA - ATR × 0.5 (조정 허용 하한)
+    PULLBACK_BUY_ATR_UPPER = 0.3     # 상한: EMA + ATR × 0.3 (조정 범위 상한)
+    PULLBACK_BUY_FRGN_MIN = 0.5      # 외국인 비율 최소값
+    PULLBACK_BUY_OBV_MIN = 0.5       # OBV z-score 최소값
+    PULLBACK_BUY_ADX_MIN = 18        # ADX 하한 (추세 유지)
+    PULLBACK_BUY_ADX_MAX = 23        # ADX 상한 (조정 구간)
+    PULLBACK_BUY_REBOUND_RATIO = 1.004  # 장중 저가 대비 반등 비율 (0.4%)
+
+    # 공통
+    SECOND_BUY_TIME_MIN = 1200       # 1차 매수 후 최소 경과 시간 (초, 20분)
 
     # 매도 조건 (이원화)
     # [1차 방어선]
-    STOP_LOSS_FIXED = -0.03
     ATR_MULTIPLIER = 1.0
     SUPPLY_REVERSAL_THRESHOLD = -2.0
     # [2차 방어선]
@@ -164,10 +170,10 @@ class SingleEMAStrategy(TradingStrategy):
         await redis_client.setex(prev_state_key, 900, json.dumps(new_state))
 
         if consecutive >= cls.CONSECUTIVE_REQUIRED:
-            logger.info(f"[{symbol}] ✅ 1차 매수 신호 발생 (연속 {consecutive}회)")
+            logger.info(f"[{symbol}] 1차 매수 신호 발생 (연속 {consecutive}회)")
             return {'action': 'BUY', 'price': curr_price, 'reason': f"1차 매수 (연속 {consecutive}회)"}
         elif current_signal:
-            logger.info(f"[{symbol}] 🔔 매수 신호 대기 중 ({consecutive}/{cls.CONSECUTIVE_REQUIRED})")
+            logger.info(f"[{symbol}] 매수 신호 대기 중 ({consecutive}/{cls.CONSECUTIVE_REQUIRED})")
 
         return None
 
@@ -209,15 +215,19 @@ class SingleEMAStrategy(TradingStrategy):
         prdy_vrss_vol_rate: float
     ) -> Optional[Dict]:
         """
-        2차 매수 신호 체크 (하이브리드: 추세 강화형 + 조정 매수형)
+        2차 매수 신호 체크 (하이브리드: 추세 강화형 + 눌림목 반등)
 
-        시나리오 A: 추세 강화형 (2~8% 상승)
-        시나리오 B: 건강한 조정 후 반등 (진입가 ±1%)
+        시나리오 A: 추세 강화형 (EMA + ATR × 0.3 ~ 2.5)
+        시나리오 B: 눌림목 반등 (EMA - ATR × 0.5 ~ EMA + ATR × 0.3)
         """
         try:
             curr_price = float(current_price)
             entry = float(entry_price)
-            price_change = (curr_price - entry) / entry
+
+            # 시간 필터: 1차 매수 후 최소 20분 경과 체크
+            time_key = f"first_buy_time:{swing_id}"
+            if await redis_client.exists(time_key):
+                return None  # 키 존재 = 20분 미경과 → 2차 매수 불가
 
             # 지표 계산
             if 'obv_z' not in df.columns or 'adx' not in df.columns or 'atr' not in df.columns:
@@ -230,43 +240,65 @@ class SingleEMAStrategy(TradingStrategy):
 
             obv_z = last_row.get('obv_z', 0)
             atr = last_row.get('atr', 0)
+            adx = last_row.get('adx', 0)
             plus_di = last_row.get('plus_di', 0)
             minus_di = last_row.get('minus_di', 0)
             frgn_ratio = (frgn_ntby_qty / acml_vol * 100) if acml_vol > 0 else 0
 
-            # === 시나리오 A: 추세 강화형 (2~8% 상승) ===
-            if cls.SECOND_BUY_PRICE_GAIN_MIN <= price_change <= cls.SECOND_BUY_PRICE_GAIN_MAX:
-                # 조건: EMA 위 + 강한 수급 + 안전 마진
-                if curr_price > realtime_ema20:
-                    if frgn_ratio >= cls.SECOND_BUY_FRGN_THRESHOLD and obv_z >= cls.SECOND_BUY_OBV_THRESHOLD:
-                        stop_loss_price = entry * (1 + cls.STOP_LOSS_FIXED)
-                        safety_threshold = stop_loss_price * (1 + cls.SECOND_BUY_SAFETY_MARGIN)
-                        if curr_price >= safety_threshold:
-                            logger.info(f"[{symbol}] ✅ 2차 매수 신호 (추세 강화형): {price_change*100:.2f}% 상승")
+            # === 시나리오 A: 추세 강화형 ===
+            # 가격 가드레일: EMA + ATR × (0.3 ~ 2.5)
+            trend_lower = realtime_ema20 + (atr * cls.TREND_BUY_ATR_LOWER)
+            trend_upper = realtime_ema20 + (atr * cls.TREND_BUY_ATR_UPPER)
+
+            if trend_lower <= curr_price <= trend_upper:
+                # 추세 강도: ADX > 25
+                if adx > cls.TREND_BUY_ADX_MIN:
+                    # 추세 방향: +DI > -DI
+                    if plus_di > minus_di:
+                        # 수급 지속: 외국인 AND OBV
+                        if frgn_ratio >= cls.TREND_BUY_FRGN_THRESHOLD and obv_z >= cls.TREND_BUY_OBV_THRESHOLD:
+                            logger.info(f"[{symbol}] ✅ 2차 매수 신호 (추세 강화형): EMA+ATR×{(curr_price-realtime_ema20)/atr:.2f}")
                             return {
                                 'action': 'BUY',
                                 'price': curr_price,
-                                'reason': f"2차매수(추세강화 +{price_change*100:.1f}%)"
+                                'reason': f"2차매수(추세강화)"
                             }
 
-            # === 시나리오 B: 건강한 조정 후 반등 (진입가 ±1%) ===
-            if cls.PULLBACK_BUY_PRICE_RANGE[0] <= price_change <= cls.PULLBACK_BUY_PRICE_RANGE[1]:
-                # 조건 1: EMA 위에서 지지 (0.5% 여유)
-                if curr_price >= realtime_ema20 * 0.995:
-                    # 조건 2: 수급 유지 (외국인 OR OBV)
-                    supply_ok = (frgn_ratio > cls.PULLBACK_BUY_FRGN_MIN) or (obv_z > cls.PULLBACK_BUY_OBV_MIN)
-                    if supply_ok:
-                        # 조건 3: 추세 유지
-                        if plus_di > minus_di:
-                            # 조건 4: ATR 대비 안전 거리
-                            atr_support = realtime_ema20 - (atr * cls.PULLBACK_BUY_ATR_MULTIPLIER)
-                            if curr_price > atr_support:
-                                logger.info(f"[{symbol}] ✅ 2차 매수 신호 (조정 매수형): 진입가 근처 지지")
-                                return {
-                                    'action': 'BUY',
-                                    'price': curr_price,
-                                    'reason': f"2차매수(조정반등 {price_change*100:+.1f}%)"
-                                }
+            # === 시나리오 B: 눌림목 반등 ===
+            # 가격 가드레일: EMA - ATR × 0.5 ~ EMA + ATR × 0.3
+            pullback_lower = realtime_ema20 + (atr * cls.PULLBACK_BUY_ATR_LOWER)  # EMA - ATR × 0.5
+            pullback_upper = realtime_ema20 + (atr * cls.PULLBACK_BUY_ATR_UPPER)  # EMA + ATR × 0.3
+
+            if pullback_lower <= curr_price <= pullback_upper:
+                # 추세 강도: 18 <= ADX <= 23 (중간 추세, 조정 구간)
+                if cls.PULLBACK_BUY_ADX_MIN <= adx <= cls.PULLBACK_BUY_ADX_MAX:
+                    # 추세 방향: +DI > -DI
+                    if plus_di > minus_di:
+                        # 수급 유지: 외국인 OR OBV (중립 이상)
+                        supply_ok = (frgn_ratio > cls.PULLBACK_BUY_FRGN_MIN) or (obv_z > cls.PULLBACK_BUY_OBV_MIN)
+                        if supply_ok:
+                            # 반등 신호: 장중 저가 대비 0.4% 반등
+                            intraday_low_key = f"intraday_low:{swing_id}"
+                            intraday_low_str = await redis_client.get(intraday_low_key)
+
+                            if intraday_low_str:
+                                intraday_low = float(intraday_low_str.decode())
+                                # 현재가가 저가보다 낮으면 갱신
+                                if curr_price < intraday_low:
+                                    await redis_client.setex(intraday_low_key, 86400, str(curr_price))
+                                    intraday_low = curr_price
+
+                                # 저점 대비 0.4% 이상 반등했는지 확인
+                                if curr_price >= intraday_low * cls.PULLBACK_BUY_REBOUND_RATIO:
+                                    logger.info(f"[{symbol}] ✅ 2차 매수 신호 (눌림목 반등): 저가 대비 {((curr_price/intraday_low-1)*100):.2f}% 반등")
+                                    return {
+                                        'action': 'BUY',
+                                        'price': curr_price,
+                                        'reason': f"2차매수(눌림목반등)"
+                                    }
+                            else:
+                                # 최초 저가 기록
+                                await redis_client.setex(intraday_low_key, 86400, str(curr_price))
 
             return None
 
@@ -296,12 +328,7 @@ class SingleEMAStrategy(TradingStrategy):
         entry = float(entry_price)
         reasons = []
 
-        # 조건 1: 고정 손절
-        profit_rate = (curr_price - entry) / entry
-        if profit_rate <= cls.STOP_LOSS_FIXED:
-            reasons.append(f"고정손절({profit_rate*100:.2f}%)")
-
-        # 조건 2: EMA-ATR 동적 손절
+        # 조건 1: EMA-ATR 동적 손절
         realtime_ema20 = cls.get_realtime_ema20(df, curr_price)
         if realtime_ema20:
             if 'atr' not in df.columns:
@@ -312,7 +339,7 @@ class SingleEMAStrategy(TradingStrategy):
                 if curr_price <= ema_atr_stop:
                     reasons.append(f"EMA-ATR손절(현재가≤{ema_atr_stop:,.0f})")
 
-        # 조건 3: 급격한 수급 반전
+        # 조건 2: 급격한 수급 반전
         frgn_ratio = (frgn_ntby_qty / acml_vol * 100) if acml_vol > 0 else 0
         if frgn_ratio <= cls.SUPPLY_REVERSAL_THRESHOLD:
             reasons.append(f"수급반전(외국인={frgn_ratio:.1f}%)")
@@ -346,12 +373,7 @@ class SingleEMAStrategy(TradingStrategy):
         if position['status'] == 'SELL_PRIMARY':
             first_sell_price = float(position['first_sell_price']) # DB에 1차 매도가 저장 필요
 
-            # 2차-1: 고정 손절
-            profit_rate = (last_close - entry_price) / entry_price
-            if profit_rate <= cls.STOP_LOSS_FIXED:
-                return {"action": "SELL_ALL", "reason": f"2차매도(고정손절: {profit_rate*100:.2f}%)"}
-
-            # 2차-2: 추가 하락
+            # 2차-1: 추가 하락
             additional_drop = (last_close - first_sell_price) / first_sell_price
             if additional_drop <= cls.SECONDARY_SELL_ADDITIONAL_DROP:
                 return {"action": "SELL_ALL", "reason": f"2차매도(추가하락: {additional_drop*100:.2f}%)"}
@@ -374,7 +396,7 @@ class SingleEMAStrategy(TradingStrategy):
         logger.info(f"[{symbol}] EOD 신호 점검: {valid_signal_count}/3개 충족. (신호: {active_signals})")
 
         # 3. 매도 결정
-        # 2차-3: 1차 매도 상태에서 모든 신호 충족 시
+        # 2차-2: 1차 매도 상태에서 모든 신호 충족 시
         if position['status'] == 'SELL_PRIMARY' and valid_signal_count >= 3:
             return {"action": "SELL_ALL", "reason": f"2차매도(모든 EOD 신호 충족)"}
             
