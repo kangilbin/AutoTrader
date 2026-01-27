@@ -11,7 +11,6 @@ from datetime import datetime
 from app.core.config import get_settings
 
 logger = logging.getLogger(__name__)
-settings = get_settings()
 
 
 class EmailService:
@@ -36,6 +35,9 @@ class EmailService:
         Returns:
             성공 여부
         """
+        # 함수 내부에서 settings 가져오기 (테스트 모킹을 위해)
+        settings = get_settings()
+
         # SMTP 설정이 없으면 로그만 남기고 스킵
         if not settings.SMTP_USER or not settings.SMTP_PASSWORD:
             logger.warning("SMTP 설정이 없어 이메일을 보낼 수 없습니다. 로그만 기록합니다.")
