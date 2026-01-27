@@ -215,7 +215,7 @@ class SwingService:
         return await self.repo.find_pending_sell_swings()
 
     async def get_holding_swings(self) -> List:
-        """포지션 보유 중인 스윙 목록 조회 (SIGNAL 1/2)"""
+        """포지션 보유 중인 스윙 목록 조회 (SIGNAL 1 or 2)"""
         return await self.repo.find_holding_swings()
 
     async def get_swings_by_signals(self, signals: List[int]) -> List:
@@ -351,7 +351,7 @@ class SwingService:
             today = indicators.iloc[-1]
             yesterday = indicators.iloc[-2]
 
-            required_cols = ['ema_20', 'adx', 'plus_di', 'minus_di']
+            required_cols = ['ema_20', 'adx', 'plus_di', 'minus_di', 'atr', 'obv_z']
             if not all(col in today.index for col in required_cols):
                 logger.warning(f"[{st_code}] 필수 지표 누락")
                 return False
@@ -377,6 +377,11 @@ class SwingService:
                     "today": float(today['minus_di']),
                     "yesterday": float(yesterday['minus_di'])
                 },
+                "atr": {
+                    "today": float(today['atr']),
+                    "yesterday": float(yesterday['atr'])
+                },
+                "obv_z": float(today['obv_z']),  # OBV z-score (종가 기준)
                 "date": today['STCK_BSOP_DATE']
             }
 
@@ -388,7 +393,9 @@ class SwingService:
 
             logger.info(
                 f"[{st_code}] 지표 캐싱 완료: EMA={indicators_data['ema20']['today']:.2f}, "
-                f"ADX={indicators_data['adx']['today']:.1f} "
+                f"ADX={indicators_data['adx']['today']:.1f}, "
+                f"ATR={indicators_data['atr']['today']:.2f}, "
+                f"OBV_Z={indicators_data['obv_z']:.2f} "
                 f"(데이터: {len(price_history)}일)"
             )
             return True
@@ -458,7 +465,7 @@ class SwingService:
                     yesterday = indicators.iloc[-2]
 
                     # 필수 지표 존재 여부 확인
-                    required_cols = ['ema_20', 'adx', 'plus_di', 'minus_di']
+                    required_cols = ['ema_20', 'adx', 'plus_di', 'minus_di', 'atr', 'obv_z']
                     if not all(col in today.index for col in required_cols):
                         logger.warning(f"[{st_code}] 필수 지표 누락")
                         fail_count += 1
@@ -488,6 +495,11 @@ class SwingService:
                             "today": float(today['minus_di']),
                             "yesterday": float(yesterday['minus_di'])
                         },
+                        "atr": {
+                            "today": float(today['atr']),
+                            "yesterday": float(yesterday['atr'])
+                        },
+                        "obv_z": float(today['obv_z']),  # OBV z-score (종가 기준)
                         "date": today['STCK_BSOP_DATE']
                     }
 
@@ -501,7 +513,9 @@ class SwingService:
                         f"[{st_code}] 지표 캐싱 완료: EMA={ema20:.2f}, "
                         f"ADX={indicators_data['adx']['today']:.1f}, "
                         f"+DI={indicators_data['plus_di']['today']:.1f}, "
-                        f"-DI={indicators_data['minus_di']['today']:.1f} "
+                        f"-DI={indicators_data['minus_di']['today']:.1f}, "
+                        f"ATR={indicators_data['atr']['today']:.2f}, "
+                        f"OBV_Z={indicators_data['obv_z']:.2f} "
                         f"(데이터: {len(price_history)}일)"
                     )
                     success_count += 1

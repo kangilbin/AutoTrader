@@ -125,17 +125,26 @@ async def process_single_swing(
 
     # === 1. 데이터 수집 ===
 
-    # 1.1 주가 데이터 조회 (과거 120일)
-    start_date = datetime.now() - timedelta(days=120)
-    price_history = await stock_service.get_stock_history(st_code, start_date)
+    # 1.1 지표 캐시 먼저 확인
+    cached_indicators = await strategy._get_cached_indicators(redis_client, st_code)
 
-    if not price_history:
-        logger.warning(f"[{st_code}] 주가 데이터 없음")
-        return
+    # 1.2 캐시 상태에 따라 주가 데이터 조회 결정
+    df = None
+    if not cached_indicators:
+        # 캐시 미스: 전체 데이터 조회 (지표 계산용)
+        logger.debug(f"[{st_code}] 캐시 미스 - 주가 데이터 조회 (120일)")
+        start_date = datetime.now() - timedelta(days=120)
+        price_history = await stock_service.get_stock_history(st_code, start_date)
 
-    df = pd.DataFrame(price_history)
+        if not price_history:
+            logger.warning(f"[{st_code}] 주가 데이터 없음")
+            return
 
-    # 1.2 현재가 조회
+        df = pd.DataFrame(price_history)
+    else:
+        logger.debug(f"[{st_code}] 캐시 히트 - 주가 데이터 조회 스킵")
+
+    # 1.3 현재가 조회
     try:
         current_price_data = await get_inquire_price("mgnt", st_code)
 
@@ -149,27 +158,28 @@ async def process_single_swing(
             logger.warning(f"[{st_code}] 현재가가 0입니다")
             return
 
-        # 당일 데이터로 DataFrame 업데이트
-        today_data = {
-            "ST_CODE": st_code,
-            "STCK_BSOP_DATE": datetime.now().strftime('%Y%m%d'),
-            "STCK_OPRC": current_price_data.get("stck_oprc", current_price),
-            "STCK_HGPR": current_price_data.get("stck_hgpr", current_price),
-            "STCK_LWPR": current_price_data.get("stck_lwpr", current_price),
-            "STCK_CLPR": current_price,
-            "ACML_VOL": current_price_data.get("acml_vol", 0)
-        }
+        # 당일 데이터로 DataFrame 업데이트 (df가 있는 경우만)
+        if df is not None:
+            today_data = {
+                "ST_CODE": st_code,
+                "STCK_BSOP_DATE": datetime.now().strftime('%Y%m%d'),
+                "STCK_OPRC": current_price_data.get("stck_oprc", current_price),
+                "STCK_HGPR": current_price_data.get("stck_hgpr", current_price),
+                "STCK_LWPR": current_price_data.get("stck_lwpr", current_price),
+                "STCK_CLPR": current_price,
+                "ACML_VOL": current_price_data.get("acml_vol", 0)
+            }
 
-        df = pd.concat([df, pd.DataFrame([today_data])], ignore_index=True)
-        df = df.drop_duplicates(subset=['STCK_BSOP_DATE'], keep='last')
+            df = pd.concat([df, pd.DataFrame([today_data])], ignore_index=True)
+            df = df.drop_duplicates(subset=['STCK_BSOP_DATE'], keep='last')
 
     except Exception as e:
         logger.error(f"[{st_code}] 현재가 조회 실패: {e}")
         return
 
-    # 1.3 외국인 순매수 데이터
+    # 1.4 외국인 순매수 데이터
     frgn_ntby_qty = int(current_price_data.get("frgn_ntby_qty", 0))
-    acml_vol = int(today_data.get("ACML_VOL", 0))
+    acml_vol = int(current_price_data.get("acml_vol", 0))
     prdy_vrss_vol_rate = float(current_price_data.get("prdy_vrss_vol_rate", 100))
     prdy_ctrt = float(current_price_data.get("prdy_ctrt", 0))
 
@@ -189,7 +199,8 @@ async def process_single_swing(
             frgn_ntby_qty=frgn_ntby_qty,
             acml_vol=acml_vol,
             prdy_vrss_vol_rate=prdy_vrss_vol_rate,
-            prdy_ctrt=prdy_ctrt
+            prdy_ctrt=prdy_ctrt,
+            cached_indicators=cached_indicators
         )
 
         if entry_result and entry_result.get("action") == "BUY":
@@ -239,7 +250,8 @@ async def process_single_swing(
                 current_price=current_price,
                 entry_price=Decimal(entry_price),
                 frgn_ntby_qty=frgn_ntby_qty,
-                acml_vol=acml_vol
+                acml_vol=acml_vol,
+                cached_indicators=cached_indicators
             )
 
             if exit_result and exit_result.get("action") == "SELL":
@@ -279,7 +291,8 @@ async def process_single_swing(
                     current_price=current_price,
                     frgn_ntby_qty=frgn_ntby_qty,
                     acml_vol=acml_vol,
-                    prdy_vrss_vol_rate=prdy_vrss_vol_rate
+                    prdy_vrss_vol_rate=prdy_vrss_vol_rate,
+                    cached_indicators=cached_indicators
                 )
 
                 if entry_result and entry_result.get("action") == "BUY":
@@ -328,7 +341,8 @@ async def process_single_swing(
                 current_price=current_price,
                 entry_price=Decimal(entry_price),
                 frgn_ntby_qty=frgn_ntby_qty,
-                acml_vol=acml_vol
+                acml_vol=acml_vol,
+                cached_indicators=cached_indicators
             )
 
             if exit_result and exit_result.get("action") == "SELL":
@@ -411,8 +425,8 @@ async def day_collect_job():
 
     1단계: 당일 OHLCV 데이터 수집 및 저장
     2단계: 포지션 보유 중인 스윙(SIGNAL 1/2)에 대해 종가 매도 신호 판단
-           - 2/3 조건 충족 → SIGNAL 4 (다음날 50% 매도)
-           - 3/3 조건 충족 → SIGNAL 5 (다음날 전량 매도)
+           - 2/3 조건 충족 → SIGNAL 4 (다음날 1차 매도)
+           - 3/3 조건 충족 → SIGNAL 5 (다음날 2차 전량 매도)
     """
     logger.info("[DAY COLLECT] 데이터 수집 + 매도 신호 확정 시작")
     db = await Database.get_session()
@@ -453,7 +467,7 @@ async def day_collect_job():
         logger.info("[DAY COLLECT] 데이터 수집 완료")
 
         # ========================================
-        # 2단계: 종가 매도 신호 확정 (SIGNAL 1/2만 대상)
+        # 2단계: 종가 매도 신호 확정 (SIGNAL 1 or 2만 대상)
         # ========================================
         holding_swings = await swing_service.get_holding_swings()
         logger.info(f"[DAY COLLECT] 매도 신호 판단 대상: {len(holding_swings)}건")
@@ -516,8 +530,8 @@ async def morning_sell_job():
     시초 매도 배치 (09:00-09:55, 5분 간격)
 
     전일 종가 기준으로 확정된 매도 신호(SIGNAL 4/5)를 시초에 실행
-    - SIGNAL 4: 50% 매도 후 SIGNAL 1로 전환 (잔량 보유)
-    - SIGNAL 5: 전량 매도 후 SIGNAL 0으로 전환 (완전 청산)
+    - SIGNAL 4: 1차 매도 후 SIGNAL 1로 전환 (잔량 보유)
+    - SIGNAL 5: 2차 전량 매도 후 SIGNAL 0으로 전환 (완전 청산)
     """
     db = await Database.get_session()
 
