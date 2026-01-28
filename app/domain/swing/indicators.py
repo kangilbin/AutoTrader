@@ -177,7 +177,6 @@ class TechnicalIndicators:
         yesterday_close: float,
         current_high: float,
         current_low: float,
-        current_close: float,
         period: int = 14
     ) -> float:
         """
@@ -205,7 +204,6 @@ class TechnicalIndicators:
         )
 
         # 2. ATR 증분 계산 (EMA 방식)
-        # ATR_today = (ATR_yesterday × (period - 1) + TR_today) / period
         realtime_atr = (yesterday_atr * (period - 1) + tr) / period
 
         return realtime_atr
@@ -413,12 +411,16 @@ class TechnicalIndicators:
         close = df["STCK_CLPR"].values.astype(float)
         volume = df["ACML_VOL"].values.astype(float)
 
-        # EMA
+        # EMA (단기 20, 장기 120)
         ema = cls.calculate_ema(close, ema_period)
         if ema is not None:
             df["ema_20"] = ema
             # 괴리율
             df["gap_ratio"] = (close - ema) / ema
+
+        ema_long = cls.calculate_ema(close, 120)
+        if ema_long is not None:
+            df["ema_120"] = ema_long
 
         # ATR
         atr = cls.calculate_atr(high, low, close, atr_period)
@@ -511,6 +513,13 @@ class TechnicalIndicators:
                 period=ema_period
             )
 
+            # 1-1. 실시간 EMA120 증분 계산 (하락장 필터용)
+            realtime_ema120 = cls.calculate_realtime_ema_from_cache(
+                yesterday_ema=cached_indicators['ema120'],
+                current_price=current_price,
+                period=120
+            )
+
             # 2. 실시간 OBV z-score 증분 계산
             realtime_obv_z = cls.calculate_realtime_obv_zscore(
                 yesterday_obv=cached_indicators['obv'],
@@ -526,7 +535,6 @@ class TechnicalIndicators:
                 yesterday_close=cached_indicators['close'],
                 current_high=current_high,
                 current_low=current_low,
-                current_close=current_price,
                 period=atr_period
             )
 
@@ -548,6 +556,7 @@ class TechnicalIndicators:
 
             # 6. cached_indicators에 실시간 지표 추가
             cached_indicators['realtime_ema20'] = realtime_ema20
+            cached_indicators['realtime_ema120'] = realtime_ema120
             cached_indicators['realtime_obv_z'] = realtime_obv_z
             cached_indicators['realtime_atr'] = realtime_atr
             cached_indicators['realtime_adx'] = realtime_adx
@@ -561,90 +570,3 @@ class TechnicalIndicators:
             logger.error(f"실시간 지표 계산 실패: {e}")
             # 실패 시 원본 반환 (어제 값 사용)
             return cached_indicators
-
-    # @classmethod
-    # def get_realtime_indicators(
-    #     cls,
-    #     df: pd.DataFrame,
-    #     current_price: float,
-    #     current_high: Optional[float] = None,
-    #     current_low: Optional[float] = None,
-    #     current_volume: Optional[int] = None,
-    #     ema_period: int = 20
-    # ) -> dict:
-    #     """
-    #     실시간 지표 계산 (현재가 포함)
-    #
-    #     Args:
-    #         df: 과거 OHLCV 데이터
-    #         current_price: 현재가
-    #         current_high: 현재 고가 (선택)
-    #         current_low: 현재 저가 (선택)
-    #         current_volume: 현재 거래량 (선택)
-    #         ema_period: EMA 기간
-    #
-    #     Returns:
-    #         {
-    #             "ema_20": float,
-    #             "gap_ratio": float,
-    #             "atr": float,
-    #             "adx": float,
-    #             "plus_di": float,
-    #             "minus_di": float,
-    #             "obv_z": float
-    #         }
-    #     """
-    #     result = {}
-    #
-    #     # 과거 종가 배열
-    #     close_prices = df["STCK_CLPR"].values.astype(float)
-    #
-    #     # 현재가 추가
-    #     close_with_current = np.append(close_prices, current_price)
-    #
-    #     # 실시간 EMA
-    #     ema = cls.calculate_ema(close_with_current, ema_period)
-    #     if ema is not None and len(ema) > 0:
-    #         result["ema_20"] = float(ema[-1])
-    #         result["gap_ratio"] = cls.calculate_gap_ratio(current_price, ema[-1])
-    #
-    #     # ATR (고가/저가 필요, 실시간 계산 어려움)
-    #     if current_high is not None and current_low is not None:
-    #         high = np.append(df["STCK_HGPR"].values.astype(float), current_high)
-    #         low = np.append(df["STCK_LWPR"].values.astype(float), current_low)
-    #         atr = cls.calculate_atr(high, low, close_with_current, 14)
-    #         if atr is not None and len(atr) > 0:
-    #             result["atr"] = float(atr[-1])
-    #     else:
-    #         # 어제 ATR 사용
-    #         if "atr" in df.columns and len(df) > 0:
-    #             result["atr"] = float(df["atr"].iloc[-1])
-    #
-    #     # ADX, DMI (실시간 계산 어려움, 어제 값 사용)
-    #     if "adx" in df.columns and len(df) > 0:
-    #         result["adx"] = float(df["adx"].iloc[-1])
-    #         result["plus_di"] = float(df["plus_di"].iloc[-1])
-    #         result["minus_di"] = float(df["minus_di"].iloc[-1])
-    #
-    #     # OBV z-score (거래량 필요)
-    #     if current_volume is not None and "obv" in df.columns:
-    #         obv_prev = df["obv"].values
-    #         # 간단한 OBV 업데이트 (정확하지 않음, 5분마다 재계산 권장)
-    #         last_close = close_prices[-1]
-    #         last_obv = obv_prev[-1]
-    #         if current_price > last_close:
-    #             current_obv = last_obv + current_volume
-    #         elif current_price < last_close:
-    #             current_obv = last_obv - current_volume
-    #         else:
-    #             current_obv = last_obv
-    #
-    #         obv_with_current = np.append(obv_prev, current_obv)
-    #         obv_z = cls.calculate_obv_zscore(obv_with_current, 7)
-    #         if obv_z is not None and len(obv_z) > 0:
-    #             result["obv_z"] = float(obv_z[-1])
-    #     elif "obv_z" in df.columns and len(df) > 0:
-    #         # 어제 값 사용
-    #         result["obv_z"] = float(df["obv_z"].iloc[-1])
-    #
-    #     return result

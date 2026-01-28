@@ -41,7 +41,6 @@ async def trade_job():
 
     try:
         swing_service = SwingService(db)
-        stock_service = StockService(db)
 
         # Redis 연결
         redis_client = await Redis.get_connection()
@@ -201,7 +200,6 @@ async def process_single_swing(
                     # 평단가, 보유수량 저장
                     entry_price = order_result.get("avg_price", int(current_price))
                     hold_qty = order_result.get("qty", 0)
-                    logger.info(f"[{st_code}] 1차 매수 완료: 평단가={entry_price:,}원, 수량={hold_qty}주")
 
                     # 2차 매수 시간 필터용 Redis 키 생성 (20분 TTL)
                     await redis_client.setex(

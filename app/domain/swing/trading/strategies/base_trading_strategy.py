@@ -25,6 +25,7 @@ class TradingStrategy(ABC):
     async def check_entry_signal(
         cls,
         redis_client,
+        swing_id: int,
         symbol: str,
         current_price: Decimal,
         frgn_ntby_qty: int,
@@ -38,6 +39,7 @@ class TradingStrategy(ABC):
 
         Args:
             redis_client: Redis 클라이언트
+            swing_id: 스윙 ID (연속성 체크용)
             symbol: 종목코드
             current_price: 현재가
             frgn_ntby_qty: 외국인 순매수량

@@ -104,7 +104,8 @@ class SingleEMAStrategy(TradingStrategy):
 
         Returns:
             {
-                'ema20': 50000.0,  # 어제 종가 기준 EMA (중간값)
+                'ema20': 50000.0,  # 어제 종가 기준 EMA20
+                'ema120': 49000.0, # 어제 종가 기준 EMA120 (하락장 필터용)
                 'adx': 25.5,       # 어제 ADX (중간값)
                 'plus_dm14': 360.0,   # 어제 +DM14 (중간값)
                 'minus_dm14': 180.0,  # 어제 -DM14 (중간값)
@@ -127,6 +128,7 @@ class SingleEMAStrategy(TradingStrategy):
             # 평탄화된 구조 그대로 반환
             return {
                 'ema20': data['ema20'],
+                'ema120': data['ema120'],
                 'adx': data['adx'],
                 'plus_dm14': data['plus_dm14'],    # 중간값
                 'minus_dm14': data['minus_dm14'],  # 중간값
@@ -301,6 +303,7 @@ class SingleEMAStrategy(TradingStrategy):
     async def check_entry_signal(
         cls,
         redis_client,
+        swing_id: int,
         symbol: str,
         current_price: Decimal,
         frgn_ntby_qty: int,
@@ -320,6 +323,7 @@ class SingleEMAStrategy(TradingStrategy):
 
             # 실시간 EMA 사용
             realtime_ema20 = cached_indicators['realtime_ema20']
+            realtime_ema120 = cached_indicators['realtime_ema120']
             gap_ratio = cached_indicators['realtime_gap_ratio']
 
             # 실시간 OBV z-score 사용
@@ -327,6 +331,11 @@ class SingleEMAStrategy(TradingStrategy):
 
         except Exception as e:
             logger.error(f"[{symbol}] 매수 신호 지표 계산 실패: {e}", exc_info=True)
+            return None
+
+        # 하락장 필터: 20 EMA < 120 EMA 시 매수 금지
+        if realtime_ema20 < realtime_ema120:
+            logger.debug(f"[{symbol}] 하락장 감지 (EMA20={realtime_ema20:.0f} < EMA120={realtime_ema120:.0f}), 매수 금지")
             return None
 
         # 조건 검증
@@ -339,8 +348,8 @@ class SingleEMAStrategy(TradingStrategy):
 
         current_signal = all([price_above_ema, supply_strong, surge_filtered, gap_filtered, trend_upward])
 
-        # 연속성 체크 (Redis)
-        prev_state_key = f"entry:{symbol}"
+        # 연속성 체크 (Redis, swing_id별 분리)
+        prev_state_key = f"entry:{swing_id}"
         prev_state_str = await redis_client.get(prev_state_key)
         consecutive = 0
         if current_signal:
@@ -417,7 +426,13 @@ class SingleEMAStrategy(TradingStrategy):
             realtime_minus_di = cached_indicators['realtime_minus_di']
             atr = cached_indicators['realtime_atr']
             realtime_ema20 = cached_indicators['realtime_ema20']
+            realtime_ema120 = cached_indicators['realtime_ema120']
             realtime_obv_z = cached_indicators['realtime_obv_z']
+
+            # 하락장 필터: 20 EMA < 120 EMA 시 2차 매수 금지
+            if realtime_ema20 < realtime_ema120:
+                logger.debug(f"[{symbol}] 하락장 감지 (EMA20={realtime_ema20:.0f} < EMA120={realtime_ema120:.0f}), 2차 매수 금지")
+                return None
 
             frgn_ratio = (frgn_ntby_qty / acml_vol * 100) if acml_vol > 0 else 0
 
