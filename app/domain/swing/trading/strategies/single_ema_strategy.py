@@ -86,7 +86,6 @@ class SingleEMAStrategy(TradingStrategy):
     # [1차 방어선]
     ATR_MULTIPLIER = 1.0
     # [2차 방어선]
-    EOD_SIGNAL_WINDOW_DAYS = 3  # 시간 윈도우 (3일)
     EOD_TREND_WEAK_DAYS = 2
     EOD_SUPPLY_WEAK_FRGN_RATIO = 1.0
     EOD_SUPPLY_WEAK_OBV_Z = -1.0

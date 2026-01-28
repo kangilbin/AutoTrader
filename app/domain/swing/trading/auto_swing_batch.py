@@ -17,8 +17,7 @@ SIGNAL 상태:
 - 15:35: day_collect_job (일별 데이터 수집 + 종가 매도 신호 확정)
 """
 import logging
-from datetime import datetime, timedelta
-import pandas as pd
+from datetime import datetime
 from decimal import Decimal
 from app.domain.swing.indicators import TechnicalIndicators
 from app.external.kis_api import get_target_price, get_inquire_price
@@ -173,6 +172,7 @@ async def process_single_swing(
     if current_signal == 0:
         entry_result = await strategy.check_entry_signal(
             redis_client=redis_client,
+            swing_id=swing_id,
             symbol=st_code,
             current_price=current_price,
             frgn_ntby_qty=frgn_ntby_qty,
@@ -388,11 +388,6 @@ async def process_single_swing(
 async def day_collect_job():
     """
     일별 데이터 수집 + 종가 매도 신호 확정 (장 마감 후 15:35)
-
-    1단계: 당일 OHLCV 데이터 수집 및 저장
-    2단계: 포지션 보유 중인 스윙(SIGNAL 1/2)에 대해 종가 매도 신호 판단
-           - 2/3 조건 충족 → SIGNAL 4 (다음날 1차 매도)
-           - 3/3 조건 충족 → SIGNAL 5 (다음날 2차 전량 매도)
     """
     logger.info("[DAY COLLECT] 데이터 수집 + 매도 신호 확정 시작")
     db = await Database.get_session()
@@ -400,7 +395,6 @@ async def day_collect_job():
     try:
         swing_service = SwingService(db)
         stock_service = StockService(db)
-        redis_client = await Redis.get_connection()
 
         swing_list = await swing_service.get_active_swings()
 
@@ -429,34 +423,7 @@ async def day_collect_job():
 
             except Exception as e:
                 logger.error(f"[DAY COLLECT] 데이터 수집 실패 ({swing.ST_CODE}): {e}")
-
         logger.info("[DAY COLLECT] 데이터 수집 완료")
-
-        # ========================================
-        # 2단계: 종가 매도 신호 확정 (SIGNAL 1 or 2만 대상)
-        # ========================================
-        holding_swings = await swing_service.get_holding_swings()
-        logger.info(f"[DAY COLLECT] 매도 신호 판단 대상: {len(holding_swings)}건")
-
-        for swing in holding_swings:
-            try:
-                await process_eod_signal(
-                    swing,
-                    stock_service,
-                    swing_service,
-                    redis_client,
-                    db
-                )
-            except Exception as e:
-                logger.error(
-                    f"[DAY COLLECT] 매도 신호 판단 실패 (SWING_ID={swing.SWING_ID}, "
-                    f"ST_CODE={swing.ST_CODE}): {e}",
-                    exc_info=True
-                )
-                continue
-
-        logger.info("[DAY COLLECT] 매도 신호 확정 완료")
-
     except Exception as e:
         logger.error(f"[DAY COLLECT] day_collect_job 실패: {e}", exc_info=True)
     finally:
@@ -486,300 +453,3 @@ async def ema_cache_warmup_job():
     finally:
         await db.close()
 
-
-# =====================================================
-# 신규 배치 함수들 (1차/2차 매도 신호 통합)
-# =====================================================
-
-async def morning_sell_job():
-    """
-    시초 매도 배치 (09:00-09:55, 5분 간격)
-
-    전일 종가 기준으로 확정된 매도 신호(SIGNAL 4/5)를 시초에 실행
-    - SIGNAL 4: 1차 매도 후 SIGNAL 1로 전환 (잔량 보유)
-    - SIGNAL 5: 2차 전량 매도 후 SIGNAL 0으로 전환 (완전 청산)
-    """
-    db = await Database.get_session()
-
-    try:
-        swing_service = SwingService(db)
-
-        # 매도 대기 중인 스윙 목록 조회 (SIGNAL 4 또는 5)
-        pending_sells = await swing_service.get_pending_sell_swings()
-
-        logger.info(f"[MORNING SELL] 배치 시작: 대기 건수={len(pending_sells)}")
-
-        for swing in pending_sells:
-            try:
-                await process_morning_sell(swing, swing_service, db)
-            except Exception as e:
-                logger.error(
-                    f"[MORNING SELL] 처리 실패 (SWING_ID={swing.SWING_ID}, "
-                    f"ST_CODE={swing.ST_CODE}): {e}",
-                    exc_info=True
-                )
-                continue
-
-        logger.info("[MORNING SELL] 배치 완료")
-
-    except Exception as e:
-        logger.error(f"[MORNING SELL] morning_sell_job 실패: {e}", exc_info=True)
-    finally:
-        await db.close()
-
-
-async def process_morning_sell(swing, swing_service: SwingService, db):
-    """
-    개별 스윙 시초 매도 처리
-
-    Args:
-        swing: SWING_TRADE 레코드
-        swing_service: SwingService 인스턴스
-        db: Database session
-    """
-    swing_id = swing.SWING_ID
-    st_code = swing.ST_CODE
-    user_id = swing.USER_ID if hasattr(swing, 'USER_ID') else None
-    current_signal = swing.SIGNAL if hasattr(swing, 'SIGNAL') else 0
-    sell_ratio = swing.SELL_RATIO if hasattr(swing, 'SELL_RATIO') else 50
-    hold_qty = swing.HOLD_QTY if hasattr(swing, 'HOLD_QTY') and swing.HOLD_QTY else 0
-    entry_price = int(swing.ENTRY_PRICE) if hasattr(swing, 'ENTRY_PRICE') and swing.ENTRY_PRICE else 0
-
-    if not user_id:
-        logger.warning(f"[MORNING SELL][{st_code}] USER_ID 없음, 스킵")
-        return
-
-    logger.info(
-        f"[MORNING SELL][{st_code}] 시초 매도 시작 (SIGNAL={current_signal}, "
-        f"보유수량={hold_qty}주, 평단가={entry_price:,}원)"
-    )
-
-    new_signal = current_signal
-    new_hold_qty = hold_qty
-    new_entry_price = entry_price
-
-    # SIGNAL 4:매도 후 잔량 보유
-    if current_signal == 4:
-        order_result = await SwingOrderExecutor.execute_first_sell(
-            user_id=user_id,
-            st_code=st_code,
-            sell_ratio=sell_ratio
-        )
-
-        if order_result.get("success"):
-            new_signal = 1  # 잔량 보유 상태로 전환
-            new_hold_qty = order_result.get("remaining", 0)
-            logger.info(
-                f"[MORNING SELL][{st_code}] 1차 매도 완료: "
-                f"잔여수량={new_hold_qty}주 → SIGNAL=1"
-            )
-        else:
-            logger.error(
-                f"[MORNING SELL][{st_code}] 1차 매도 실패: {order_result.get('reason')}"
-            )
-            return
-
-    # SIGNAL 5: 전량 매도 후 완전 청산
-    elif current_signal == 5:
-        order_result = await SwingOrderExecutor.execute_second_sell(
-            user_id=user_id,
-            st_code=st_code
-        )
-
-        if order_result.get("success"):
-            new_signal = 0  # 완전 청산
-            new_hold_qty = 0
-            new_entry_price = 0
-            logger.info(
-                f"[MORNING SELL][{st_code}] 2차 매도(전량) 완료: 완전 청산 → SIGNAL=0"
-            )
-        else:
-            logger.error(
-                f"[MORNING SELL][{st_code}] 2차 매도 실패: {order_result.get('reason')}"
-            )
-            return
-
-    # 상태 업데이트
-    if new_signal != current_signal:
-        try:
-            update_data = {
-                "SIGNAL": new_signal,
-                "HOLD_QTY": new_hold_qty,
-                "ENTRY_PRICE": new_entry_price if new_entry_price > 0 else None,
-                "MOD_DT": datetime.now()
-            }
-            await swing_service.update_swing(swing_id, update_data)
-            await db.commit()
-            logger.info(
-                f"[MORNING SELL][{st_code}] 상태 업데이트 완료: "
-                f"SIGNAL={current_signal}→{new_signal}"
-            )
-        except Exception as e:
-            await db.rollback()
-            logger.error(
-                f"[MORNING SELL][{st_code}] 상태 업데이트 실패: {e}",
-                exc_info=True
-            )
-
-
-async def process_eod_signal(
-    swing,
-    stock_service: StockService,
-    swing_service: SwingService,
-    redis_client,
-    db
-):
-    """
-    개별 스윙 종가 매도 신호 판단 (SingleEMAStrategy.check_eod_sell_signals 사용)
-
-    조건:
-    - EMA 이탈
-    - 추세 약화 (ADX/DMI 2일 연속)
-    - 수급 이탈 (OBV z-score 또는 외국인 순매수 비율)
-
-    판정:
-    - 2/3 충족 → SIGNAL 4 (1차 매도 대기)
-    - 3/3 충족 → SIGNAL 5 (2차 매도 대기)
-
-    Args:
-        swing: SWING_TRADE 레코드
-        stock_service: StockService 인스턴스
-        swing_service: SwingService 인스턴스
-        redis_client: Redis 클라이언트
-        db: Database session
-    """
-    swing_id = swing.SWING_ID
-    st_code = swing.ST_CODE
-    current_signal = swing.SIGNAL if hasattr(swing, 'SIGNAL') else 0
-    swing_type = swing.SWING_TYPE if hasattr(swing, 'SWING_TYPE') else 'S'
-    entry_price = int(swing.ENTRY_PRICE) if hasattr(swing, 'ENTRY_PRICE') and swing.ENTRY_PRICE else 0
-    first_sell_price = int(swing.FIRST_SELL_PRICE) if hasattr(swing, 'FIRST_SELL_PRICE') and swing.FIRST_SELL_PRICE else 0
-
-    # 단일 이평선 전략만 처리
-    if swing_type != 'S':
-        logger.debug(f"[EOD SIGNAL][{st_code}] 단일 이평선 전략이 아님 (SWING_TYPE={swing_type}), 스킵")
-        return
-
-    logger.info(
-        f"[EOD SIGNAL][{st_code}] 종가 신호 판단 시작 (SIGNAL={current_signal}, "
-        f"ENTRY_PRICE={entry_price:,}원)"
-    )
-
-    # 주가 데이터 조회 (과거 120일) + 지표 계산
-    start_date = datetime.now() - timedelta(days=120)
-    price_history = await stock_service.get_stock_history(st_code, start_date)
-
-    if not price_history:
-        logger.warning(f"[EOD SIGNAL][{st_code}] 주가 데이터 없음")
-        return
-
-    df = pd.DataFrame(price_history)
-
-    # 당일 종가 데이터 조회 및 DataFrame 업데이트
-    try:
-        from app.external.kis_api import get_inquire_price
-        from app.domain.swing.indicators import TechnicalIndicators
-
-        current_price_data = await get_inquire_price("mgnt", st_code)
-
-        if not current_price_data:
-            logger.warning(f"[EOD SIGNAL][{st_code}] 현재가 조회 실패")
-            return
-
-        current_price = Decimal(str(current_price_data.get("stck_prpr", 0)))
-        if current_price == 0:
-            logger.warning(f"[EOD SIGNAL][{st_code}] 현재가가 0입니다")
-            return
-
-        # 당일 종가로 DataFrame 업데이트
-        today_data = {
-            "ST_CODE": st_code,
-            "STCK_BSOP_DATE": datetime.now().strftime('%Y%m%d'),
-            "STCK_OPRC": current_price_data.get("stck_oprc", current_price),
-            "STCK_HGPR": current_price_data.get("stck_hgpr", current_price),
-            "STCK_LWPR": current_price_data.get("stck_lwpr", current_price),
-            "STCK_CLPR": current_price,
-            "ACML_VOL": current_price_data.get("acml_vol", 0),
-            "FRGN_NTBY_QTY": current_price_data.get("frgn_ntby_qty", 0)
-        }
-        df = pd.concat([df, pd.DataFrame([today_data])], ignore_index=True)
-        df = df.drop_duplicates(subset=['STCK_BSOP_DATE'], keep='last')
-
-        # 기술 지표 계산 (EMA, ADX, DMI, OBV z-score 등)
-        df = TechnicalIndicators.prepare_indicators_from_df(df)
-
-        # 일일 수급 데이터 계산
-        last_row = df.iloc[-1]
-        acml_vol = int(last_row.get('ACML_VOL', 0))
-        frgn_ntby_qty = int(last_row.get('FRGN_NTBY_QTY', 0))
-        daily_frgn_ratio = (frgn_ntby_qty / acml_vol * 100) if acml_vol > 0 else 0
-        daily_obv_z = float(last_row.get('obv_z', 0))
-
-    except Exception as e:
-        logger.error(f"[EOD SIGNAL][{st_code}] 데이터 조회 또는 지표 계산 실패: {e}")
-        return
-
-    # 전략 선택
-    strategy = TradingStrategyFactory.get_strategy(swing_type)
-
-    # Position Dict 구성 (SIGNAL → status 매핑)
-    # SIGNAL 1,2 → BUY_COMPLETE, SIGNAL 4 → SELL_PRIMARY
-    position_status = 'SELL_PRIMARY' if current_signal == 4 else 'BUY_COMPLETE'
-
-    position = {
-        'st_code': st_code,
-        'id': swing_id,
-        'status': position_status,
-        'avg_price': entry_price,
-        'first_sell_price': first_sell_price
-    }
-
-    # EOD 매도 신호 체크
-    sell_signal = await strategy.check_eod_sell_signals(
-        redis_client=redis_client,
-        position=position,
-        df_day=df,
-        daily_frgn_ratio=daily_frgn_ratio,
-        daily_obv_z=daily_obv_z
-    )
-
-    # 신호에 따른 SIGNAL 업데이트
-    new_signal = current_signal
-    action = sell_signal.get('action') if sell_signal else 'HOLD'
-
-    if action == 'SELL_PRIMARY':
-        new_signal = 4  # 1차 매도 대기
-        logger.info(
-            f"[EOD SIGNAL][{st_code}] 1차 매도 신호 확정: "
-            f"SIGNAL {current_signal} → 4 (다음날 50% 매도) - {sell_signal.get('reason')}"
-        )
-    elif action == 'SELL_ALL':
-        new_signal = 5  # 2차 매도 대기
-        logger.info(
-            f"[EOD SIGNAL][{st_code}] 2차 매도 신호 확정: "
-            f"SIGNAL {current_signal} → 5 (다음날 전량 매도) - {sell_signal.get('reason')}"
-        )
-    else:
-        logger.debug(
-            f"[EOD SIGNAL][{st_code}] 매도 조건 미충족, 보유 유지 - {sell_signal.get('reason', '')}"
-        )
-
-    # 상태 업데이트
-    if new_signal != current_signal:
-        try:
-            update_data = {
-                "SIGNAL": new_signal,
-                "MOD_DT": datetime.now()
-            }
-            await swing_service.update_swing(swing_id, update_data)
-            await db.commit()
-            logger.info(
-                f"[EOD SIGNAL][{st_code}] 상태 업데이트 완료: "
-                f"SIGNAL={current_signal}→{new_signal}"
-            )
-        except Exception as e:
-            await db.rollback()
-            logger.error(
-                f"[EOD SIGNAL][{st_code}] 상태 업데이트 실패: {e}",
-                exc_info=True
-            )

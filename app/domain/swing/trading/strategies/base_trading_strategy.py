@@ -103,8 +103,6 @@ class TradingStrategy(ABC):
         2차 매수 신호 체크 (하위 클래스에서 구현 필수)
 
         Args:
-            swing_repository: SwingRepository 인스턴스
-            stock_repository: StockRepository 인스턴스
             redis_client: Redis 클라이언트
             swing_id: 스윙 ID
             symbol: 종목 코드
