@@ -57,6 +57,7 @@ class StockModel(Base):
     """종목 정보 테이블"""
     __tablename__ = "STOCK_INFO"
 
+    MARKET_TYPE = Column(String(50), nullable=False, comment='종목 코드', primary_key=True)
     ST_CODE = Column(String(50), nullable=False, comment='종목 코드', primary_key=True)
     SD_CODE = Column(String(50), nullable=False, comment='주식 표준 코드')
     ST_NM = Column(String(100), nullable=False, comment='종목명')
