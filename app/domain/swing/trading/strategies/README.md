@@ -1,117 +1,23 @@
 # 매매 전략 구조
 
 이 디렉토리는 두 가지 타입의 전략을 포함합니다:
-1. **백테스트 전략** (`BacktestStrategy` 상속)
-2. **실시간 거래 전략** (`TradingStrategy` 상속)
+1. **백테스트 전략** (`BacktestStrategy` 상속) - 과거 데이터로 전략 성능 검증 (동기)
+2. **실시간 거래 전략** (`TradingStrategy` 상속) - 실시간 매매 신호 생성 (비동기)
 
-## 백테스트 전략 (Backtest Strategy)
+## 파일 구조
 
-### 구조
 ```
-base_strategy.py (BacktestStrategy)
-├── ema_strategy.py (EMAStrategy)
-├── ichimoku_strategy.py (IchimokuStrategy)
-└── single_ema_backtest_strategy.py (SingleEMABacktestStrategy)
+base_strategy.py                    # 백테스트 전략 베이스
+├── ema_strategy.py                 # EMA 골든크로스 백테스트
+├── ichimoku_strategy.py            # 일목균형표 백테스트
+└── single_ema_backtest_strategy.py # 단일 20EMA 백테스트
+
+base_trading_strategy.py            # 실시간 거래 전략 베이스
+└── single_ema_strategy.py          # 단일 20EMA 실전 전략
+
+trading_strategy_factory.py         # 실시간 전략 팩토리
+strategy_factory.py                 # 백테스트 전략 팩토리 (상위 디렉토리)
 ```
-
-### 특징
-- 과거 데이터로 전략 성능 검증
-- `compute(prices_df, params)` 메서드 구현 필수
-- 동기 방식 실행
-- `strategy_factory.py`에서 관리
-
-### 새로운 백테스트 전략 추가 방법
-```python
-from .base_strategy import BacktestStrategy
-
-class MyBacktestStrategy(BacktestStrategy):
-    def __init__(self):
-        super().__init__("나의 백테스트 전략")
-
-    def compute(self, prices_df: pd.DataFrame, params: Dict) -> Dict:
-        # 백테스트 로직 구현
-        pass
-```
-
-## 실시간 거래 전략 (Trading Strategy)
-
-### 구조
-```
-base_trading_strategy.py (TradingStrategy)
-└── single_ema_strategy.py (SingleEMAStrategy)
-```
-
-### 특징
-- 실시간 매매 신호 생성
-- 필수 메서드:
-  - `check_entry_signal()`: 1차 매수 신호
-  - `check_exit_signal()`: 매도 신호
-  - `check_second_buy_signal()`: 2차 매수 신호
-- 비동기 방식 실행 (async/await)
-- Redis, DB 연동
-- `trading_strategy_factory.py`에서 관리
-
-### 새로운 실시간 거래 전략 추가 방법
-
-#### 1. 전략 클래스 생성
-```python
-# ichimoku_trading_strategy.py
-from .base_trading_strategy import TradingStrategy
-
-class IchimokuTradingStrategy(TradingStrategy):
-    """일목균형표 실시간 거래 전략"""
-
-    name = "일목균형표 전략"
-
-    @classmethod
-    async def check_entry_signal(cls, redis_client, symbol, df, ...):
-        # 1차 매수 로직 (TK 골든크로스 등)
-        pass
-
-    @classmethod
-    async def check_exit_signal(cls, redis_client, position_id, ...):
-        # 매도 로직 (손절, 구름 이탈 등)
-        pass
-
-    @classmethod
-    async def check_second_buy_signal(cls, db, redis_client, swing_id, ...):
-        # 2차 매수 로직
-        pass
-```
-
-#### 2. 팩토리에 등록
-```python
-# trading_strategy_factory.py
-from .ichimoku_trading_strategy import IchimokuTradingStrategy
-
-class TradingStrategyFactory:
-    _strategies: dict[str, Type[TradingStrategy]] = {
-        'A': SingleEMAStrategy,
-        'B': IchimokuTradingStrategy,  # 추가
-        'C': SingleEMAStrategy,
-    }
-```
-
-#### 3. 자동으로 배치에서 사용
-`auto_swing_batch.py`는 자동으로 SWING_TYPE에 따라 전략을 선택합니다.
-
-## 아키텍처 장점
-
-### 1. 명확한 인터페이스
-- 추상 베이스 클래스로 필수 메서드 강제
-- 새로운 전략 추가 시 구현할 메서드가 명확함
-
-### 2. 타입 안전성
-- Type hints로 IDE 자동완성 지원
-- 컴파일 타임 오류 감지
-
-### 3. 확장성
-- 팩토리 패턴으로 전략 추가가 용이
-- 기존 코드 수정 최소화
-
-### 4. 일관성
-- 백테스트와 실시간 거래 모두 동일한 패턴 사용
-- 전략 간 코드 구조 통일
 
 ## SWING_TYPE 매핑
 
@@ -121,7 +27,155 @@ class TradingStrategyFactory:
 | B | IchimokuStrategy | SingleEMAStrategy (TODO) |
 | C | SingleEMABacktestStrategy | SingleEMAStrategy |
 
-## 참고
-- 백테스트 전략: `app/domain/swing/strategy_factory.py`
-- 실시간 거래 전략: `app/domain/swing/trading_strategy_factory.py`
-- 배치 실행: `app/domain/swing/auto_swing_batch.py`
+---
+
+## 단일 20EMA 실전 전략 (SingleEMAStrategy)
+
+20일 지수이동평균(EMA)을 중심으로 추세 추종 매매를 수행하는 전략입니다.
+분할 매수/매도를 지원하며, 장중 즉시 매도와 장 마감 매도를 이원화한 하이브리드 매도 로직을 사용합니다.
+
+### 사용 지표
+
+| 지표 | 용도 |
+|-----|------|
+| EMA 20 | 단기 추세 판단, 매수/매도 기준선 |
+| EMA 120 | 장기 추세 판단, 하락장 필터 |
+| ADX / +DI / -DI | 추세 강도 및 방향 판단 |
+| ATR (14) | 변동성 기반 손절선, 가격 가드레일 |
+| OBV z-score | 거래량 기반 수급 강도 |
+| 외국인 순매수 비율 | 기관 수급 강도 |
+
+### 배치 스케줄
+
+| 시간 | 배치 | 설명 |
+|-----|------|------|
+| 08:29 | `ema_cache_warmup_job` | 지표 캐시 워밍업 (Redis) |
+| 09:00~09:55 | `morning_sell_job` | 전일 확정된 매도 신호 실행 (SIGNAL 4/5) |
+| 10:00~14:55 | `trade_job` | 장중 매수/손절 체크 (5분 간격) |
+| 15:35 | `day_collect_job` | 당일 OHLCV 수집 + 종가 매도 신호 확정 |
+
+### SIGNAL 상태 흐름
+
+```
+SIGNAL 0 (대기)
+    │
+    ├─ 1차 매수 조건 충족 ──→ SIGNAL 1 (1차 매수 완료)
+    │                            │
+    │                            ├─ 2차 매수 조건 충족 ──→ SIGNAL 2 (2차 매수 완료)
+    │                            │                            │
+    │                            │                            ├─ 장중 손절 ──→ SIGNAL 3 → SIGNAL 0
+    │                            │                            └─ 종가 매도 확정 ──→ SIGNAL 4 또는 5
+    │                            │
+    │                            ├─ 장중 손절 ──→ SIGNAL 3 (1차 손절 매도) ──→ SIGNAL 0
+    │                            └─ 종가 매도 확정 ──→ SIGNAL 4 또는 5
+    │
+    └─ SIGNAL 4 (1차 매도 대기) ──→ 다음날 시초 매도 ──→ SIGNAL 1 (잔량 보유)
+       SIGNAL 5 (전량 매도 대기) ──→ 다음날 시초 매도 ──→ SIGNAL 0 (완전 청산)
+```
+
+---
+
+### 매수 전략
+
+#### 하락장 필터 (공통)
+
+20 EMA가 120 EMA 아래에 있으면 하락장으로 판단하여 **1차, 2차 매수 모두 금지**합니다.
+
+#### 1차 매수 조건
+
+아래 5개 조건을 **모두 충족**하고, **연속 2회(10분)** 확인되어야 매수 신호가 발생합니다.
+
+| 조건 | 기준 | 목적 |
+|-----|------|------|
+| EMA 추세 | 현재가 >= EMA20 * 0.995 | EMA 위에서 매수 (0.5% 여유) |
+| 수급 강도 | 외국인 비율 >= 1.5% AND OBV z-score >= 1.0 | 기관+거래량 수급 확인 |
+| 급등 필터 | 당일 상승률 <= 5% | 급등 추격매수 방지 |
+| 괴리율 필터 | EMA 괴리율 <= 5% | 과열 구간 진입 방지 |
+| 추세 방향 | +DI > -DI | 상승 추세 방향 확인 |
+
+1차 매수 시 `buy_ratio%` 만큼 매수합니다 (예: 50%).
+
+#### 2차 매수 조건
+
+1차 매수 후 **최소 20분 경과** 시 아래 두 시나리오 중 하나가 충족되면 나머지 금액으로 추가 매수합니다.
+
+**시나리오 A - 추세 강화형**
+
+추세가 가속되는 상황에서 추가 진입합니다.
+
+| 조건 | 기준 |
+|-----|------|
+| 가격 위치 | EMA + ATR x 0.3 ~ EMA + ATR x 2.0 |
+| 추세 강도 | ADX > 25 |
+| 추세 방향 | +DI > -DI |
+| 수급 | 외국인 >= 1.5% AND OBV z-score >= 1.2 |
+
+**시나리오 B - 눌림목 반등**
+
+일시적 조정 후 반등하는 상황에서 추가 진입합니다.
+
+| 조건 | 기준 |
+|-----|------|
+| 가격 위치 | EMA - ATR x 0.5 ~ EMA + ATR x 0.3 |
+| 추세 강도 | 18 <= ADX <= 23 (조정 구간) |
+| 추세 방향 | +DI > -DI |
+| 수급 | 외국인 > 0.5% OR OBV z-score > 0.5 |
+| 반등 확인 | 장중 저가 대비 0.4% 이상 반등 |
+
+---
+
+### 매도 전략 (이원화 하이브리드)
+
+매도는 **장중 즉시 매도**와 **장 마감 매도** 두 단계로 나뉩니다.
+
+#### [1차 방어선] 장중 즉시 매도
+
+`trade_job`에서 5분마다 체크합니다. 급락 시 빠른 대응이 목적입니다.
+
+| 조건 | 기준 | 동작 |
+|-----|------|------|
+| EMA-ATR 동적 손절 | 현재가 <= EMA - ATR x 1.0 | `sell_ratio%` 1차 매도 (SIGNAL 3) → 다음 주기에 잔량 전량 매도 (SIGNAL 0) |
+
+#### [2차 방어선] 장 마감 매도
+
+`day_collect_job`에서 매일 종가 확정 후 체크합니다. 노이즈를 제거한 추세 이탈 확정이 목적입니다.
+
+**3가지 EOD 신호:**
+
+| 신호 | 조건 | 유효 기간 |
+|-----|------|----------|
+| EMA 이탈 | 종가 < EMA20 | 3거래일 |
+| 추세 약화 | ADX < 20 AND -DI > +DI (2일 연속) | 3거래일 |
+| 수급 이탈 | 외국인 비율 < 1.0% OR OBV z-score < -1.0 | 3거래일 |
+
+**1차 분할 매도 (SIGNAL 4)**
+
+위 3개 신호 중 **2개 이상 충족** 시 → 다음날 시초에 `sell_ratio%` 매도, 잔량 보유 (SIGNAL 1)
+
+**2차 전량 매도 (SIGNAL 5)**
+
+1차 매도 상태에서 아래 조건 중 하나라도 충족 시 → 다음날 시초에 전량 매도 (SIGNAL 0)
+
+- 3개 신호 **모두** 충족
+- 1차 매도가 대비 **-2% 추가 하락**
+
+---
+
+### 전략 파라미터 요약
+
+| 구분 | 파라미터 | 값 |
+|-----|---------|-----|
+| EMA | 단기 / 장기 | 20 / 120 |
+| 1차 매수 | 외국인 비율 | >= 1.5% |
+| 1차 매수 | OBV z-score | >= 1.0 |
+| 1차 매수 | 급등 필터 | <= 5% |
+| 1차 매수 | 괴리율 필터 | <= 5% |
+| 1차 매수 | 연속 확인 | 2회 (10분) |
+| 2차 매수 | 경과 시간 | >= 20분 |
+| 2차 매수(A) | ADX | > 25 |
+| 2차 매수(B) | ADX | 18~23 |
+| 2차 매수(B) | 반등 비율 | 0.4% |
+| 즉시 매도 | ATR 배수 | 1.0 |
+| EOD 매도 | 신호 윈도우 | 3거래일 |
+| EOD 매도 | 추세 약화 연속 | 2일 |
+| 2차 전량 매도 | 추가 하락 | -2% |
