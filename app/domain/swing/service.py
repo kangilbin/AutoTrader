@@ -9,12 +9,7 @@ from sqlalchemy.exc import SQLAlchemyError, IntegrityError
 from typing import List, Dict, Any
 from datetime import datetime
 from decimal import Decimal
-import logging
-
-import talib as ta
-import numpy as np
-import pandas as pd
-
+from app.domain.swing.indicators import TechnicalIndicators
 from app.domain.swing.repository import SwingRepository
 from app.domain.swing.entity import SwingTrade, EmaOption
 from app.domain.swing.schemas import SwingCreateRequest, SwingResponse
@@ -23,6 +18,9 @@ from app.domain.stock.stock_data_batch import fetch_and_store_3_years_data
 from app.exceptions import DatabaseError, NotFoundError, DuplicateError
 from app.external.kis_api import get_stock_balance
 from app.common.redis import Redis
+import logging
+import json
+import pandas as pd
 
 logger = logging.getLogger(__name__)
 
@@ -408,7 +406,7 @@ class SwingService:
 
         - 대상: SWING_TRADE.USE_YN = 'Y'인 종목
         - 작업: 과거 3년 데이터로 지표 계산 → Redis 저장
-        - 저장 지표: EMA20, ADX, +DI, -DI (오늘/어제 2일치)
+        - 저장 지표: EMA20, ADX, +DI, -DI, ATR, OBV-Z
 
         Args:
             redis_client: Redis 클라이언트
@@ -416,8 +414,6 @@ class SwingService:
         Returns:
             워밍업 결과 (성공/실패 건수)
         """
-        from app.domain.swing.indicators import TechnicalIndicators
-        import json
 
         logger.info("=== 지표 캐시 워밍업 시작 (EMA20, ADX, DI) ===")
 
