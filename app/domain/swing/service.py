@@ -344,45 +344,43 @@ class SwingService:
             df = pd.DataFrame(price_history)
             indicators = TechnicalIndicators.prepare_indicators_from_df(df)
 
-            if len(indicators) < 2:
-                logger.warning(f"[{st_code}] 지표 데이터 부족 (2일 미만)")
+            if len(indicators) < 8:
+                logger.warning(f"[{st_code}] 지표 데이터 부족 (8일 미만, OBV z-score 계산 불가)")
                 return False
 
-            today = indicators.iloc[-1]
-            yesterday = indicators.iloc[-2]
+            yesterday = indicators.iloc[-1]
 
-            required_cols = ['ema_20', 'adx', 'plus_di', 'minus_di', 'atr', 'obv_z']
-            if not all(col in today.index for col in required_cols):
+            required_cols = ['ema_20', 'adx', 'plus_di', 'minus_di', 'atr', 'obv', 'obv_z']
+            if not all(col in yesterday.index for col in required_cols):
                 logger.warning(f"[{st_code}] 필수 지표 누락")
                 return False
 
-            if any(pd.isna(today[col]) for col in required_cols):
+            if any(pd.isna(yesterday[col]) for col in required_cols):
                 logger.warning(f"[{st_code}] 지표 값 NaN")
                 return False
 
+            # OBV diff 최근 6일 추출
+            obv_diffs = indicators['obv'].diff()
+            recent_6_diffs = obv_diffs.iloc[-7:-1].tolist()
+
+            # DM14 역산 (+DM14 = +DI × ATR / 100)
+            atr = float(yesterday['atr'])
+            plus_dm14 = (float(yesterday['plus_di']) * atr) / 100
+            minus_dm14 = (float(yesterday['minus_di']) * atr) / 100
+
             indicators_data = {
-                "ema20": {
-                    "today": float(today['ema_20']),
-                    "yesterday": float(yesterday['ema_20'])
-                },
-                "adx": {
-                    "today": float(today['adx']),
-                    "yesterday": float(yesterday['adx'])
-                },
-                "plus_di": {
-                    "today": float(today['plus_di']),
-                    "yesterday": float(yesterday['plus_di'])
-                },
-                "minus_di": {
-                    "today": float(today['minus_di']),
-                    "yesterday": float(yesterday['minus_di'])
-                },
-                "atr": {
-                    "today": float(today['atr']),
-                    "yesterday": float(yesterday['atr'])
-                },
-                "obv_z": float(today['obv_z']),  # OBV z-score (종가 기준)
-                "date": today['STCK_BSOP_DATE']
+                "ema20": float(yesterday['ema_20']),
+                "adx": float(yesterday['adx']),
+                "plus_dm14": plus_dm14,      # 중간값 저장 (실시간 계산용)
+                "minus_dm14": minus_dm14,    # 중간값 저장 (실시간 계산용)
+                "atr": atr,
+                "obv": float(yesterday['obv']),
+                "obv_z": float(yesterday['obv_z']),
+                "obv_recent_diffs": recent_6_diffs,
+                "close": yesterday['STCK_CLPR'],
+                "high": yesterday['STCK_HGPR'],  # 어제 고가 (DM 계산용)
+                "low": yesterday['STCK_LWPR'],   # 어제 저가 (DM 계산용)
+                "date": yesterday['STCK_BSOP_DATE']
             }
 
             await redis_client.setex(
@@ -392,9 +390,9 @@ class SwingService:
             )
 
             logger.info(
-                f"[{st_code}] 지표 캐싱 완료: EMA={indicators_data['ema20']['today']:.2f}, "
-                f"ADX={indicators_data['adx']['today']:.1f}, "
-                f"ATR={indicators_data['atr']['today']:.2f}, "
+                f"[{st_code}] 지표 캐싱 완료: EMA={indicators_data['ema20']:.2f}, "
+                f"ADX={indicators_data['adx']:.1f}, "
+                f"ATR={indicators_data['atr']:.2f}, "
                 f"OBV_Z={indicators_data['obv_z']:.2f} "
                 f"(데이터: {len(price_history)}일)"
             )
@@ -455,52 +453,51 @@ class SwingService:
                     df = pd.DataFrame(price_history)
                     indicators = TechnicalIndicators.prepare_indicators_from_df(df)
 
-                    if len(indicators) < 2:
-                        logger.warning(f"[{st_code}] 지표 데이터 부족 (2일 미만)")
+                    if len(indicators) < 8:
+                        logger.warning(f"[{st_code}] 지표 데이터 부족 (8일 미만, OBV z-score 계산 불가)")
                         fail_count += 1
                         continue
 
-                    # 최근 2일 데이터 추출
-                    today = indicators.iloc[-1]
-                    yesterday = indicators.iloc[-2]
+                    # 어제 데이터 추출 (실전 거래에서 사용할 기준)
+                    yesterday = indicators.iloc[-1]
 
                     # 필수 지표 존재 여부 확인
-                    required_cols = ['ema_20', 'adx', 'plus_di', 'minus_di', 'atr', 'obv_z']
-                    if not all(col in today.index for col in required_cols):
+                    required_cols = ['ema_20', 'adx', 'plus_di', 'minus_di', 'atr', 'obv', 'obv_z']
+                    if not all(col in yesterday.index for col in required_cols):
                         logger.warning(f"[{st_code}] 필수 지표 누락")
                         fail_count += 1
                         continue
 
                     # NaN 체크
-                    if any(pd.isna(today[col]) for col in required_cols):
+                    if any(pd.isna(yesterday[col]) for col in required_cols):
                         logger.warning(f"[{st_code}] 지표 값 NaN")
                         fail_count += 1
                         continue
 
-                    ema20 = float(today['ema_20'])
+                    # OBV diff 최근 6일 추출 (7일 중 마지막 1일 제외)
+                    obv_diffs = indicators['obv'].diff()
+                    recent_6_diffs = obv_diffs.iloc[-7:-1].tolist()
+
+                    # DM14 역산 (+DM14 = +DI × ATR / 100)
+                    atr = float(yesterday['atr'])
+                    plus_dm14 = (float(yesterday['plus_di']) * atr) / 100
+                    minus_dm14 = (float(yesterday['minus_di']) * atr) / 100
+
+                    # 평탄화된 캐시 구조 (cache_single_indicators와 동일)
+                    ema20 = float(yesterday['ema_20'])
                     indicators_data = {
-                        "ema20": {
-                            "today": float(today['ema_20']),
-                            "yesterday": float(yesterday['ema_20'])
-                        },
-                        "adx": {
-                            "today": float(today['adx']),
-                            "yesterday": float(yesterday['adx'])
-                        },
-                        "plus_di": {
-                            "today": float(today['plus_di']),
-                            "yesterday": float(yesterday['plus_di'])
-                        },
-                        "minus_di": {
-                            "today": float(today['minus_di']),
-                            "yesterday": float(yesterday['minus_di'])
-                        },
-                        "atr": {
-                            "today": float(today['atr']),
-                            "yesterday": float(yesterday['atr'])
-                        },
-                        "obv_z": float(today['obv_z']),  # OBV z-score (종가 기준)
-                        "date": today['STCK_BSOP_DATE']
+                        "ema20": ema20,
+                        "adx": float(yesterday['adx']),
+                        "plus_dm14": plus_dm14,      # 중간값 저장
+                        "minus_dm14": minus_dm14,    # 중간값 저장
+                        "atr": atr,
+                        "obv": float(yesterday['obv']),
+                        "obv_z": float(yesterday['obv_z']),
+                        "obv_recent_diffs": recent_6_diffs,
+                        "close": yesterday['STCK_CLPR'],
+                        "high": yesterday['STCK_HGPR'],  # 어제 고가
+                        "low": yesterday['STCK_LWPR'],   # 어제 저가
+                        "date": yesterday['STCK_BSOP_DATE']
                     }
 
                     await redis_client.setex(
@@ -511,10 +508,11 @@ class SwingService:
 
                     logger.info(
                         f"[{st_code}] 지표 캐싱 완료: EMA={ema20:.2f}, "
-                        f"ADX={indicators_data['adx']['today']:.1f}, "
-                        f"+DI={indicators_data['plus_di']['today']:.1f}, "
-                        f"-DI={indicators_data['minus_di']['today']:.1f}, "
-                        f"ATR={indicators_data['atr']['today']:.2f}, "
+                        f"ADX={indicators_data['adx']:.1f}, "
+                        f"+DM14={indicators_data['plus_dm14']:.2f}, "
+                        f"-DM14={indicators_data['minus_dm14']:.2f}, "
+                        f"ATR={indicators_data['atr']:.2f}, "
+                        f"OBV={indicators_data['obv']:.0f}, "
                         f"OBV_Z={indicators_data['obv_z']:.2f} "
                         f"(데이터: {len(price_history)}일)"
                     )
