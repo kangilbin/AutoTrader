@@ -41,7 +41,8 @@ from app.exceptions.infrastructure import (
 # 인증/인가 예외 (Router, Middleware, Dependency에서 사용)
 from app.exceptions.auth import (
     AuthenticationError,
-    AuthorizationError
+    AuthorizationError,
+    DeviceNotAllowedError
 )
 
 __all__ = [
@@ -65,5 +66,6 @@ __all__ = [
 
     # 인증/인가
     "AuthenticationError",
-    "AuthorizationError"
+    "AuthorizationError",
+    "DeviceNotAllowedError"
 ]

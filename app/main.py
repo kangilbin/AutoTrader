@@ -94,7 +94,7 @@ app.include_router(account_router)
 app.include_router(stock_router)
 app.include_router(order_router)
 app.include_router(swing_router)
-app.include_router(device_router)
+# app.include_router(device_router)
 app.include_router(backtest_router)
 
 
