@@ -10,7 +10,7 @@ from decimal import Decimal
 @dataclass
 class Stock:
     """종목 도메인 엔티티"""
-    market_type: str
+    mrkt_code: str
     st_code: str
     sd_code: str = ""
     name: str = ""
@@ -43,6 +43,7 @@ class Stock:
 @dataclass
 class StockHistory:
     """주식 일별 데이터 엔티티"""
+    mrkt_code: str
     st_code: str
     stck_bsop_date: str  # YYYYMMDD
     stck_oprc: Decimal  # 시가

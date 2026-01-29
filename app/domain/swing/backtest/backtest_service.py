@@ -44,6 +44,9 @@ async def compute_backtest_offloaded(prices_df: pd.DataFrame, params: dict) -> d
 
 async def run_backtest(db: AsyncSession, swing_data: SwingCreateRequest) -> dict:
     """백테스트 실행 및 결과 반환"""
+    if not swing_data.MRKT_CODE:
+        raise ValueError("시장 코드는 필수입니다.")
+
     if not swing_data.ST_CODE:
         raise ValueError("주식 코드는 필수입니다.")
 
@@ -71,7 +74,7 @@ async def run_backtest(db: AsyncSession, swing_data: SwingCreateRequest) -> dict
 
     # 주가 데이터 조회
     stock_service = StockService(db)
-    price_days = await stock_service.get_stock_history(swing_data.ST_CODE, start_date)
+    price_days = await stock_service.get_stock_history(swing_data.MRKT_CODE, swing_data.ST_CODE, start_date)
     if not price_days:
         raise ValueError("주가 데이터가 없습니다.")
 

@@ -37,7 +37,14 @@ class SwingRepository:
         """계좌번호로 스윙 목록 조회"""
         query = (
             select(*SwingModel.__table__.columns, StockModel.ST_NM)
-            .join(StockModel, SwingModel.ST_CODE == StockModel.ST_CODE, isouter=True)
+            .join(
+                StockModel,
+                and_(
+                    SwingModel.MRKT_CODE == StockModel.MRKT_CODE,
+                    SwingModel.ST_CODE == StockModel.ST_CODE
+                ),
+                isouter=True
+            )
             .filter(SwingModel.ACCOUNT_NO == account_no)
         )
         result = await self.db.execute(query)
@@ -60,6 +67,7 @@ class SwingRepository:
         """스윙 저장 (flush만 수행)"""
         db_swing = SwingModel(
             ACCOUNT_NO=swing.account_no,
+            MRKT_CODE=swing.mrkt_code,
             ST_CODE=swing.st_code,
             INIT_AMOUNT=swing.init_amount,
             CUR_AMOUNT=swing.cur_amount,

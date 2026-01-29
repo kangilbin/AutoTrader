@@ -9,6 +9,7 @@ from decimal import Decimal
 
 class SwingCreateRequest(BaseModel):
     """스윙 전략 등록 요청"""
+    MRKT_CODE: str
     ST_CODE: str
     ACCOUNT_NO: str
     INIT_AMOUNT: int
@@ -33,6 +34,7 @@ class SwingUpdateRequest(BaseModel):
 class SwingResponse(BaseModel):
     """스윙 전략 응답"""
     SWING_ID: Optional[int] = None
+    MRKT_CODE: Optional[str] = None
     ST_CODE: Optional[str] = None
     ST_NM: Optional[str] = None
     ACCOUNT_NO: Optional[str] = None
@@ -57,6 +59,7 @@ class SwingResponse(BaseModel):
 class SwingMappingResponse(BaseModel):
     """스윙 매핑 응답 (보유 주식 정보 포함)"""
     SWING_ID: Optional[int] = None
+    MRKT_CODE: Optional[str] = None
     ST_CODE: Optional[str] = None
     ACCOUNT_NO: Optional[str] = None
     USE_YN: Optional[str] = None

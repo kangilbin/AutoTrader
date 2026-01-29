@@ -14,6 +14,7 @@ class SwingTrade:
     """스윙 매매 도메인 엔티티"""
     swing_id: Optional[int] = None
     account_no: str = ""
+    mrkt_code: str = ""
     st_code: str = ""
     use_yn: str = "Y"
     init_amount: Decimal = Decimal(0)
@@ -31,6 +32,8 @@ class SwingTrade:
         """스윙 설정 유효성 검증"""
         if not self.account_no:
             raise ValidationError("계좌번호는 필수입니다")
+        if not self.mrkt_code:
+            raise ValidationError("시장코드는 필수입니다")
         if not self.st_code:
             raise ValidationError("종목코드는 필수입니다")
         if self.swing_type not in ('S', 'A', 'B'):
@@ -181,11 +184,12 @@ class SwingTrade:
     # ==================== 팩토리 메서드 ====================
 
     @classmethod
-    def create(cls, account_no: str, st_code: str, init_amount: Decimal,
+    def create(cls, account_no: str, mrkt_code: str, st_code: str, init_amount: Decimal,
                swing_type: str, buy_ratio: int = 50, sell_ratio: int = 50) -> "SwingTrade":
         """새 스윙 매매 생성"""
         swing = cls(
             account_no=account_no,
+            mrkt_code=mrkt_code,
             st_code=st_code,
             init_amount=init_amount,
             cur_amount=init_amount,
