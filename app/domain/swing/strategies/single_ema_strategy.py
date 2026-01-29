@@ -3,7 +3,7 @@
 
 Entry Conditions (all 5 must be met + 2회 연속 확인):
 1. 가격 위치: 현재가 > 실시간 EMA20, 괴리율 <= 2%
-2. 수급 강도: (외국인 >= 3% OR 프로그램 >= 3%) AND (합 >= 4.5%)
+2. 수급 강도: 외국인 >= 3%
 3. 수급 유지: 이전 대비 20% 이상 감소하지 않음
 4. 거래량: 전일 대비 120% 이상
 5. 급등 필터: 당일 상승률 <= 7%
@@ -11,9 +11,9 @@ Entry Conditions (all 5 must be met + 2회 연속 확인):
 
 Exit Conditions (추세/수급 기반, 익절 없음):
 1. 고정 손절: -3%
-2. 수급 반전: 외국인 or 프로그램 순매도 -2% 이상
+2. 수급 반전: 외국인 순매도 -2% 이상
 3. EMA 이탈: 2회 연속 EMA 아래
-4. 수급 약화: 외국인 and 프로그램 모두 1% 미만
+4. 수급 약화: 외국인 1% 미만
 5. 추세 악화: EMA 아래에서 가격 하락 + 이탈폭 증가
 """
 import pandas as pd
@@ -34,15 +34,21 @@ class SingleEMAStrategy:
     # 전략 파라미터
     EMA_PERIOD = 20
 
-    # 진입 조건
+    # 1차 매수 진입 조건
     MAX_GAP_RATIO = 0.02  # 괴리율 2% 이내
     FRGN_STRONG_THRESHOLD = 3.0  # 외국인 3% 이상
-    PGM_STRONG_THRESHOLD = 3.0  # 프로그램 3% 이상
-    TOTAL_THRESHOLD = 4.5  # 합산 4.5% 이상
     MAINTAIN_RATIO = 0.8  # 수급 유지 기준 (80%)
     VOLUME_RATIO_THRESHOLD = 1.2  # 거래량 120% 이상
     MAX_SURGE_RATIO = 0.07  # 급등 필터 7%
     CONSECUTIVE_REQUIRED = 2  # 2회 연속 확인
+
+    # 2차 매수 진입 조건
+    SECOND_BUY_PRICE_GAIN_MIN = 0.02  # 최소 2% 상승
+    SECOND_BUY_PRICE_GAIN_MAX = 0.07  # 최대 7% 상승
+    SECOND_BUY_EMA_GAP_RATIO = 0.03  # EMA 괴리율 3% 이내
+    SECOND_BUY_FRGN_THRESHOLD = 3.5  # 외국인 3.5% 이상 (1차보다 엄격)
+    SECOND_BUY_VOLUME_RATIO = 1.5  # 거래량 150% 이상
+    SECOND_BUY_TIME_MIN = 600  # 최소 10분 경과 (같은 날)
 
     # 청산 조건
     STOP_LOSS_FIXED = -0.03  # 고정 손절 -3%
@@ -217,16 +223,12 @@ class SingleEMAStrategy:
         gap_ratio = (curr_price - realtime_ema20) / realtime_ema20
         gap_condition = gap_ratio <= cls.MAX_GAP_RATIO
 
-        # === 조건 B: 수급 강도 ===
+        # === 조건 B: 수급 강도 (외국인만) ===
         frgn_ratio = (frgn_ntby_qty / acml_vol * 100) if acml_vol > 0 else 0
-        pgm_ratio = (pgtr_ntby_qty / acml_vol * 100) if acml_vol > 0 else 0
 
-        supply_condition = (
-            (frgn_ratio >= cls.FRGN_STRONG_THRESHOLD or pgm_ratio >= cls.PGM_STRONG_THRESHOLD) and
-            (frgn_ratio + pgm_ratio >= cls.TOTAL_THRESHOLD)
-        )
+        supply_condition = frgn_ratio >= cls.FRGN_STRONG_THRESHOLD
 
-        # === 조건 C: 수급 유지 ===
+        # === 조건 C: 수급 유지 (외국인만) ===
         supply_maintained = True
         prev_state_key = f"entry:{symbol}"
         prev_state_str = await redis_client.get(prev_state_key)
@@ -234,12 +236,8 @@ class SingleEMAStrategy:
         if prev_state_str:
             prev_state = json.loads(prev_state_str)
             prev_frgn_ratio = prev_state.get('curr_frgn_ratio', 0)
-            prev_pgm_ratio = prev_state.get('curr_pgm_ratio', 0)
 
-            frgn_maintained = frgn_ratio >= prev_frgn_ratio * cls.MAINTAIN_RATIO
-            pgm_maintained = pgm_ratio >= prev_pgm_ratio * cls.MAINTAIN_RATIO
-
-            supply_maintained = frgn_maintained or pgm_maintained
+            supply_maintained = frgn_ratio >= prev_frgn_ratio * cls.MAINTAIN_RATIO
 
         # === 조건 D: 거래량 ===
         volume_condition = prdy_vrss_vol_rate >= (cls.VOLUME_RATIO_THRESHOLD * 100)
