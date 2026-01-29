@@ -456,6 +456,46 @@ class TechnicalIndicators:
         return df
 
     @classmethod
+    def prepare_full_indicators_for_single_ema(
+        cls,
+        df: pd.DataFrame,
+        ema_short: int = 20,
+        ema_long: int = 120,
+        atr_period: int = 14,
+        adx_period: int = 14,
+        obv_lookback: int = 7
+    ) -> pd.DataFrame:
+        """
+        단일 EMA 전략용 전체 지표 계산 (백테스팅 + 실전 공통)
+
+        prepare_indicators_from_df + daily_return 추가
+
+        Args:
+            df: OHLCV 데이터
+            ema_short: 단기 EMA 기간 (기본값: 20)
+            ema_long: 장기 EMA 기간 (기본값: 120)
+            atr_period: ATR 기간 (기본값: 14)
+            adx_period: ADX/DMI 기간 (기본값: 14)
+            obv_lookback: OBV z-score 계산 기간 (기본값: 7)
+
+        Returns:
+            지표가 추가된 DataFrame (ema_20, ema_120, atr, adx, plus_di, minus_di, obv, obv_z, gap_ratio, daily_return)
+        """
+        # 기본 지표 계산 (ema_20, ema_120, atr, adx, dmi, obv, obv_z 포함)
+        df = cls.prepare_indicators_from_df(
+            df,
+            ema_period=ema_short,
+            atr_period=atr_period,
+            adx_period=adx_period,
+            obv_lookback=obv_lookback
+        )
+
+        # 일일 수익률 추가
+        df["daily_return"] = df["STCK_CLPR"].pct_change()
+
+        return df
+
+    @classmethod
     def enrich_cached_indicators_with_realtime(
         cls,
         cached_indicators: dict,
