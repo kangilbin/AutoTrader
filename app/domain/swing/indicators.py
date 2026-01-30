@@ -384,7 +384,8 @@ class TechnicalIndicators:
     def prepare_indicators_from_df(
         cls,
         df: pd.DataFrame,
-        ema_period: int = 20,
+        ema_short: int = 20,
+        ema_long: int = 120,
         atr_period: int = 14,
         adx_period: int = 14,
         obv_lookback: int = 7
@@ -394,7 +395,8 @@ class TechnicalIndicators:
 
         Args:
             df: OHLCV 데이터 (STCK_HGPR, STCK_LWPR, STCK_CLPR, ACML_VOL 필요)
-            ema_period: EMA 기간
+            ema_short: 20EMA 기간
+            ema_long: 120EMA 기간
             atr_period: ATR 기간
             adx_period: ADX/DMI 기간
             obv_lookback: OBV z-score 계산 기간
@@ -411,13 +413,13 @@ class TechnicalIndicators:
         volume = df["ACML_VOL"].values.astype(float)
 
         # EMA (단기 20, 장기 120)
-        ema = cls.calculate_ema(close, ema_period)
+        ema = cls.calculate_ema(close, ema_short)
         if ema is not None:
             df["ema_20"] = ema
             # 괴리율
             df["gap_ratio"] = (close - ema) / ema
 
-        ema_long = cls.calculate_ema(close, 120)
+        ema_long = cls.calculate_ema(close, ema_long)
         if ema_long is not None:
             df["ema_120"] = ema_long
 
@@ -484,7 +486,8 @@ class TechnicalIndicators:
         # 기본 지표 계산 (ema_20, ema_120, atr, adx, dmi, obv, obv_z 포함)
         df = cls.prepare_indicators_from_df(
             df,
-            ema_period=ema_short,
+            ema_short=ema_short,
+            ema_long=ema_long,
             atr_period=atr_period,
             adx_period=adx_period,
             obv_lookback=obv_lookback

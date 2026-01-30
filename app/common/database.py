@@ -101,7 +101,7 @@ class SwingModel(Base):
     SWING_TYPE = Column(CHAR(1), nullable=False, comment='스윙 타입 (A: 이평선, B: 일목균형표)')
     BUY_RATIO = Column(Integer, nullable=False, comment='매수 비율')
     SELL_RATIO = Column(Integer, nullable=False, comment='매도 비율')
-    SIGNAL = Column(Integer, nullable=False, default=0, comment='매매 신호 상태 (0:대기, 1:1차매수, 2:2차매수, 3:장중손절, 4:1차매도대기, 5:2차매도대기)')
+    SIGNAL = Column(Integer, nullable=False, default=0, comment='매매 신호 상태 (0:대기, 1:1차매수, 2:2차매수, 3:1차매도')
     ENTRY_PRICE = Column(DECIMAL(15, 2), nullable=True, comment='평균 매수 단가')
     HOLD_QTY = Column(Integer, nullable=True, default=0, comment='보유 수량')
     EOD_SIGNALS = Column(String(500), nullable=True, comment='EOD 매도 신호 JSON {"ema_breach":"2026-01-20","trend_weak":"2026-01-21","supply_weak":"2026-01-22"}')

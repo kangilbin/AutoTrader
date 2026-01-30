@@ -173,24 +173,32 @@ class TradingStrategy(ABC):
             eod_signals = json.loads(eod_signals_json)
             signal_count = len(eod_signals)
 
+            # EOD 신호 이름을 한글로 매핑
+            signal_map = {
+                "ema_breach": "EMA 종가 이탈",
+                "trend_weak": "추세 약화",
+                "supply_weak": "수급 이탈"
+            }
+            reasons = [signal_map.get(key, key) for key in eod_signals.keys()]
+
             if signal_count >= 3:
                 return {
                     "action": "SELL_ALL",
-                    "reason": f"EOD 신호 3개 충족: {list(eod_signals.keys())}",
+                    "reasons": ["EOD 전량 매도"] + reasons,
                     "signal_count": signal_count
                 }
             elif signal_count >= 2:
                 return {
                     "action": "SELL_PARTIAL",
-                    "reason": f"EOD 신호 2개 충족: {list(eod_signals.keys())}",
+                    "reasons": ["EOD 1차 매도"] + reasons,
                     "signal_count": signal_count
                 }
             else:
-                return {"action": "HOLD", "reason": f"EOD 신호 1개만 충족", "signal_count": signal_count}
+                return {"action": "HOLD", "reasons": [], "signal_count": signal_count}
 
         except Exception as e:
             logger.error(f"EOD 신호 파싱 실패: {e}")
-            return {"action": "HOLD", "reason": "EOD 신호 파싱 오류", "signal_count": 0}
+            return {"action": "HOLD", "reasons": [], "signal_count": 0}
 
     @classmethod
     async def process_trading_cycle(
@@ -198,7 +206,8 @@ class TradingStrategy(ABC):
         swing,
         redis_client,
         cached_indicators: Dict,
-        current_price_data: Dict
+        current_price_data: Dict,
+        db  # DB 세션 추가
     ) -> Dict:
         """
         스윙 매매 사이클 처리 (SIGNAL 상태 머신)
@@ -215,11 +224,13 @@ class TradingStrategy(ABC):
             redis_client: Redis 클라이언트
             cached_indicators: 실시간 증분 계산된 지표
             current_price_data: 현재가 데이터 (KIS API 응답)
+            db: AsyncSession (거래 내역 저장용)
 
         Returns:
             처리 결과 딕셔너리
         """
         from ..order_executor import SwingOrderExecutor
+        from app.domain.trade_history import TradeHistoryService
 
         swing_id = swing.SWING_ID
         st_code = swing.ST_CODE
@@ -272,6 +283,17 @@ class TradingStrategy(ABC):
                         entry_price = order_result.get("avg_price", int(current_price))
                         hold_qty = order_result.get("qty", 0)
 
+                        # 거래 내역 저장 (비율 추가)
+                        reasons = entry_result.get("reasons", ["1차 매수"]).copy()
+                        reasons.append(f"{buy_ratio}%")
+                        trade_service = TradeHistoryService(db)
+                        await trade_service.record_trade(
+                            swing_id=swing_id,
+                            trade_type="B",
+                            order_result=order_result,
+                            reasons=reasons
+                        )
+
                         # 2차 매수 시간 필터용 Redis 키 생성 (20분 TTL)
                         await redis_client.setex(
                             f"first_buy_time:{swing_id}",
@@ -317,6 +339,16 @@ class TradingStrategy(ABC):
                             new_signal = 0
                             entry_price = 0
                             hold_qty = 0
+
+                            # 거래 내역 저장
+                            trade_service = TradeHistoryService(db)
+                            await trade_service.record_trade(
+                                swing_id=swing_id,
+                                trade_type="S",
+                                order_result=order_result,
+                                reasons=exit_result.get("reasons", ["손절"])
+                            )
+
                             logger.info(f"[{user_id} - 주식: {st_code}] 손절 전량 매도 완료, 사이클 종료")
                         else:
                             logger.error(f"[{st_code}] 손절 매도 실패: {order_result.get('reason')}")
@@ -343,6 +375,16 @@ class TradingStrategy(ABC):
                             if order_result.get("success"):
                                 new_signal = 3
                                 hold_qty = order_result.get("remaining", 0)
+
+                                # 거래 내역 저장
+                                trade_service = TradeHistoryService(db)
+                                await trade_service.record_trade(
+                                    swing_id=swing_id,
+                                    trade_type="S",
+                                    order_result=order_result,
+                                    reasons=[eod_result.get("reason", "EOD 1차 매도")]
+                                )
+
                                 logger.info(f"[{user_id} - 주식: {st_code}] EOD 1차 분할 매도 완료 (sell_ratio={sell_ratio}%, 잔량={hold_qty}주)")
                             else:
                                 logger.error(f"[{user_id} - 주식: {st_code}] EOD 1차 매도 실패: {order_result.get('reason')}")
@@ -365,6 +407,16 @@ class TradingStrategy(ABC):
                                 new_signal = 0
                                 entry_price = 0
                                 hold_qty = 0
+
+                                # 거래 내역 저장
+                                trade_service = TradeHistoryService(db)
+                                await trade_service.record_trade(
+                                    swing_id=swing_id,
+                                    trade_type="S",
+                                    order_result=order_result,
+                                    reasons=[eod_result.get("reason", "EOD 전량 매도")]
+                                )
+
                                 logger.info(f"[{user_id} - 주식: {st_code}] EOD 전량 매도 완료, 사이클 종료")
                             else:
                                 logger.error(f"[{user_id} - 주식: {st_code}] EOD 전량 매도 실패: {order_result.get('reason')}")
@@ -407,6 +459,18 @@ class TradingStrategy(ABC):
                                         new_price=new_avg_price
                                     )
                                     hold_qty = hold_qty + new_qty
+
+                                    # 거래 내역 저장 (비율 추가)
+                                    reasons = entry_result.get("reasons", ["2차 매수"]).copy()
+                                    reasons.append(f"{buy_ratio}%")
+                                    trade_service = TradeHistoryService(db)
+                                    await trade_service.record_trade(
+                                        swing_id=swing_id,
+                                        trade_type="B",
+                                        order_result=order_result,
+                                        reasons=reasons
+                                    )
+
                                     logger.info(f"[{user_id} - 주식: {st_code}] 2차 매수 완료: 새 평단가={entry_price:,}원, 총수량={hold_qty}주")
                                 else:
                                     logger.error(f"[{user_id} - 주식: {st_code}] 2차 매수 실패: {order_result.get('reason')}")
@@ -448,6 +512,16 @@ class TradingStrategy(ABC):
                             new_signal = 0
                             entry_price = 0
                             hold_qty = 0
+
+                            # 거래 내역 저장
+                            trade_service = TradeHistoryService(db)
+                            await trade_service.record_trade(
+                                swing_id=swing_id,
+                                trade_type="S",
+                                order_result=order_result,
+                                reasons=exit_result.get("reasons", ["손절"])
+                            )
+
                             logger.info(f"[{user_id} - 주식: {st_code}] 손절 매도 완료, 사이클 종료")
                         else:
                             logger.error(f"[{user_id} - 주식: {st_code}] 손절 매도 실패: {order_result.get('reason')}")
@@ -470,6 +544,16 @@ class TradingStrategy(ABC):
                             if order_result.get("success"):
                                 new_signal = 3
                                 hold_qty = order_result.get("remaining", 0)
+
+                                # 거래 내역 저장
+                                trade_service = TradeHistoryService(db)
+                                await trade_service.record_trade(
+                                    swing_id=swing_id,
+                                    trade_type="S",
+                                    order_result=order_result,
+                                    reasons=eod_result.get("reasons", ["EOD 1차 매도"])
+                                )
+
                                 logger.info(f"[{user_id} - 주식: {st_code}] EOD 1차 분할 매도 완료 (sell_ratio={sell_ratio}%, 잔량={hold_qty}주)")
                             else:
                                 logger.error(f"[{user_id} - 주식: {st_code}] EOD 1차 매도 실패: {order_result.get('reason')}")
@@ -478,7 +562,7 @@ class TradingStrategy(ABC):
 
                     elif eod_result.get("action") == "SELL_ALL":
                         logger.warning(
-                            f"[{st_code}] EOD 전량 매도 신호! 사유={eod_result.get('reason')}"
+                            f"[{st_code}] EOD 전량 매도 신호! 사유={eod_result.get('reasons')}"
                         )
 
                         if user_id:
@@ -492,6 +576,16 @@ class TradingStrategy(ABC):
                                 new_signal = 0
                                 entry_price = 0
                                 hold_qty = 0
+
+                                # 거래 내역 저장
+                                trade_service = TradeHistoryService(db)
+                                await trade_service.record_trade(
+                                    swing_id=swing_id,
+                                    trade_type="S",
+                                    order_result=order_result,
+                                    reasons=eod_result.get("reasons", ["EOD 전량 매도"])
+                                )
+
                                 logger.info(f"[{user_id} - 주식: {st_code}] EOD 전량 매도 완료, 사이클 종료")
                             else:
                                 logger.error(f"[{user_id} - 주식: {st_code}] EOD 전량 매도 실패: {order_result.get('reason')}")
@@ -539,6 +633,16 @@ class TradingStrategy(ABC):
                         )
                         hold_qty = hold_qty + new_qty
 
+                        # 거래 내역 저장 (재진입)
+                        reasons = ["재진입 매수", f"{buy_ratio}%"]
+                        trade_service = TradeHistoryService(db)
+                        await trade_service.record_trade(
+                            swing_id=swing_id,
+                            trade_type="B",
+                            order_result=order_result,
+                            reasons=reasons
+                        )
+
                         # 2차 매수 시간 필터용 Redis 키 생성 (20분 TTL)
                         await redis_client.setex(
                             f"first_buy_time:{swing_id}",
@@ -568,6 +672,16 @@ class TradingStrategy(ABC):
                             new_signal = 0
                             entry_price = 0
                             hold_qty = 0
+
+                            # 거래 내역 저장
+                            trade_service = TradeHistoryService(db)
+                            await trade_service.record_trade(
+                                swing_id=swing_id,
+                                trade_type="S",
+                                order_result=order_result,
+                                reasons=eod_result.get("reasons", ["2차 전량 매도"])
+                            )
+
                             logger.info(f"[{user_id} - 주식: {st_code}] 2차 매도 완료, 사이클 종료")
                         else:
                             logger.error(f"[{user_id} - 주식: {st_code}] 2차 매도 실패: {order_result.get('reason')}")
