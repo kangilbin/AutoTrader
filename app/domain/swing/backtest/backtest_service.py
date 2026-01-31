@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import json
 
 from app.domain.stock.service import StockService
-from app.domain.swing.strategy_factory import StrategyFactory
+from .strategy_factory import StrategyFactory
 from app.domain.swing.schemas import SwingCreateRequest
 from app.common.redis import get_redis
 
