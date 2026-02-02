@@ -2,8 +2,7 @@
 실시간 거래 전략의 추상 베이스 클래스
 """
 from abc import ABC, abstractmethod
-from typing import Dict, Optional, Any
-import pandas as pd
+from typing import Dict, Optional
 from decimal import Decimal
 from datetime import datetime
 import logging

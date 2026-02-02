@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, delete
 from typing import Optional
 
-from app.common.database import UserModel
+from app.common.database import UserModel, UserIdSequenceModel
 from app.domain.user.entity import User
 from app.domain.user.schemas import UserResponse
 import logging
@@ -49,8 +49,11 @@ class UserRepository:
         db_user = UserModel(
             USER_ID=user.user_id,
             USER_NAME=user.user_name,
+            EMAIL=user.email,
             PHONE=user.phone,
-            PASSWORD=user.password
+            PASSWORD=user.password,
+            OAUTH_PROVIDER=user.oauth_provider,
+            OAUTH_ID=user.oauth_id
         )
         self.db.add(db_user)
         await self.db.flush()
@@ -81,3 +84,63 @@ class UserRepository:
         query = select(UserModel.USER_ID).filter(UserModel.USER_ID == user_id)
         result = await self.db.execute(query)
         return result.scalar() is not None
+
+    async def find_by_email(self, email: str) -> Optional[dict]:
+        """이메일로 사용자 조회"""
+        query = select(UserModel).filter(UserModel.EMAIL == email)
+        result = await self.db.execute(query)
+        db_user = result.scalars().first()
+        if not db_user:
+            return None
+        return {
+            "USER_ID": db_user.USER_ID,
+            "USER_NAME": db_user.USER_NAME,
+            "EMAIL": db_user.EMAIL,
+            "PHONE": db_user.PHONE,
+            "PASSWORD": db_user.PASSWORD,
+            "OAUTH_PROVIDER": db_user.OAUTH_PROVIDER,
+            "OAUTH_ID": db_user.OAUTH_ID,
+            "REG_DT": db_user.REG_DT,
+            "MOD_DT": db_user.MOD_DT,
+        }
+
+    async def find_by_oauth(self, provider: str, oauth_id: str) -> Optional[dict]:
+        """OAuth ID로 사용자 조회"""
+        query = select(UserModel).filter(
+            UserModel.OAUTH_PROVIDER == provider,
+            UserModel.OAUTH_ID == oauth_id
+        )
+        result = await self.db.execute(query)
+        db_user = result.scalars().first()
+        if not db_user:
+            return None
+        return {
+            "USER_ID": db_user.USER_ID,
+            "USER_NAME": db_user.USER_NAME,
+            "EMAIL": db_user.EMAIL,
+            "PHONE": db_user.PHONE,
+            "PASSWORD": db_user.PASSWORD,
+            "OAUTH_PROVIDER": db_user.OAUTH_PROVIDER,
+            "OAUTH_ID": db_user.OAUTH_ID,
+            "REG_DT": db_user.REG_DT,
+            "MOD_DT": db_user.MOD_DT,
+        }
+
+    async def generate_next_user_id(self) -> str:
+        """
+        다음 USER_ID 생성 (USR00001, USR00002, ...)
+
+        시퀀스 테이블에 레코드를 삽입하여 AUTO_INCREMENT 값을 얻고,
+        USR + 5자리 숫자 형식으로 변환
+        """
+        # 시퀀스 테이블에 레코드 삽입
+        seq_record = UserIdSequenceModel()
+        self.db.add(seq_record)
+        await self.db.flush()
+        await self.db.refresh(seq_record)
+
+        # USR + 5자리 숫자 (예: USR00001, USR00123)
+        sequence_number = seq_record.id
+        user_id = f"USR{sequence_number:05d}"
+
+        return user_id

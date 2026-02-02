@@ -15,14 +15,25 @@ Base = declarative_base()
 
 # ==================== ORM Models ====================
 
+class UserIdSequenceModel(Base):
+    """USER_ID 자동 생성용 시퀀스 테이블"""
+    __tablename__ = "USER_ID_SEQUENCE"
+
+    id = Column(Integer, primary_key=True, autoincrement=True, comment='시퀀스 번호')
+    created_at = Column(DateTime, default=datetime.now, comment='생성 시간')
+
+
 class UserModel(Base):
     """사용자 테이블"""
     __tablename__ = "USER"
 
-    USER_ID = Column(String(50), primary_key=True, comment='사용자 ID')
+    USER_ID = Column(String(50), primary_key=True, comment='사용자 ID (자동생성: USR00001)')
     USER_NAME = Column(String(50), nullable=False, comment='사용자 이름')
-    PHONE = Column(CHAR(11), nullable=False, comment='휴대폰 번호')
-    PASSWORD = Column(String(100), nullable=False, comment='비밀 번호')
+    EMAIL = Column(String(100), nullable=True, unique=True, comment='이메일 주소')
+    PHONE = Column(CHAR(11), nullable=True, comment='휴대폰 번호 (OAuth 사용자는 나중에 입력)')
+    PASSWORD = Column(String(100), nullable=True, comment='비밀 번호 (OAuth 사용자는 NULL)')
+    OAUTH_PROVIDER = Column(String(20), nullable=True, comment='OAuth 제공자 (google, null=traditional)')
+    OAUTH_ID = Column(String(100), nullable=True, comment='Google 사용자 ID (sub claim)')
     REG_DT = Column(DateTime, default=datetime.now, nullable=False, comment='등록일')
     MOD_DT = Column(DateTime, comment='수정일')
 
@@ -145,6 +156,20 @@ class DeviceModel(Base):
     ACTIVE_YN = Column(CHAR(1), default='Y', nullable=False, comment='활성 여부')
     REG_DT = Column(DateTime, default=datetime.now, nullable=False, comment='등록일')
     MOD_DT = Column(DateTime, comment='수정일')
+
+
+class ExternalAPITokenModel(Base):
+    """외부 API 토큰 관리 테이블"""
+    __tablename__ = "EXTERNAL_API_TOKEN"
+
+    TOKEN_ID = Column(Integer, Sequence('external_api_token_id_seq'), primary_key=True, comment='토큰 ID')
+    USER_ID = Column(String(50), nullable=False, comment='사용자 ID')
+    PROVIDER = Column(String(20), nullable=False, default='gemini', comment='API 제공자 (gemini)')
+    API_KEY = Column(String(500), nullable=False, comment='암호화된 API 키 (AES-128-GCM)')
+    TOKEN_NAME = Column(String(50), nullable=True, comment='토큰 별칭')
+    ACTIVE_YN = Column(CHAR(1), default='Y', nullable=False, comment='활성 여부')
+    REG_DT = Column(DateTime, default=datetime.now, nullable=False, comment='등록일')
+    MOD_DT = Column(DateTime, nullable=True, comment='수정일')
 
 
 # ==================== Database Connection ====================

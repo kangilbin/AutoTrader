@@ -35,6 +35,7 @@ class UserResponse(BaseModel):
     """회원 정보 응답"""
     USER_ID: str
     USER_NAME: Optional[str] = None
+    EMAIL: Optional[str] = None
     PHONE: Optional[str] = None
     REG_DT: Optional[datetime] = None
     MOD_DT: Optional[datetime] = None

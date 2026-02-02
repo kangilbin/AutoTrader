@@ -39,6 +39,10 @@ class Settings(BaseSettings):
     # AES Encryption
     AES_SECRET_KEY: Optional[str] = None
 
+    # Google OAuth
+    GOOGLE_CLIENT_ID: Optional[str] = None
+    GOOGLE_CLIENT_SECRET: Optional[str] = None
+
     # Email
     SMTP_HOST: str = "smtp.gmail.com"  # Gmail SMTP 서버
     SMTP_PORT: int = 587
