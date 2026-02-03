@@ -4,7 +4,6 @@ User Service - 비즈니스 로직 및 트랜잭션 관리
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import SQLAlchemyError
 from datetime import datetime
-from typing import Optional
 import logging
 
 from app.domain.user.repository import UserRepository
@@ -149,29 +148,3 @@ class UserService:
             await self.db.rollback()
             logger.error(f"회원 탈퇴 실패: {e}", exc_info=True)
             raise DatabaseError("회원 탈퇴에 실패했습니다", operation="delete", original_error=e)
-
-    async def create_oauth_user(self, user_name: str, email: str, oauth_provider: str, oauth_id: str, phone: Optional[str] = None) -> dict:
-        """OAuth 사용자 생성 (USER_ID 자동 생성, phone은 선택사항)"""
-        try:
-            # USER_ID 자동 생성 (USR00001, USR00002, ...)
-            user_id = await self.repo.generate_next_user_id()
-
-            # OAuth 사용자 엔티티 생성
-            user = User.create_oauth_user(
-                user_id=user_id,
-                user_name=user_name,
-                email=email,
-                oauth_provider=oauth_provider,
-                oauth_id=oauth_id,
-                phone=phone
-            )
-
-            # 저장
-            db_user = await self.repo.save(user)
-            await self.db.commit()
-
-            return UserResponse.model_validate(db_user).model_dump()
-        except SQLAlchemyError as e:
-            await self.db.rollback()
-            logger.error(f"OAuth 사용자 생성 실패: {e}", exc_info=True)
-            raise DatabaseError("OAuth 사용자 생성에 실패했습니다", operation="insert", original_error=e)

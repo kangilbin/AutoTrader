@@ -4,6 +4,7 @@ User Repository - 데이터 접근 계층
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, delete
 from typing import Optional
+from datetime import datetime
 
 from app.common.database import UserModel, UserIdSequenceModel
 from app.domain.user.entity import User
@@ -52,8 +53,9 @@ class UserRepository:
             EMAIL=user.email,
             PHONE=user.phone,
             PASSWORD=user.password,
-            OAUTH_PROVIDER=user.oauth_provider,
-            OAUTH_ID=user.oauth_id
+            GOOGLE_ACCESS_TOKEN=user.google_access_token,
+            GOOGLE_REFRESH_TOKEN=user.google_refresh_token,
+            GOOGLE_TOKEN_EXPIRES_AT=user.google_token_expires_at
         )
         self.db.add(db_user)
         await self.db.flush()
@@ -98,18 +100,16 @@ class UserRepository:
             "EMAIL": db_user.EMAIL,
             "PHONE": db_user.PHONE,
             "PASSWORD": db_user.PASSWORD,
-            "OAUTH_PROVIDER": db_user.OAUTH_PROVIDER,
-            "OAUTH_ID": db_user.OAUTH_ID,
+            "GOOGLE_ACCESS_TOKEN": db_user.GOOGLE_ACCESS_TOKEN,
+            "GOOGLE_REFRESH_TOKEN": db_user.GOOGLE_REFRESH_TOKEN,
+            "GOOGLE_TOKEN_EXPIRES_AT": db_user.GOOGLE_TOKEN_EXPIRES_AT,
             "REG_DT": db_user.REG_DT,
             "MOD_DT": db_user.MOD_DT,
         }
 
-    async def find_by_oauth(self, provider: str, oauth_id: str) -> Optional[dict]:
-        """OAuth ID로 사용자 조회"""
-        query = select(UserModel).filter(
-            UserModel.OAUTH_PROVIDER == provider,
-            UserModel.OAUTH_ID == oauth_id
-        )
+    async def find_by_id_with_tokens(self, user_id: str) -> Optional[dict]:
+        """사용자 조회 (Google 토큰 포함)"""
+        query = select(UserModel).filter(UserModel.USER_ID == user_id)
         result = await self.db.execute(query)
         db_user = result.scalars().first()
         if not db_user:
@@ -119,12 +119,34 @@ class UserRepository:
             "USER_NAME": db_user.USER_NAME,
             "EMAIL": db_user.EMAIL,
             "PHONE": db_user.PHONE,
-            "PASSWORD": db_user.PASSWORD,
-            "OAUTH_PROVIDER": db_user.OAUTH_PROVIDER,
-            "OAUTH_ID": db_user.OAUTH_ID,
-            "REG_DT": db_user.REG_DT,
-            "MOD_DT": db_user.MOD_DT,
+            "GOOGLE_ACCESS_TOKEN": db_user.GOOGLE_ACCESS_TOKEN,
+            "GOOGLE_REFRESH_TOKEN": db_user.GOOGLE_REFRESH_TOKEN,
+            "GOOGLE_TOKEN_EXPIRES_AT": db_user.GOOGLE_TOKEN_EXPIRES_AT,
         }
+
+    async def update_google_tokens(
+        self,
+        user_id: str,
+        access_token: str,
+        refresh_token: Optional[str],
+        expires_at: datetime
+    ) -> None:
+        """Google 토큰 업데이트"""
+        data = {
+            "GOOGLE_ACCESS_TOKEN": access_token,
+            "GOOGLE_TOKEN_EXPIRES_AT": expires_at,
+            "MOD_DT": datetime.now()
+        }
+        if refresh_token:
+            data["GOOGLE_REFRESH_TOKEN"] = refresh_token
+
+        query = (
+            update(UserModel)
+            .filter(UserModel.USER_ID == user_id)
+            .values(**data)
+        )
+        await self.db.execute(query)
+        await self.db.flush()
 
     async def generate_next_user_id(self) -> str:
         """
