@@ -7,6 +7,7 @@ from typing import Annotated, Optional
 from pydantic import BaseModel
 
 from app.common.database import get_db
+from app.common.dependencies import get_current_user
 from app.domain.oauth.service import OAuthService
 
 router = APIRouter(prefix="/oauth", tags=["OAuth"])
@@ -16,6 +17,12 @@ class GoogleLoginRequest(BaseModel):
     """Google OAuth 로그인 요청 (Expo에서 전달)"""
     access_token: str
     refresh_token: Optional[str] = None
+    expires_in: int = 3600
+
+
+class GoogleTokenUpdateRequest(BaseModel):
+    """Google 토큰 업데이트 요청 (프론트에서 갱신 후)"""
+    access_token: str
     expires_in: int = 3600
 
 
@@ -47,3 +54,23 @@ async def google_login(
             "refresh_token": refresh_token
         }
     }
+
+
+@router.post("/google/token")
+async def update_google_token(
+    request: GoogleTokenUpdateRequest,
+    service: Annotated[OAuthService, Depends(get_oauth_service)],
+    user_id: Annotated[str, Depends(get_current_user)]
+):
+    """
+    Google 토큰 업데이트
+    - 프론트에서 refresh_token으로 갱신 후 호출
+    - 새 access_token 저장
+    """
+    await service.update_google_token(
+        user_id=user_id,
+        google_access_token=request.access_token,
+        expires_in=request.expires_in
+    )
+
+    return {"message": "Google 토큰 업데이트 완료"}
