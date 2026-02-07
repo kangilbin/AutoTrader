@@ -43,7 +43,7 @@ class StockRepository:
                 END,
                 REGEXP_INSTR(NAME, make_search_pattern(:initial)),
                 NAME
-            LIMIT 20
+            /*LIMIT 20*/
         """)
         rows = await self.db.execute(query, {"initial": initial})
         return [StockResponse.model_validate(row).model_dump() for row in rows]
