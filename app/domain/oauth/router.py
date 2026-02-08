@@ -1,7 +1,7 @@
 """
 Google OAuth Router - Expo 앱용
 """
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Header
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Annotated, Optional
 from pydantic import BaseModel
@@ -34,26 +34,24 @@ def get_oauth_service(db: AsyncSession = Depends(get_db)) -> OAuthService:
 @router.post("/google/login")
 async def google_login(
     request: GoogleLoginRequest,
-    service: Annotated[OAuthService, Depends(get_oauth_service)]
+    service: Annotated[OAuthService, Depends(get_oauth_service)],
+    x_device_id: Annotated[str, Header()],
+    x_device_name: Annotated[str, Header()]
 ):
     """
     Google OAuth 로그인
     - Expo에서 Google 로그인 후 토큰 전달
     - 사용자 생성/조회 + JWT 발급
     """
-    access_token, refresh_token = await service.google_login(
+    result = await service.google_login(
         google_access_token=request.access_token,
         google_refresh_token=request.refresh_token,
-        expires_in=request.expires_in
+        expires_in=request.expires_in,
+        device_id=x_device_id,
+        device_name=x_device_name
     )
 
-    return {
-        "message": "Google 로그인 성공",
-        "data": {
-            "access_token": access_token,
-            "refresh_token": refresh_token
-        }
-    }
+    return result
 
 
 @router.post("/google/token")
