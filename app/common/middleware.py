@@ -68,8 +68,6 @@ class DeviceAuthMiddleware(BaseHTTPMiddleware):
 
             finally:
                 await db.close()
-        else:
-            logger.debug(f"디바이스 캐시 히트: {device_id} (allowed={is_allowed})")
 
         # 검증
         if is_allowed != "1":
