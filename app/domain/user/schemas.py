@@ -7,28 +7,10 @@ from pydantic import BaseModel
 from typing import Optional
 
 
-class UserCreateRequest(BaseModel):
-    """회원 가입 요청"""
-    USER_ID: str
-    USER_NAME: str
-    PHONE: str
-    PASSWORD: str
-    # 디바이스 정보 (선택적)
-    DEVICE_ID: Optional[str] = None
-    DEVICE_NAME: Optional[str] = None
-
-
-class UserLoginRequest(BaseModel):
-    """로그인 요청"""
-    USER_ID: str
-    PASSWORD: str
-
-
 class UserUpdateRequest(BaseModel):
     """회원 정보 수정 요청"""
     USER_NAME: Optional[str] = None
     PHONE: Optional[str] = None
-    PASSWORD: Optional[str] = None
 
 
 class UserResponse(BaseModel):

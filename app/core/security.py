@@ -1,12 +1,10 @@
 """
 보안 관련 유틸리티
 - JWT 토큰 생성/검증
-- 비밀번호 해싱
 - AES 암호화
 """
 import base64
 import os
-import bcrypt
 import jwt
 from datetime import datetime
 from typing import Optional
@@ -68,19 +66,6 @@ def verify_token(token: str) -> Optional[TokenData]:
         raise AuthenticationError("토큰이 만료되었습니다.", reason="token_expired")
     except jwt.PyJWTError:
         raise AuthenticationError("유효하지 않은 토큰입니다.", reason="invalid_token")
-
-
-# ==================== Password Hashing ====================
-
-def hash_password(password: str) -> str:
-    """비밀번호 해시화 (bcrypt)"""
-    hashed = bcrypt.hashpw(password.encode(), bcrypt.gensalt())
-    return hashed.decode()
-
-
-def check_password(plain_password: str, hashed_password: str) -> bool:
-    """비밀번호 검증"""
-    return bcrypt.checkpw(plain_password.encode(), hashed_password.encode())
 
 
 # ==================== AES Encryption ====================

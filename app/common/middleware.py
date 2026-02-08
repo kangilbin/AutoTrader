@@ -24,7 +24,7 @@ class DeviceAuthMiddleware(BaseHTTPMiddleware):
     """
 
     # 검증 제외 경로 (헬스체크, 문서, 루트)
-    EXCLUDED_PATHS = ["/", "/health", "/docs", "/redoc", "/openapi.json"]
+    EXCLUDED_PATHS = ["/", "/health", "/docs", "/redoc", "/openapi.json", "/oauth/google/login"]
 
     async def dispatch(self, request: Request, call_next):
         # 제외 경로는 스킵
