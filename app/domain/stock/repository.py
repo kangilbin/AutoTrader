@@ -20,6 +20,15 @@ class StockRepository:
     def __init__(self, db: AsyncSession):
         self.db = db
 
+    async def find_data_target_stocks(self) -> List[StockModel]:
+        """DATA_YN = 'Y'인 종목 목록 조회"""
+        query = select(StockModel).filter(
+            StockModel.DATA_YN == 'Y',
+            StockModel.DEL_YN == 'N'
+        )
+        result = await self.db.execute(query)
+        return result.scalars().all()
+
     async def find_by_code(self, mrkt_code: str, st_code: str) -> Optional[dict]:
         """종목 코드로 조회"""
         query = select(StockModel).filter(

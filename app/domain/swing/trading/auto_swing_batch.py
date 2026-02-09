@@ -189,18 +189,21 @@ async def day_collect_job():
         swing_service = SwingService(db)
         stock_service = StockService(db)
 
-        swing_list = await swing_service.get_active_swings()
+        # ========================================
+        # 1단계: 데이터 수집 (DATA_YN='Y'인 종목 대상)
+        # ========================================
+        data_target_stocks = await stock_service.get_data_target_stocks()
+        logger.info(f"[DAY COLLECT] 데이터 수집 대상 종목 수: {len(data_target_stocks)}")
 
-        # ========================================
-        # 1단계: 데이터 수집
-        # ========================================
-        for swing in swing_list:
+        for stock in data_target_stocks:
             try:
-                code = swing.ST_CODE
+                code = stock.ST_CODE
+                mrkt_code = stock.MRKT_CODE
                 response = await get_target_price(code)
 
                 if response:
                     history_data = [{
+                        "MRKT_CODE": mrkt_code,
                         "ST_CODE": code,
                         "STCK_BSOP_DATE": datetime.now().strftime('%Y%m%d'),
                         "STCK_OPRC": response.get('stck_oprc'),
@@ -215,7 +218,7 @@ async def day_collect_job():
                     logger.debug(f"[DAY COLLECT] 데이터 저장 완료: {code}")
 
             except Exception as e:
-                logger.error(f"[DAY COLLECT] 데이터 수집 실패 ({swing.ST_CODE}): {e}")
+                logger.error(f"[DAY COLLECT] 데이터 수집 실패 ({stock.ST_CODE}): {e}")
 
         logger.info("[DAY COLLECT] 데이터 수집 완료")
 
@@ -260,8 +263,9 @@ async def update_eod_signals_for_positions(swing_service: SwingService, stock_se
                 current_eod_signals = position.EOD_SIGNALS
 
                 # 과거 3년 데이터 조회
-                start_date = datetime.now() - relativedelta(year=3)
-                price_history= await stock_service.get_stock_history(st_code, start_date)
+                mrkt_code = position.MRKT_CODE
+                start_date = datetime.now() - relativedelta(years=3)
+                price_history = await stock_service.get_stock_history(mrkt_code, st_code, start_date)
 
                 if price_history is None or len(price_history) < 20:
                     logger.warning(f"[EOD SIGNALS] {st_code}: 데이터 부족, 스킵")

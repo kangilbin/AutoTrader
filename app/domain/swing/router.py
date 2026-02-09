@@ -50,7 +50,7 @@ async def get_swing(
     return {"message": "스윙 조회 완료", "data": result}
 
 
-@router.delete("/{swing_id}")
+@router.delete("/{swing_id}/{swing_type}")
 async def delete_swing(
     swing_id: int,
     swing_type: str,
