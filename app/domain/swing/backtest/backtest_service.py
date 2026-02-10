@@ -92,4 +92,13 @@ async def run_backtest(db: AsyncSession, swing_data: SwingCreateRequest) -> dict
         "eval_start": eval_start,
     }
 
-    return await compute_backtest_offloaded(prices_df, params)
+    backtest_result = await compute_backtest_offloaded(prices_df, params)
+
+    # 최근 1년치 주가 데이터 추출
+    one_year_mask = prices_df["STCK_BSOP_DATE"] >= eval_start
+    one_year_df = prices_df.loc[one_year_mask, ["STCK_BSOP_DATE", "STCK_OPRC", "STCK_HGPR", "STCK_LWPR", "STCK_CLPR"]].copy()
+    one_year_df["STCK_BSOP_DATE"] = one_year_df["STCK_BSOP_DATE"].dt.strftime("%Y%m%d")
+    price_history = one_year_df.to_dict(orient="records")
+
+    backtest_result["price_history"] = price_history
+    return backtest_result

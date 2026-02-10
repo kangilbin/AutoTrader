@@ -40,7 +40,7 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
     TAX_RATE = 0.0020
 
     def __init__(self):
-        super().__init__("단일 20EMA 전략 (하이브리드)")
+        super().__init__("단일 20EMA 전략")
 
     def compute(self, prices_df: pd.DataFrame, params: Dict) -> Dict:
         initial_capital = params["init_amount"]
@@ -71,8 +71,6 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
             prev_row = eval_df.iloc[i-1]
             current_date = row["STCK_BSOP_DATE"]
 
-            if current_date > datetime(2025, 12, 18):
-                logging.info("확인해볼까용")
             # === 1단계: 포지션 보유 시 매도 조건 체크 ===
             if position_status in ['BUY_COMPLETE', 'SELL_PRIMARY']:
 
@@ -83,7 +81,7 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
                     current_capital = self._execute_sell(trades, current_date, sell_price, current_capital, reason, sell_all=True)
 
                     # 상태 초기화
-                    position_status, entry_price, buy_count = None, 0.0, 0
+                    position_status, buy_count = None, 0
                     eod_signal_dates = {k: None for k in eod_signal_dates}
                     continue
 
@@ -101,7 +99,7 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
                 elif eod_sell_action == 'SELL_ALL':
                     sell_price = row["STCK_CLPR"]
                     current_capital = self._execute_sell(trades, current_date, sell_price, current_capital, reason, sell_all=True)
-                    position_status, entry_price, buy_count = None, 0.0, 0
+                    position_status, buy_count = None, 0
                     eod_signal_dates = {k: None for k in eod_signal_dates}
 
             # === 2단계: 포지션 미보유 또는 추가매수 가능 시 매수 조건 체크 ===
@@ -124,13 +122,6 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
                     buy_quantity = int(buy_amount / buy_price)
 
                     if buy_quantity > 0:
-                        if buy_count == 0: # 1차 매수
-                            entry_price = buy_price
-                        else: # 2차 매수
-                            curr_qty, curr_avg_cost = self._calculate_position_state(trades)
-                            total_cost = (curr_avg_cost * curr_qty) + (buy_quantity * buy_price)
-                            total_qty = curr_qty + buy_quantity
-
                         current_capital = self._execute_buy(trades, current_date, buy_price, buy_quantity, current_capital, f"{buy_count+1}차 매수")
                         buy_count += 1
                         position_status = 'BUY_COMPLETE'
