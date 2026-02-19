@@ -97,15 +97,12 @@ class OAuthService:
                 )
 
                 logger.info(f"신규 사용자 등록 + 디바이스 권한 요청: {user_id}, {device_id}")
-                return {
-                    "success": True,
-                    "status": "DEVICE_PENDING",
-                    "message": "회원가입이 완료되었습니다. 디바이스 권한을 요청했습니다. 관리자 승인 후 이용 가능합니다."
-                }
+                return {"status": "DEVICE_PENDING"}
 
             # 기존 사용자: Google 토큰 업데이트
             user_id = user_info["USER_ID"]
             user_name = user_info["USER_NAME"]
+            user_phone = user_info["PHONE"]
 
             await self.user_repo.update_google_tokens(
                 user_id=user_id,
@@ -134,29 +131,21 @@ class OAuthService:
                 )
 
                 logger.info(f"기존 사용자 새 디바이스 권한 요청: {user_id}, {device_id}")
-                return {
-                    "success": True,
-                    "status": "DEVICE_PENDING",
-                    "message": "디바이스 권한을 요청했습니다. 관리자 승인 후 이용 가능합니다."
-                }
+                return {"status": "DEVICE_PENDING"}
 
             if device.get("ACTIVE_YN") != "Y":
                 # 디바이스가 등록되어 있지만 미승인 상태
                 await self.db.commit()
 
                 logger.warning(f"디바이스 권한 없음: {user_id}, {device_id}")
-                return {
-                    "success": False,
-                    "status": "DEVICE_DENIED",
-                    "message": "디바이스 권한이 없습니다. 관리자 승인을 기다려주세요."
-                }
+                return {"status": "DEVICE_DENIED"}
 
             # 4. 디바이스 승인됨 - 로그인 성공
             await self.db.commit()
 
             access_token = create_access_token(
                 user_id,
-                user_info={"USER_NAME": user_name, "EMAIL": email}
+                user_info={"USER_NAME": user_name, "EMAIL": email, "PHONE": user_phone}
             )
             refresh_token = create_refresh_token(user_id)
 
@@ -171,13 +160,9 @@ class OAuthService:
 
             logger.info(f"로그인 성공: {user_id}, {device_id}")
             return {
-                "success": True,
                 "status": "LOGIN_SUCCESS",
-                "message": "Google 로그인 성공",
-                "data": {
-                    "access_token": access_token,
-                    "refresh_token": refresh_token
-                }
+                "access_token": access_token,
+                "refresh_token": refresh_token
             }
 
         except ExternalServiceError:
