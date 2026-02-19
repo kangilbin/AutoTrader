@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, Query
 from typing import Annotated, Optional
 
 from app.common.dependencies import get_current_user
+from app.core.response import success_response
 from app.domain.order.service import OrderService
 from app.domain.order.schemas import OrderCreateRequest, OrderModifyRequest
 
@@ -24,7 +25,7 @@ async def create_order(
 ):
     """주식 매수/매도 주문"""
     result = await service.place_order(user_id, request)
-    return {"message": "주문 완료", "data": result}
+    return success_response("주문 완료", result)
 
 
 @router.get("/cancelable")
@@ -36,7 +37,7 @@ async def list_cancelable_orders(
 ):
     """정정/취소 가능 주문 내역 조회"""
     result = await service.get_cancelable_orders(user_id, fk100, nk100)
-    return {"message": "주문 내역 조회", "data": result}
+    return success_response("주문 내역 조회", result)
 
 
 @router.patch("/{order_no}")
@@ -48,4 +49,4 @@ async def update_or_cancel_order(
 ):
     """주문 정정/취소"""
     result = await service.modify_or_cancel_order(user_id, request)
-    return {"message": "정정/취소 완료", "data": result}
+    return success_response("정정/취소 완료", result)

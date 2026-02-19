@@ -7,6 +7,7 @@ from typing import Annotated
 
 from app.common.database import get_db
 from app.common.dependencies import get_current_user
+from app.core.response import success_response
 from app.domain.stock.service import StockService
 from app.external.kis_api import get_inquire_asking_price
 
@@ -25,7 +26,7 @@ async def search_stock(
 ):
     """종목 검색"""
     stock_info = await service.search_stock(query)
-    return {"message": "종목 코드 조회", "data": stock_info}
+    return success_response("종목 코드 조회", stock_info)
 
 
 @router.get("/price")
@@ -35,4 +36,4 @@ async def get_asking_price(
 ):
     """주식 호가 조회"""
     response = await get_inquire_asking_price(user_id, st_code)
-    return {"message": "주식 호가 조회", "data": response}
+    return success_response("주식 호가 조회", response)

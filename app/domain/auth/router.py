@@ -7,6 +7,7 @@ from typing import Annotated
 
 from app.common.database import get_db
 from app.common.dependencies import get_current_user
+from app.core.response import success_response
 from app.exceptions import DatabaseError
 from app.domain.auth.service import AuthService
 from app.domain.auth.schemas import AuthCreateRequest, AuthChoiceRequest
@@ -27,7 +28,7 @@ async def list_auth_keys(
 ):
     """보안키 목록 조회"""
     auth_keys = await service.get_auth_keys(user_id)
-    return {"message": "보안키 조회 성공", "data": auth_keys}
+    return success_response("보안키 조회 성공", auth_keys)
 
 
 @router.post("")
@@ -47,7 +48,7 @@ async def register_auth(
         )
 
         auth_info = await service.create_auth(user_id, request)
-        return {"message": "보안키 등록 완료", "data": auth_info}
+        return success_response("보안키 등록 완료", auth_info)
     except Exception as e:
         raise DatabaseError("보안키 등록 중 오류가 발생했습니다", operation="auth_register", original_error=e)
 
@@ -60,4 +61,4 @@ async def choose_auth(
 ):
     """보안키 선택"""
     await service.choose_auth(user_id, request.AUTH_ID, request.ACCOUNT_NO)
-    return {"message": "보안키 선택 완료"}
+    return success_response("보안키 선택 완료")
