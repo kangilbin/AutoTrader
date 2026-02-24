@@ -14,7 +14,7 @@ class SwingCreateRequest(BaseModel):
     ACCOUNT_NO: str
     INIT_AMOUNT: int
     SWING_TYPE: str  # 'A': 이평선, 'B': 일목균형표
-    BUY_RATIO: Optional[int] = 50
+    BUY_RATIO: Optional[int] = 70
     SELL_RATIO: Optional[int] = 50
     # EMA 옵션 (SWING_TYPE이 'A'인 경우)
     SHORT_TERM: Optional[int] = 5

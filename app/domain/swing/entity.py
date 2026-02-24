@@ -20,7 +20,7 @@ class SwingTrade:
     init_amount: Decimal = Decimal(0)
     cur_amount: Decimal = Decimal(0)
     swing_type: str = "S"  # S: 단일 이평선, B: 일목균형표
-    buy_ratio: int = 50
+    buy_ratio: int = 70
     sell_ratio: int = 50
     signal: int = 0  # 매매 신호 상태 (0:대기, 1:1차매수, 2:2차매수, 3:장중손절, 4:1차매도대기, 5:2차매도대기)
     reg_dt: Optional[datetime] = field(default_factory=datetime.now)
@@ -185,7 +185,7 @@ class SwingTrade:
 
     @classmethod
     def create(cls, account_no: str, mrkt_code: str, st_code: str, init_amount: Decimal,
-               swing_type: str, buy_ratio: int = 50, sell_ratio: int = 50) -> "SwingTrade":
+               swing_type: str, buy_ratio: int = 70, sell_ratio: int = 50) -> "SwingTrade":
         """새 스윙 매매 생성"""
         swing = cls(
             account_no=account_no,
