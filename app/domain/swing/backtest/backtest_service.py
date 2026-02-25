@@ -68,8 +68,8 @@ async def run_backtest(db: AsyncSession, swing_data: SwingCreateRequest) -> dict
     medium_term = swing_data.MEDIUM_TERM or 20
     long_term = swing_data.LONG_TERM or 60
     init_amount = swing_data.INIT_AMOUNT
-    buy_ratio = (swing_data.BUY_RATIO or 50) / 100
-    sell_ratio = (swing_data.SELL_RATIO or 50) / 100
+    buy_ratio = (swing_data.BUY_RATIO or 70) / 100
+    sell_ratio = (swing_data.SELL_RATIO or 70) / 100
 
     end_date = datetime.now()
     start_date = end_date - relativedelta(years=3)

@@ -13,21 +13,17 @@
 **[1차 방어선] 즉시 매도 (일일 저가 기준)**
 *   **EMA-ATR 동적 손절:** 저가가 EMA - (ATR × 1.0) 도달
 
-**[2차 방어선] 장 마감 매도 (일일 종가 기준, EOD 신호)**
-*   **시간 윈도우:** 최근 3거래일 이내 발생한 신호만 유효
-1.  **1차 분할 매도:** 아래 3개 조건 중 **2개 이상** 충족 시
-    -   EMA 종가 이탈
-    -   추세 약화 (ADX/DMI 2일 연속 약세)
-    -   수급 이탈 (OBV z-score)
-2.  **2차 전량 매도:** 1차 매도 후, 3개 조건 **모두** 충족 시
+**[2차 방어선] EOD 조건부 trailing stop (일일 종가 기준)**
+*   **추세 약화:** (+DI - -DI) 격차 2일 연속 감소 (14일 스무딩된 DI 방향성 균형 이동)
+*   **수급 약화:** OBV z-score 감소 (2일전 대비)
+1.  **1차 분할 매도:** BUY_COMPLETE 상태 + 고점 대비 ≥5% 하락
+2.  **2차 전량 매도:** SELL_PRIMARY 상태 + 고점 대비 ≥8% 하락
 """
 import pandas as pd
 from typing import Dict, List, Optional, Tuple
 from .base_strategy import BacktestStrategy
 from app.domain.swing.indicators import TechnicalIndicators
 from app.domain.swing.trading.strategies.base_single_ema import BaseSingleEMAStrategy
-from datetime import datetime
-import logging
 
 class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
     """단일 20EMA 백테스팅 전략 (하이브리드 매도 로직)"""
@@ -35,6 +31,9 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
     # === 백테스팅 전용 파라미터 ===
     CONSECUTIVE_REQUIRED = 1     # 백테스팅에서는 연속 확인 불필요
     PULLBACK_BUY_OBV_MIN = 0.5   # 시나리오 B OBV 기준
+    ADX_MIN_ENTRY = 20           # 1차 매수용 ADX 최소값
+    TRAILING_STOP_PARTIAL = 5.0  # 고점 대비 -5% → 1차 분할 매도
+    TRAILING_STOP_FULL = 8.0     # 고점 대비 -8% → 2차 전량 매도
 
     # === 거래 비용 ===
     COMMISSION_RATE = 0.00147
@@ -59,21 +58,17 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
         # === 상태 추적 변수 ===
         position_status = None  # None, 'BUY_COMPLETE', 'SELL_PRIMARY'
         buy_count = 0
+        peak_price = 0.0  # 매수 이후 최고 종가
 
-        # EOD 신호 발생일 추적 (시간 윈도우용)
-        eod_signal_dates = {
-            'ema_breach': None,
-            'trend_weak': None,
-            'supply_weak': None
-        }
-
-        for i in range(1, len(eval_df)):
+        for i in range(2, len(eval_df)):
             row = eval_df.iloc[i]
             prev_row = eval_df.iloc[i-1]
+            prev_prev_row = eval_df.iloc[i-2]
             current_date = row["STCK_BSOP_DATE"]
 
             # === 1단계: 포지션 보유 시 매도 조건 체크 ===
             if position_status in ['BUY_COMPLETE', 'SELL_PRIMARY']:
+                peak_price = max(peak_price, row["STCK_CLPR"])
 
                 # [1차 방어선] 즉시 매도 조건 체크 (저가 기준)
                 immediate_sell_signal, reason, sell_price = self._check_immediate_sell_conditions(row)
@@ -83,29 +78,28 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
 
                     # 상태 초기화
                     position_status, buy_count = None, 0
-                    eod_signal_dates = {k: None for k in eod_signal_dates}
+                    peak_price = 0.0
                     continue
 
-                # [2차 방어선] 장 마감 매도 조건 체크 (종가 기준)
-                eod_sell_action, reason = self._update_and_check_eod_sell_signals(
-                    row, prev_row, current_date, eod_signal_dates, position_status
+                # [2차 방어선] EOD 조건부 trailing stop (종가 기준)
+                eod_sell_action, reason = self._check_eod_trailing_stop(
+                    row, prev_row, prev_prev_row, peak_price, position_status
                 )
 
                 if eod_sell_action == 'SELL_PRIMARY':
                     sell_price = row["STCK_CLPR"]
                     current_capital = self._execute_sell(trades, current_date, sell_price, current_capital, reason, sell_ratio=sell_ratio)
                     position_status = 'SELL_PRIMARY'
-                    eod_signal_dates = {k: None for k in eod_signal_dates}  # 신호 리셋
 
                 elif eod_sell_action == 'SELL_ALL':
                     sell_price = row["STCK_CLPR"]
                     current_capital = self._execute_sell(trades, current_date, sell_price, current_capital, reason, sell_all=True)
                     position_status, buy_count = None, 0
-                    eod_signal_dates = {k: None for k in eod_signal_dates}
+                    peak_price = 0.0
 
                 elif position_status == 'SELL_PRIMARY':
                     # 매도 신호 없음: 재진입 조건 체크 (실전 SIGNAL 3 재진입과 동일)
-                    matched, signal_reason = self._check_entry_conditions(row)
+                    matched, signal_reason = self._check_entry_conditions(row, prev_row, prev_prev_row)
                     if matched and current_capital > 0:
                         buy_price = row["STCK_CLPR"]
                         buy_amount = current_capital * buy_ratio
@@ -114,7 +108,7 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
                             current_capital = self._execute_buy(trades, current_date, buy_price, buy_quantity, current_capital, f"재진입 매수({signal_reason})")
                             buy_count = 1
                             position_status = 'BUY_COMPLETE'
-                            eod_signal_dates = {k: None for k in eod_signal_dates}
+                            peak_price = row["STCK_CLPR"]
 
             # === 2단계: 포지션 미보유 또는 추가매수 가능 시 매수 조건 체크 ===
             can_buy = position_status is None or (position_status == 'BUY_COMPLETE' and buy_count < 2)
@@ -123,12 +117,12 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
                 buy_amount = 0  # 초기화
 
                 if position_status is None:
-                    matched, signal_reason = self._check_entry_conditions(row)
+                    matched, signal_reason = self._check_entry_conditions(row, prev_row, prev_prev_row)
                     if matched:
                        is_entry = True
                        buy_amount = current_capital * buy_ratio
                 else: # 2차 매수
-                    matched, signal_reason = self._check_second_buy_conditions(row)
+                    matched, signal_reason = self._check_second_buy_conditions(row, prev_row, prev_prev_row)
                     if matched:
                         is_entry = True
                         buy_amount = current_capital
@@ -138,12 +132,13 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
                     buy_quantity = int(buy_amount / buy_price)
 
                     if buy_quantity > 0:
+                        is_first_buy = position_status is None
                         reason = f"{buy_count+1}차 매수({signal_reason})"
                         current_capital = self._execute_buy(trades, current_date, buy_price, buy_quantity, current_capital, reason)
                         buy_count += 1
                         position_status = 'BUY_COMPLETE'
-                        # 매수 시 모든 매도 신호 리셋
-                        eod_signal_dates = {k: None for k in eod_signal_dates}
+                        if is_first_buy:
+                            peak_price = row["STCK_CLPR"]
 
         # 최종 청산 및 결과 포맷팅
         final_capital = self._liquidate_final_position(trades, eval_df, current_capital)
@@ -166,38 +161,45 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
 
         return False, "", 0.0
 
-    # 신호 한글 매핑
-    SIGNAL_LABELS = {
-        'ema_breach': '20EMA 이탈',
-        'trend_weak': '추세 약화(ADX/DMI)',
-        'supply_weak': '거래량 감소(OBV)',
-    }
+    def _check_eod_trailing_stop(self, row, prev_row, prev_prev_row, peak_price, position_status) -> Tuple[Optional[str], str]:
+        """[2차 방어선] EOD 조건부 trailing stop
 
-    def _update_and_check_eod_sell_signals(self, row, prev_row, current_date, eod_signal_dates, position_status) -> Tuple[Optional[str], str]:
-        """[2차 방어선] EOD 매도 조건 교차 검증"""
+        조건: 추세 약화((+DI - -DI) 격차 2일 연속 감소) + 수급 약화(OBV z-score 감소) 충족 시
+        → 고점 대비 하락률로 매도 단계 결정
+        """
+        # NaN 체크
+        required_cols = ["minus_di", "plus_di", "obv_z"]
+        if any(pd.isna(row[col]) for col in required_cols):
+            return None, ""
+        if any(pd.isna(prev_row.get(col)) for col in ["minus_di", "plus_di"]):
+            return None, ""
+        if any(pd.isna(prev_prev_row[col]) for col in ["minus_di", "plus_di", "obv_z"]):
+            return None, ""
 
-        # EOD 신호 발생 여부 업데이트
-        if self._check_ema_breach_eod(row): eod_signal_dates['ema_breach'] = current_date
-        if self._check_trend_weakness_eod(row, prev_row): eod_signal_dates['trend_weak'] = current_date
-        if self._check_supply_weakness_eod(row): eod_signal_dates['supply_weak'] = current_date
+        # 조건 1: 추세 약화 — (+DI - -DI) 격차 2일 연속 감소
+        di_spread_today = row["plus_di"] - row["minus_di"]
+        di_spread_prev = prev_row["plus_di"] - prev_row["minus_di"]
+        di_spread_prev2 = prev_prev_row["plus_di"] - prev_prev_row["minus_di"]
+        trend_weakening = di_spread_today < di_spread_prev < di_spread_prev2
 
-        # 시간 윈도우 내 유효 신호 카운트 + 3일 지난 신호 삭제
-        valid_signals = []
-        for signal, trigger_date in eod_signal_dates.items():
-            if trigger_date:
-                if (current_date - trigger_date).days < self.EOD_SIGNAL_WINDOW_DAYS:
-                    valid_signals.append(signal)
-                else:
-                    eod_signal_dates[signal] = None  # 3일 지난 신호 삭제
+        # 조건 2: 수급 약화 — OBV z-score 감소 (2일전 대비)
+        supply_weakening = row["obv_z"] < prev_prev_row["obv_z"]
 
-        signal_labels = [self.SIGNAL_LABELS.get(s, s) for s in valid_signals]
+        if not (trend_weakening and supply_weakening):
+            return None, ""
 
-        # 매도 결정
-        if position_status == 'SELL_PRIMARY' and len(valid_signals) >= 3:
-            return "SELL_ALL", f"2차 전량매도(충족: {', '.join(signal_labels)})"
+        # 고점 대비 하락률 계산
+        if peak_price <= 0:
+            return None, ""
+        drawdown_pct = (peak_price - row["STCK_CLPR"]) / peak_price * 100
 
-        if position_status == 'BUY_COMPLETE' and len(valid_signals) >= 2:
-            return "SELL_PRIMARY", f"1차 분할매도({len(valid_signals)}/3 충족: {', '.join(signal_labels)})"
+        # 2차 전량 매도: SELL_PRIMARY 상태 + 8% 이상 하락
+        if position_status == 'SELL_PRIMARY' and drawdown_pct >= self.TRAILING_STOP_FULL:
+            return "SELL_ALL", f"2차 전량매도(고점대비 -{drawdown_pct:.1f}%+DI격차축소+수급약화)"
+
+        # 1차 분할 매도: BUY_COMPLETE 상태 + 5% 이상 하락
+        if position_status == 'BUY_COMPLETE' and drawdown_pct >= self.TRAILING_STOP_PARTIAL:
+            return "SELL_PRIMARY", f"1차 분할매도(고점대비 -{drawdown_pct:.1f}%+DI격차축소+수급약화)"
 
         return None, ""
 
@@ -212,8 +214,12 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
             obv_lookback=self.OBV_LOOKBACK
         )
 
-    def _check_entry_conditions(self, row: pd.Series) -> Tuple[bool, str]:
-        if any(pd.isna(row[col]) for col in ["ema_20", "obv_z", "gap_ratio", "plus_di", "minus_di", "daily_return"]):
+    def _check_entry_conditions(self, row: pd.Series, prev_row: pd.Series = None, prev_prev_row: pd.Series = None) -> Tuple[bool, str]:
+        if any(pd.isna(row[col]) for col in ["ema_20", "obv_z", "gap_ratio", "plus_di", "minus_di", "daily_return", "adx"]):
+            return False, ""
+
+        # prev_row, prev_prev_row 필수 체크
+        if prev_row is None or prev_prev_row is None:
             return False, ""
 
         # 하락장 필터: 20 EMA < 120 EMA 시 매수 금지
@@ -221,17 +227,26 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
             return False, ""
 
         price_near_ema = row["STCK_CLPR"] >= row["ema_20"] * 0.995
-        supply_strong = row["obv_z"] > self.OBV_Z_BUY_THRESHOLD
+        supply_strong = (row["obv_z"] > 0) and (row["obv_z"] > prev_prev_row["obv_z"])
         gap_filtered = row["gap_ratio"] <= self.MAX_GAP_RATIO
-        trend_upward = row["plus_di"] > row["minus_di"]
+        trend_upward = row["plus_di"] > row["minus_di"] and row["adx"] > self.ADX_MIN_ENTRY
+        prev_day_bullish = prev_row["STCK_CLPR"] > prev_prev_row["STCK_CLPR"]
 
-        if all([price_near_ema, supply_strong, gap_filtered, trend_upward]):
-            return True, "EMA근접+OBV강세+추세상승"
+        if all([price_near_ema, supply_strong, gap_filtered, trend_upward, prev_day_bullish]):
+            return True, "EMA근접+OBV상승+추세상승+전일양봉"
         return False, ""
 
-    def _check_second_buy_conditions(self, row: pd.Series) -> Tuple[bool, str]:
+    def _check_second_buy_conditions(self, row: pd.Series, prev_row: pd.Series = None, prev_prev_row: pd.Series = None) -> Tuple[bool, str]:
         """하이브리드 2차 매수: 추세 강화형 + 눌림목 반등 (EMA-ATR 가드레일)"""
         if any(pd.isna(row[col]) for col in ["ema_20", "obv_z", "atr", "adx", "plus_di", "minus_di"]):
+            return False, ""
+
+        # prev_row, prev_prev_row 필수 체크
+        if prev_row is None or prev_prev_row is None:
+            return False, ""
+
+        # 전일 양봉 필터
+        if not (prev_row["STCK_CLPR"] > prev_prev_row["STCK_CLPR"]):
             return False, ""
 
         # 하락장 필터: 20 EMA < 120 EMA 시 2차 매수 금지
