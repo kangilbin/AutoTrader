@@ -2,12 +2,13 @@
 단일 20EMA 매매 전략 (Single EMA Strategy)
 
 **매수 조건 (Entry Conditions):**
-1. EMA 추세: 현재가 >= 실시간 EMA20 * 0.995 (0.5% 여유)
+1. EMA 근접: 현재가 >= 실시간 EMA20 * 0.995 (0.5% 여유)
 2. 수급 강도: OBV z-score > 0 AND 전전일 대비 상승
-3. 괴리율 필터: EMA 괴리율 <= 5%
-4. 추세 방향: +DI > -DI AND ADX > 20
-5. 전일 양봉: 전일 종가 > 전전일 종가
-6. 연속 확인: 2회 (Redis 상태 관리, 5분 주기 노이즈 필터링)
+3. 급등 필터: 전일 대비 변동률 <= 5%
+4. 추세 강화: +DI > -DI AND ADX 상승 중 (전일 대비)
+5. EMA 상승: 실시간 EMA20 > 전전일 EMA20
+6. 전일 양봉: 전일 종가 > 전전일 종가
+7. 연속 확인: 2회 (Redis 상태 관리, 5분 주기 노이즈 필터링)
 
 **2차 매수 조건 (20분 경과 후):**
 - **시나리오 A (추세 강화형):** EMA + ATR × (0.3~2.0), ADX > 25, OBV z-score >= 1.2
@@ -69,7 +70,6 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
         Returns:
             {
                 'ema20': 50000.0,  # 어제 종가 기준 EMA20
-                'ema120': 49000.0, # 어제 종가 기준 EMA120 (하락장 필터용)
                 'adx': 25.5,       # 어제 ADX (중간값)
                 'plus_dm14': 360.0,   # 어제 +DM14 (중간값)
                 'minus_dm14': 180.0,  # 어제 -DM14 (중간값)
@@ -92,7 +92,6 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
             # 평탄화된 구조 그대로 반환
             return {
                 'ema20': data['ema20'],
-                'ema120': data['ema120'],
                 'adx': data['adx'],
                 'plus_dm14': data['plus_dm14'],    # 중간값
                 'minus_dm14': data['minus_dm14'],  # 중간값
@@ -107,6 +106,8 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
                 'avg_daily_amount': data['avg_daily_amount'],
                 'prev_close': data['prev_close'],
                 'prev_obv_z': data['prev_obv_z'],
+                'prev_adx': data['prev_adx'],
+                'prev_ema20': data['prev_ema20'],
             }
         except Exception as e:
             logger.warning(f"[{symbol}] 캐시 조회 실패: {e}")
@@ -291,8 +292,6 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
 
             # 실시간 EMA 사용
             realtime_ema20 = cached_indicators['realtime_ema20']
-            realtime_ema120 = cached_indicators['realtime_ema120']
-            gap_ratio = cached_indicators['realtime_gap_ratio']
 
             # 실시간 OBV z-score 사용
             realtime_obv_z = cached_indicators['realtime_obv_z']
@@ -301,23 +300,22 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
             logger.error(f"[{symbol}] 매수 신호 지표 계산 실패: {e}", exc_info=True)
             return None
 
-        # 하락장 필터: 20 EMA < 120 EMA 시 매수 금지
-        if realtime_ema20 < realtime_ema120:
-            logger.debug(f"[{symbol}] 하락장 감지 (EMA20={realtime_ema20:.0f} < EMA120={realtime_ema120:.0f}), 매수 금지")
-            return None
-
         # 캐시에서 전전일 데이터 추출
         prev_close = cached_indicators.get('prev_close')
         prev_obv_z = cached_indicators.get('prev_obv_z')
+        prev_adx = cached_indicators.get('prev_adx')
+        prev_ema20 = cached_indicators.get('prev_ema20')
 
         # 조건 검증 (백테스팅과 동일)
         price_above_ema = curr_price >= realtime_ema20 * 0.995  # 0.5% 여유
         supply_strong = (realtime_obv_z > 0) and (prev_obv_z is not None and realtime_obv_z > prev_obv_z)
-        gap_filtered = gap_ratio <= cls.MAX_GAP_RATIO
-        trend_upward = realtime_plus_di > realtime_minus_di and realtime_adx > cls.ADX_MIN_ENTRY
+        surge_filtered = (prev_close is not None and prev_close > 0 and
+                         (cached_indicators['close'] - prev_close) / prev_close <= cls.MAX_SURGE_RATIO)
+        trend_upward = realtime_plus_di > realtime_minus_di and (prev_adx is not None and realtime_adx > prev_adx)
+        ema_rising = (prev_ema20 is not None and realtime_ema20 > prev_ema20)
         prev_day_bullish = (prev_close is not None and cached_indicators['close'] > prev_close)
 
-        current_signal = all([price_above_ema, supply_strong, gap_filtered, trend_upward, prev_day_bullish])
+        current_signal = all([price_above_ema, supply_strong, surge_filtered, trend_upward, ema_rising, prev_day_bullish])
 
         # 연속성 체크 (Redis, swing_id별 분리)
         prev_state_key = f"entry:{swing_id}"
@@ -397,13 +395,7 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
             realtime_minus_di = cached_indicators['realtime_minus_di']
             atr = cached_indicators['realtime_atr']
             realtime_ema20 = cached_indicators['realtime_ema20']
-            realtime_ema120 = cached_indicators['realtime_ema120']
             realtime_obv_z = cached_indicators['realtime_obv_z']
-
-            # 하락장 필터: 20 EMA < 120 EMA 시 2차 매수 금지
-            if realtime_ema20 < realtime_ema120:
-                logger.debug(f"[{symbol}] 하락장 감지 (EMA20={realtime_ema20:.0f} < EMA120={realtime_ema120:.0f}), 2차 매수 금지")
-                return None
 
             # === 시나리오 A: 추세 강화형 ===
             # 가격 가드레일: EMA + ATR × (0.3 ~ 2.5)
@@ -548,7 +540,7 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
         # 조건 2: 수급 약화 — OBV z-score 감소 (2일전 대비)
         supply_weakening = row["obv_z"] < prev_prev_row["obv_z"]
 
-        if not (trend_weakening and supply_weakening):
+        if not (trend_weakening or supply_weakening):
             return None, updated_peak
 
         # 고점 대비 하락률 계산
@@ -556,16 +548,24 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
             return None, updated_peak
         drawdown_pct = (updated_peak - close) / updated_peak * 100
 
+        # 약화 사유 동적 생성
+        weakness_reasons = []
+        if trend_weakening:
+            weakness_reasons.append("추세약화")
+        if supply_weakening:
+            weakness_reasons.append("수급약화")
+        weakness_str = "+".join(weakness_reasons)
+
         # 매도 결정
         action = None
         reason = ""
 
         if signal == 3 and drawdown_pct >= cls.TRAILING_STOP_FULL:
             action = "SELL_ALL"
-            reason = f"2차 전량매도(고점대비 -{drawdown_pct:.1f}%+DI격차축소+수급약화)"
+            reason = f"2차 전량매도(고점대비 -{drawdown_pct:.1f}%+{weakness_str})"
         elif signal in (1, 2) and drawdown_pct >= cls.TRAILING_STOP_PARTIAL:
             action = "SELL_PRIMARY"
-            reason = f"1차 분할매도(고점대비 -{drawdown_pct:.1f}%+DI격차축소+수급약화)"
+            reason = f"1차 분할매도(고점대비 -{drawdown_pct:.1f}%+{weakness_str})"
 
         if action:
             eod_json = json.dumps({"action": action, "reason": reason, "date": date.today().isoformat()})

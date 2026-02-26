@@ -4,7 +4,6 @@
 실전 매매 전략과 동일한 이원화된 하이브리드 매도 로직을 적용하여 백테스트의 정확도를 높입니다.
 
 **매수 조건 (Entry Conditions):**
-*   **하락장 필터:** 20 EMA < 120 EMA 시 매수 금지 (신규 진입 및 2차 매수 모두 차단)
 *   **2차 매수 시나리오 A (추세 강화형):** EMA + ATR × (0.3~2.0), ADX > 25, OBV z-score >= 1.2
 *   **2차 매수 시나리오 B (눌림목 반등):** EMA ± ATR × 0.5, 18 <= ADX <= 23, 저가 대비 0.4% 반등
 
@@ -181,22 +180,34 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
 
         # 조건 2: 수급 약화 — OBV z-score 감소 (2일전 대비)
         supply_weakening = row["obv_z"] < prev_prev_row["obv_z"]
+        row_date = row["STCK_BSOP_DATE"]
+        if hasattr(row_date, "month") and row_date.month == 7 and row_date.day == 22:
+            print("hellow TEST")
 
-        if not (trend_weakening and supply_weakening):
+        if not (trend_weakening or supply_weakening):
             return None, ""
 
         # 고점 대비 하락률 계산
         if peak_price <= 0:
             return None, ""
-        drawdown_pct = (peak_price - row["STCK_CLPR"]) / peak_price * 100
+
+        drawdown_pct = (peak_price - row["STCK_LWPR"]) / peak_price * 100
+
+        # 약화 사유 동적 생성
+        weakness_reasons = []
+        if trend_weakening:
+            weakness_reasons.append("추세약화")
+        if supply_weakening:
+            weakness_reasons.append("수급약화")
+        weakness_str = "+".join(weakness_reasons)
 
         # 2차 전량 매도: SELL_PRIMARY 상태 + 8% 이상 하락
         if position_status == 'SELL_PRIMARY' and drawdown_pct >= self.TRAILING_STOP_FULL:
-            return "SELL_ALL", f"2차 전량매도(고점대비 -{drawdown_pct:.1f}%+DI격차축소+수급약화)"
+            return "SELL_ALL", f"2차 전량매도(고점대비 -{drawdown_pct:.1f}%+{weakness_str})"
 
         # 1차 분할 매도: BUY_COMPLETE 상태 + 5% 이상 하락
         if position_status == 'BUY_COMPLETE' and drawdown_pct >= self.TRAILING_STOP_PARTIAL:
-            return "SELL_PRIMARY", f"1차 분할매도(고점대비 -{drawdown_pct:.1f}%+DI격차축소+수급약화)"
+            return "SELL_PRIMARY", f"1차 분할매도(고점대비 -{drawdown_pct:.1f}%+{weakness_str})"
 
         return None, ""
 
@@ -205,32 +216,32 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
         return TechnicalIndicators.prepare_full_indicators_for_single_ema(
             df,
             ema_short=self.EMA_PERIOD,
-            ema_long=self.EMA_LONG_PERIOD,
+            ema_long=120,
             atr_period=14,
             adx_period=14,
             obv_lookback=self.OBV_LOOKBACK
         )
 
     def _check_entry_conditions(self, row: pd.Series, prev_row: pd.Series = None, prev_prev_row: pd.Series = None) -> Tuple[bool, str]:
-        if any(pd.isna(row[col]) for col in ["ema_20", "obv_z", "gap_ratio", "plus_di", "minus_di", "daily_return", "adx"]):
+        if any(pd.isna(row[col]) for col in ["ema_20", "obv_z", "plus_di", "minus_di", "daily_return", "adx"]):
             return False, ""
 
         # prev_row, prev_prev_row 필수 체크
         if prev_row is None or prev_prev_row is None:
             return False, ""
-
-        # 하락장 필터: 20 EMA < 120 EMA 시 매수 금지
-        if self._is_bearish_market(row):
-            return False, ""
+        row_date = row["STCK_BSOP_DATE"]
+        if hasattr(row_date, "month") and row_date.month == 10 and row_date.day == 16:
+            print("hellow TEST")
 
         price_near_ema = row["STCK_CLPR"] >= row["ema_20"] * 0.995
         supply_strong = (row["obv_z"] > 0) and (row["obv_z"] > prev_prev_row["obv_z"])
-        gap_filtered = row["gap_ratio"] <= self.MAX_GAP_RATIO
-        trend_upward = row["plus_di"] > row["minus_di"] and row["adx"] > self.ADX_MIN_ENTRY
+        surge_filtered = row["daily_return"] <= self.MAX_SURGE_RATIO
+        trend_upward = row["plus_di"] > row["minus_di"] and row["adx"] > prev_row["adx"]
+        ema_rising = row["ema_20"] > prev_row["ema_20"]
         prev_day_bullish = prev_row["STCK_CLPR"] > prev_prev_row["STCK_CLPR"]
 
-        if all([price_near_ema, supply_strong, gap_filtered, trend_upward, prev_day_bullish]):
-            return True, "EMA근접+OBV상승+추세상승+전일양봉"
+        if all([price_near_ema, supply_strong, surge_filtered, trend_upward, ema_rising, prev_day_bullish]):
+            return True, "EMA근접+거래량증가+추세강화+EMA상승+전일양봉"
         return False, ""
 
     def _check_second_buy_conditions(self, row: pd.Series, prev_row: pd.Series = None, prev_prev_row: pd.Series = None) -> Tuple[bool, str]:
@@ -244,10 +255,6 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
 
         # 전일 양봉 필터
         if not (prev_row["STCK_CLPR"] > prev_prev_row["STCK_CLPR"]):
-            return False, ""
-
-        # 하락장 필터: 20 EMA < 120 EMA 시 2차 매수 금지
-        if self._is_bearish_market(row):
             return False, ""
 
         current_price = row["STCK_CLPR"]
