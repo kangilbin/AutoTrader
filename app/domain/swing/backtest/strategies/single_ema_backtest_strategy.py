@@ -31,9 +31,6 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
     # === 백테스팅 전용 파라미터 ===
     CONSECUTIVE_REQUIRED = 1     # 백테스팅에서는 연속 확인 불필요
     PULLBACK_BUY_OBV_MIN = 0.5   # 시나리오 B OBV 기준
-    ADX_MIN_ENTRY = 20           # 1차 매수용 ADX 최소값
-    TRAILING_STOP_PARTIAL = 5.0  # 고점 대비 -5% → 1차 분할 매도
-    TRAILING_STOP_FULL = 8.0     # 고점 대비 -8% → 2차 전량 매도
 
     # === 거래 비용 ===
     COMMISSION_RATE = 0.00147

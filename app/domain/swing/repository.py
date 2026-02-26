@@ -191,6 +191,16 @@ class SwingRepository:
         """
         return await self.find_swings_by_signals([1, 2])
 
+    async def find_holding_and_partial_sold_swings(self) -> List:
+        """
+        포지션 보유 중인 스윙 조회 (SIGNAL 1, 2, 3)
+        EOD trailing stop 체크 대상
+
+        Returns:
+            SIGNAL이 1, 2, 3인 활성 스윙 목록
+        """
+        return await self.find_swings_by_signals([1, 2, 3])
+
     async def find_pending_sell_swings(self) -> List:
         """
         매도 대기 중인 활성 스윙 조회 (SIGNAL 4 또는 5)

@@ -3,10 +3,11 @@
 
 **매수 조건 (Entry Conditions):**
 1. EMA 추세: 현재가 >= 실시간 EMA20 * 0.995 (0.5% 여유)
-2. 수급 강도: OBV z-score >= 1.0
+2. 수급 강도: OBV z-score > 0 AND 전전일 대비 상승
 3. 괴리율 필터: EMA 괴리율 <= 5%
-4. 추세 방향: +DI > -DI
-5. 연속 확인: 2회 (Redis 상태 관리, 5분 주기 노이즈 필터링)
+4. 추세 방향: +DI > -DI AND ADX > 20
+5. 전일 양봉: 전일 종가 > 전전일 종가
+6. 연속 확인: 2회 (Redis 상태 관리, 5분 주기 노이즈 필터링)
 
 **2차 매수 조건 (20분 경과 후):**
 - **시나리오 A (추세 강화형):** EMA + ATR × (0.3~2.0), ADX > 25, OBV z-score >= 1.2
@@ -18,14 +19,11 @@
 *   목표: 급락 사고 방어
 1.  **EMA-ATR 동적 손절:** 현재가 <= EMA - (ATR × 1.0)
 
-**[2차 방어선] 장 마감 매도 (매일 종가에 체크, 교차 검증)**
-*   목표: 노이즈를 제거한 추세 이탈 '확정'
-*   **시간 윈도우:** 최근 3거래일 이내 발생한 신호만 유효
-1.  **1차 분할 매도 (50%):** 아래 3개 조건 중 **2개 이상** 충족 시
-    -   EMA 종가 이탈
-    -   추세 약화 (ADX/DMI 2일 연속 약세)
-    -   수급 이탈 (OBV z-score)
-2.  **2차 전량 매도:** 1차 매도 후, 3개 조건이 **모두** 충족 시
+**[2차 방어선] EOD 조건부 trailing stop (매일 종가에 체크)**
+*   **추세 약화:** (+DI - -DI) 격차 2일 연속 감소
+*   **수급 약화:** OBV z-score 감소 (2일전 대비)
+1.  **1차 분할 매도:** SIGNAL 1/2 + 고점 대비 >= 5% 하락
+2.  **2차 전량 매도:** SIGNAL 3 + 고점 대비 >= 8% 하락
 """
 import pandas as pd
 import talib as ta
@@ -107,6 +105,8 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
                 'low': data['low'],
                 'date': data['date'],
                 'avg_daily_amount': data['avg_daily_amount'],
+                'prev_close': data['prev_close'],
+                'prev_obv_z': data['prev_obv_z'],
             }
         except Exception as e:
             logger.warning(f"[{symbol}] 캐시 조회 실패: {e}")
@@ -284,9 +284,10 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
 
         # 지표 사용 (모두 실시간 증분 계산 완료 상태)
         try:
-            # 실시간 DI 사용
+            # 실시간 DI, ADX 사용
             realtime_plus_di = cached_indicators['realtime_plus_di']
             realtime_minus_di = cached_indicators['realtime_minus_di']
+            realtime_adx = cached_indicators['realtime_adx']
 
             # 실시간 EMA 사용
             realtime_ema20 = cached_indicators['realtime_ema20']
@@ -305,13 +306,18 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
             logger.debug(f"[{symbol}] 하락장 감지 (EMA20={realtime_ema20:.0f} < EMA120={realtime_ema120:.0f}), 매수 금지")
             return None
 
-        # 조건 검증
-        price_above_ema = curr_price >= realtime_ema20 * 0.995  # 0.5% 여유
-        supply_strong = realtime_obv_z >= cls.OBV_Z_BUY_THRESHOLD
-        gap_filtered = gap_ratio <= cls.MAX_GAP_RATIO
-        trend_upward = realtime_plus_di > realtime_minus_di
+        # 캐시에서 전전일 데이터 추출
+        prev_close = cached_indicators.get('prev_close')
+        prev_obv_z = cached_indicators.get('prev_obv_z')
 
-        current_signal = all([price_above_ema, supply_strong, gap_filtered, trend_upward])
+        # 조건 검증 (백테스팅과 동일)
+        price_above_ema = curr_price >= realtime_ema20 * 0.995  # 0.5% 여유
+        supply_strong = (realtime_obv_z > 0) and (prev_obv_z is not None and realtime_obv_z > prev_obv_z)
+        gap_filtered = gap_ratio <= cls.MAX_GAP_RATIO
+        trend_upward = realtime_plus_di > realtime_minus_di and realtime_adx > cls.ADX_MIN_ENTRY
+        prev_day_bullish = (prev_close is not None and cached_indicators['close'] > prev_close)
+
+        current_signal = all([price_above_ema, supply_strong, gap_filtered, trend_upward, prev_day_bullish])
 
         # 연속성 체크 (Redis, swing_id별 분리)
         prev_state_key = f"entry:{swing_id}"
@@ -502,33 +508,67 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
         cls,
         row,
         prev_row,
-        current_eod_signals: str
-    ) -> str:
+        prev_prev_row,
+        peak_price: float,
+        signal: int
+    ):
         """
-        종가 기준 EOD 신호를 DB에 저장할 JSON 생성
+        EOD trailing stop 체크 + PEAK_PRICE 업데이트
 
         Args:
-            row: today 지표
-            prev_row: yesterday 지표
-            current_eod_signals: 현재 DB의 EOD_SIGNALS JSON
+            row: 오늘 지표
+            prev_row: 어제 지표
+            prev_prev_row: 그저께 지표
+            peak_price: 현재 PEAK_PRICE
+            signal: 현재 SIGNAL (1, 2, 3)
 
         Returns:
-            업데이트된 EOD_SIGNALS JSON 문자열
+            (eod_signals_json, updated_peak_price)
         """
+        close = float(row['STCK_CLPR'])
 
-        # 기존 신호 로드
-        signals = json.loads(current_eod_signals) if current_eod_signals else {}
-        current_date = date.today().isoformat()
+        # 고점 업데이트
+        updated_peak = max(peak_price or 0, close)
 
-        # 3일 지난 신호 삭제
-        for signal_name, date_str in list(signals.items()):
-            signal_date = date.fromisoformat(date_str)
-            if (date.today() - signal_date).days >= 3:
-                del signals[signal_name]
+        # NaN 체크
+        required_cols = ["minus_di", "plus_di", "obv_z"]
+        if any(pd.isna(row.get(col)) for col in required_cols):
+            return None, updated_peak
+        if any(pd.isna(prev_row.get(col)) for col in ["minus_di", "plus_di"]):
+            return None, updated_peak
+        if any(pd.isna(prev_prev_row.get(col)) for col in ["minus_di", "plus_di", "obv_z"]):
+            return None, updated_peak
 
-        # EOD 신호 체크 및 갱신 (발생 시 저장, 미발생 시 해제)
-        if cls._check_ema_breach_eod(row): signals['ema_breach'] = current_date
-        if cls._check_trend_weakness_eod(row, prev_row): signals['trend_weak'] = current_date
-        if cls._check_supply_weakness_eod(row): signals['supply_weak'] = current_date
+        # 조건 1: 추세 약화 — (+DI - -DI) 격차 2일 연속 감소
+        di_spread_today = row["plus_di"] - row["minus_di"]
+        di_spread_prev = prev_row["plus_di"] - prev_row["minus_di"]
+        di_spread_prev2 = prev_prev_row["plus_di"] - prev_prev_row["minus_di"]
+        trend_weakening = di_spread_today < di_spread_prev < di_spread_prev2
 
-        return json.dumps(signals) if signals else None
+        # 조건 2: 수급 약화 — OBV z-score 감소 (2일전 대비)
+        supply_weakening = row["obv_z"] < prev_prev_row["obv_z"]
+
+        if not (trend_weakening and supply_weakening):
+            return None, updated_peak
+
+        # 고점 대비 하락률 계산
+        if updated_peak <= 0:
+            return None, updated_peak
+        drawdown_pct = (updated_peak - close) / updated_peak * 100
+
+        # 매도 결정
+        action = None
+        reason = ""
+
+        if signal == 3 and drawdown_pct >= cls.TRAILING_STOP_FULL:
+            action = "SELL_ALL"
+            reason = f"2차 전량매도(고점대비 -{drawdown_pct:.1f}%+DI격차축소+수급약화)"
+        elif signal in (1, 2) and drawdown_pct >= cls.TRAILING_STOP_PARTIAL:
+            action = "SELL_PRIMARY"
+            reason = f"1차 분할매도(고점대비 -{drawdown_pct:.1f}%+DI격차축소+수급약화)"
+
+        if action:
+            eod_json = json.dumps({"action": action, "reason": reason, "date": date.today().isoformat()})
+            return eod_json, updated_peak
+
+        return None, updated_peak

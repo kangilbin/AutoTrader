@@ -138,7 +138,7 @@ class TradingStrategy(ABC):
         pass
 
     @classmethod
-    async def update_eod_signals_to_db(cls, row, prev_row, current_eod_signals):
+    async def update_eod_signals_to_db(cls, row, prev_row, prev_prev_row, peak_price, signal):
         pass
 
     @classmethod
@@ -156,8 +156,8 @@ class TradingStrategy(ABC):
 
         Returns:
             {
-                "action": "SELL_PARTIAL" | "SELL_ALL" | "HOLD",
-                "reason": str,
+                "action": "SELL_PRIMARY" | "SELL_ALL" | "HOLD",
+                "reasons": list,
                 "signal_count": int
             }
         """
@@ -166,35 +166,20 @@ class TradingStrategy(ABC):
         eod_signals_json = swing.EOD_SIGNALS if hasattr(swing, 'EOD_SIGNALS') else None
 
         if not eod_signals_json:
-            return {"action": "HOLD", "reason": "EOD 신호 없음", "signal_count": 0}
+            return {"action": "HOLD", "reasons": [], "signal_count": 0}
 
         try:
-            eod_signals = json.loads(eod_signals_json)
-            signal_count = len(eod_signals)
+            eod_data = json.loads(eod_signals_json)
+            action = eod_data.get("action")
+            reason = eod_data.get("reason", "")
 
-            # EOD 신호 이름을 한글로 매핑
-            signal_map = {
-                "ema_breach": "EMA 종가 이탈",
-                "trend_weak": "추세 약화",
-                "supply_weak": "수급 이탈"
-            }
-            reasons = [signal_map.get(key, key) for key in eod_signals.keys()]
-
-            if signal_count >= 3:
+            if action in ("SELL_PRIMARY", "SELL_ALL"):
                 return {
-                    "action": "SELL_ALL",
-                    "reasons": ["EOD 전량 매도"] + reasons,
-                    "signal_count": signal_count
+                    "action": action,
+                    "reasons": [reason],
+                    "signal_count": 1
                 }
-            elif signal_count >= 2:
-                return {
-                    "action": "SELL_PARTIAL",
-                    "reasons": ["EOD 1차 매도"] + reasons,
-                    "signal_count": signal_count
-                }
-            else:
-                return {"action": "HOLD", "reasons": [], "signal_count": signal_count}
-
+            return {"action": "HOLD", "reasons": [], "signal_count": 0}
         except Exception as e:
             logger.error(f"EOD 신호 파싱 실패: {e}")
             return {"action": "HOLD", "reasons": [], "signal_count": 0}
@@ -253,6 +238,7 @@ class TradingStrategy(ABC):
         original_entry_price = entry_price
         original_hold_qty = hold_qty
         new_signal = current_signal
+        peak_price = int(swing.PEAK_PRICE) if hasattr(swing, 'PEAK_PRICE') and swing.PEAK_PRICE else 0
 
         # ------------------------------------------
         # 부분 실행 진행 중 체크 (신호 로직보다 우선)
@@ -283,6 +269,7 @@ class TradingStrategy(ABC):
                 "new_signal": new_signal,
                 "entry_price": entry_price,
                 "hold_qty": hold_qty,
+                "peak_price": peak_price,
                 "updated": True,
             }
 
@@ -321,6 +308,7 @@ class TradingStrategy(ABC):
                         hold_qty = order_result.get("qty", 0)
                         if order_result.get("completed", True):
                             new_signal = 1
+                        peak_price = int(current_price)
 
                         # 거래 내역 저장 (비율 추가)
                         reasons = entry_result.get("reasons", ["1차 매수"]).copy()
@@ -378,6 +366,7 @@ class TradingStrategy(ABC):
                             new_signal = 0
                             entry_price = 0
                             hold_qty = 0
+                            peak_price = 0
 
                             # 거래 내역 저장
                             trade_service = TradeHistoryService(db)
@@ -398,7 +387,7 @@ class TradingStrategy(ABC):
                     # 손절 아니면 EOD 매도 신호 체크
                     eod_result = await cls.check_eod_sell_signal(swing, cached_indicators)
 
-                    if eod_result.get("action") == "SELL_PARTIAL":
+                    if eod_result.get("action") == "SELL_PRIMARY":
                         logger.warning(
                             f"[{user_id} - 주식: {st_code}] EOD 1차 매도 신호! 사유={eod_result.get('reasons')}"
                         )
@@ -439,7 +428,7 @@ class TradingStrategy(ABC):
 
                     elif eod_result.get("action") == "SELL_ALL":
                         logger.warning(
-                            f"[{user_id} - 주식: {st_code}] EOD 2차 매도 신호! 사유={eod_result.get('reasons')}"
+                            f"[{user_id} - 주식: {st_code}] EOD 전량 매도 신호! 사유={eod_result.get('reasons')}"
                         )
 
                         if user_id:
@@ -461,6 +450,7 @@ class TradingStrategy(ABC):
                                     new_signal = 0
                                     entry_price = 0
                                     hold_qty = 0
+                                    peak_price = 0
 
                                 # 거래 내역 저장
                                 trade_service = TradeHistoryService(db)
@@ -571,6 +561,7 @@ class TradingStrategy(ABC):
                             new_signal = 0
                             entry_price = 0
                             hold_qty = 0
+                            peak_price = 0
 
                             # 거래 내역 저장
                             trade_service = TradeHistoryService(db)
@@ -591,7 +582,7 @@ class TradingStrategy(ABC):
                     # 손절 아니면 EOD 매도 신호 체크
                     eod_result = await cls.check_eod_sell_signal(swing, cached_indicators)
 
-                    if eod_result.get("action") == "SELL_PARTIAL":
+                    if eod_result.get("action") == "SELL_PRIMARY":
                         if user_id:
                             # 1차 분할 매도 (sell_ratio%)
                             sell_qty = int(hold_qty * sell_ratio / 100)
@@ -650,6 +641,7 @@ class TradingStrategy(ABC):
                                     new_signal = 0
                                     entry_price = 0
                                     hold_qty = 0
+                                    peak_price = 0
 
                                 # 거래 내역 저장
                                 trade_service = TradeHistoryService(db)
@@ -711,6 +703,7 @@ class TradingStrategy(ABC):
                         hold_qty = hold_qty + new_qty
                         if order_result.get("completed", True):
                             new_signal = 1
+                        peak_price = int(current_price)
 
                         # 거래 내역 저장 (재진입)
                         reasons = ["재진입 매수", f"{buy_ratio}%"]
@@ -735,10 +728,10 @@ class TradingStrategy(ABC):
                     logger.warning(f"[{st_code}] USER_ID 없음, 재진입 주문 실행 불가")
 
             else:
-                # 우선순위 2: 2차 매도 신호 체크 (EOD 3개 or 추가 하락)
+                # 우선순위 2: 2차 매도 신호 체크
                 eod_result = await cls.check_eod_sell_signal(swing, cached_indicators)
 
-                if eod_result.get("action") == "SELL_ALL" or eod_result.get("signal_count") >= 3:
+                if eod_result.get("action") == "SELL_ALL":
                     logger.info(f"[{st_code}] 2차 전량 매도 실행 (잔량: {hold_qty}주)")
 
                     if user_id:
@@ -759,6 +752,7 @@ class TradingStrategy(ABC):
                                 new_signal = 0
                                 entry_price = 0
                                 hold_qty = 0
+                                peak_price = 0
 
                             # 거래 내역 저장
                             trade_service = TradeHistoryService(db)
@@ -779,6 +773,7 @@ class TradingStrategy(ABC):
             "new_signal": new_signal,
             "entry_price": entry_price,
             "hold_qty": hold_qty,
+            "peak_price": peak_price,
             "updated": (
                 new_signal != current_signal
                 or hold_qty != original_hold_qty
