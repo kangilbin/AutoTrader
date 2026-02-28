@@ -292,9 +292,9 @@ class SwingService:
                 logger.warning(f"[{st_code}] 지표 값 NaN")
                 return False
 
-            # OBV diff 최근 6일 추출
+            # OBV diff 최근 6일 추출 (NaN 필터링)
             obv_diffs = indicators['obv'].diff()
-            recent_6_diffs = obv_diffs.iloc[-7:-1].tolist()
+            recent_6_diffs = [x for x in obv_diffs.iloc[-7:-1].tolist() if not pd.isna(x)]
 
             # DM14 역산 (+DM14 = +DI × ATR / 100)
             atr = float(yesterday['atr'])
@@ -424,9 +424,9 @@ class SwingService:
                         fail_count += 1
                         continue
 
-                    # OBV diff 최근 6일 추출 (7일 중 마지막 1일 제외)
+                    # OBV diff 최근 6일 추출 (NaN 필터링)
                     obv_diffs = indicators['obv'].diff()
-                    recent_6_diffs = obv_diffs.iloc[-7:-1].tolist()
+                    recent_6_diffs = [x for x in obv_diffs.iloc[-7:-1].tolist() if not pd.isna(x)]
 
                     # DM14 역산 (+DM14 = +DI × ATR / 100)
                     atr = float(yesterday['atr'])

@@ -1,31 +1,3 @@
-"""
-단일 20EMA 매매 전략 (Single EMA Strategy)
-
-**매수 조건 (Entry Conditions):**
-1. EMA 근접: 현재가 >= 실시간 EMA20 * 0.995 (0.5% 여유)
-2. 수급 강도: OBV z-score > 0 AND 전전일 대비 상승
-3. 급등 필터: 전일 대비 변동률 <= 5%
-4. 추세 강화: +DI > -DI AND ADX 상승 중 (전일 대비)
-5. EMA 상승: 실시간 EMA20 > 전전일 EMA20
-6. 전일 양봉: 전일 종가 > 전전일 종가
-7. 연속 확인: 2회 (Redis 상태 관리, 5분 주기 노이즈 필터링)
-
-**2차 매수 조건 (20분 경과 후):**
-- **시나리오 A (추세 강화형):** EMA + ATR × (0.3~2.0), ADX > 25, OBV z-score >= 1.2
-- **시나리오 B (눌림목 반등):** EMA ± ATR × 0.5, 18 <= ADX <= 23, OBV z-score > 0.5, 장중 저가 대비 0.4% 반등
-
-**매도 조건 (Exit Conditions) - 이원화된 하이브리드 전략:**
-
-**[1차 방어선] 장중 즉시 매도 (5분마다 체크)**
-*   목표: 급락 사고 방어
-1.  **EMA-ATR 동적 손절:** 현재가 <= EMA - (ATR × 1.0)
-
-**[2차 방어선] EOD 조건부 trailing stop (매일 종가에 체크)**
-*   **추세 약화:** (+DI - -DI) 격차 2일 연속 감소
-*   **수급 약화:** OBV z-score 감소 (2일전 대비)
-1.  **1차 분할 매도:** SIGNAL 1/2 + 고점 대비 >= 5% 하락
-2.  **2차 전량 매도:** SIGNAL 3 + 고점 대비 >= 8% 하락
-"""
 import pandas as pd
 import talib as ta
 import numpy as np
@@ -306,16 +278,17 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
         prev_adx = cached_indicators.get('prev_adx')
         prev_ema20 = cached_indicators.get('prev_ema20')
 
-        # 조건 검증 (백테스팅과 동일)
+        # 조건 검증
         price_above_ema = curr_price >= realtime_ema20 * 0.995  # 0.5% 여유
         supply_strong = (realtime_obv_z > 0) and (prev_obv_z is not None and realtime_obv_z > prev_obv_z)
         surge_filtered = (prev_close is not None and prev_close > 0 and
                          (cached_indicators['close'] - prev_close) / prev_close <= cls.MAX_SURGE_RATIO)
+        intraday_surge_filtered = abs(prdy_ctrt) / 100 <= cls.MAX_SURGE_RATIO
         trend_upward = realtime_plus_di > realtime_minus_di and (prev_adx is not None and realtime_adx > prev_adx)
         ema_rising = (prev_ema20 is not None and realtime_ema20 > prev_ema20)
         prev_day_bullish = (prev_close is not None and cached_indicators['close'] > prev_close)
 
-        current_signal = all([price_above_ema, supply_strong, surge_filtered, trend_upward, ema_rising, prev_day_bullish])
+        current_signal = all([price_above_ema, supply_strong, surge_filtered, intraday_surge_filtered, trend_upward, ema_rising, prev_day_bullish])
 
         # 연속성 체크 (Redis, swing_id별 분리)
         prev_state_key = f"entry:{swing_id}"
@@ -409,7 +382,8 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
                     if realtime_plus_di > realtime_minus_di:
                         # 수급 지속: OBV z-score
                         if realtime_obv_z >= cls.TREND_BUY_OBV_THRESHOLD:
-                            logger.info(f"[{symbol}] ✅ 2차 매수 신호 (추세 강화형): EMA+ATR×{(curr_price-realtime_ema20)/atr:.2f}")
+                            atr_ratio = f"{(curr_price-realtime_ema20)/atr:.2f}" if atr > 0 else "N/A"
+                            logger.info(f"[{symbol}] ✅ 2차 매수 신호 (추세 강화형): EMA+ATR×{atr_ratio}")
                             return {
                                 'action': 'BUY',
                                 'price': curr_price,
@@ -434,7 +408,7 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
                             intraday_low_str = await redis_client.get(intraday_low_key)
 
                             if intraday_low_str:
-                                intraday_low = float(intraday_low_str.decode())
+                                intraday_low = float(intraday_low_str)
                                 # 현재가가 저가보다 낮으면 갱신
                                 if curr_price < intraday_low:
                                     await redis_client.setex(intraday_low_key, 86400, str(curr_price))
@@ -480,6 +454,11 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
         # 실시간 EMA, ATR 사용
         realtime_ema20 = cached_indicators['realtime_ema20']
         atr = cached_indicators['realtime_atr']
+
+        # ATR=0 가드: ATR이 유효하지 않으면 손절 체크 스킵
+        if atr <= 0:
+            logger.warning(f"[{symbol}] ATR이 0 이하, 손절 체크 스킵")
+            return {"action": "HOLD", "reasons": []}
 
         # EMA-ATR 동적 손절
         ema_atr_stop = realtime_ema20 - (atr * cls.ATR_MULTIPLIER)
@@ -548,6 +527,17 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
             return None, updated_peak
         drawdown_pct = (updated_peak - close) / updated_peak * 100
 
+        # ATR 기반 동적 trailing stop 임계값 계산
+        atr = float(row.get('atr', 0))
+        if atr > 0 and updated_peak > 0:
+            atr_pct = (atr / updated_peak) * 100  # ATR을 고점 대비 비율(%)로 변환
+            trailing_partial = max(atr_pct * cls.TRAILING_STOP_ATR_PARTIAL_MULT, cls.TRAILING_STOP_PARTIAL_MIN)
+            trailing_full = max(atr_pct * cls.TRAILING_STOP_ATR_FULL_MULT, cls.TRAILING_STOP_FULL_MIN)
+        else:
+            # ATR 무효 시 고정값 폴백
+            trailing_partial = cls.TRAILING_STOP_PARTIAL
+            trailing_full = cls.TRAILING_STOP_FULL
+
         # 약화 사유 동적 생성
         weakness_reasons = []
         if trend_weakening:
@@ -560,12 +550,12 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
         action = None
         reason = ""
 
-        if signal == 3 and drawdown_pct >= cls.TRAILING_STOP_FULL:
+        if signal == 3 and drawdown_pct >= trailing_full:
             action = "SELL_ALL"
-            reason = f"2차 전량매도(고점대비 -{drawdown_pct:.1f}%+{weakness_str})"
-        elif signal in (1, 2) and drawdown_pct >= cls.TRAILING_STOP_PARTIAL:
+            reason = f"2차 전량매도(고점대비 -{drawdown_pct:.1f}%+{weakness_str}, 기준:{trailing_full:.1f}%)"
+        elif signal in (1, 2) and drawdown_pct >= trailing_partial:
             action = "SELL_PRIMARY"
-            reason = f"1차 분할매도(고점대비 -{drawdown_pct:.1f}%+{weakness_str})"
+            reason = f"1차 분할매도(고점대비 -{drawdown_pct:.1f}%+{weakness_str}, 기준:{trailing_partial:.1f}%)"
 
         if action:
             eod_json = json.dumps({"action": action, "reason": reason, "date": date.today().isoformat()})

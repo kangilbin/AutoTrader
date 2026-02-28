@@ -239,6 +239,7 @@ class TradingStrategy(ABC):
         original_hold_qty = hold_qty
         new_signal = current_signal
         peak_price = int(swing.PEAK_PRICE) if hasattr(swing, 'PEAK_PRICE') and swing.PEAK_PRICE else 0
+        original_peak_price = peak_price
 
         # ------------------------------------------
         # 부분 실행 진행 중 체크 (신호 로직보다 우선)
@@ -272,6 +273,14 @@ class TradingStrategy(ABC):
                 "peak_price": peak_price,
                 "updated": True,
             }
+
+        # ------------------------------------------
+        # 포지션 보유 중 장중 고가로 PEAK_PRICE 갱신
+        # ------------------------------------------
+        if current_signal in (1, 2, 3):
+            current_high = int(current_price_data.get("stck_hgpr", int(current_price)))
+            if current_high > peak_price:
+                peak_price = current_high
 
         # ------------------------------------------
         # SIGNAL 0: 대기 상태 - 1차 매수 신호 확인
@@ -662,112 +671,161 @@ class TradingStrategy(ABC):
         # SIGNAL 3: 1차 매도 완료 - 재진입 체크 또는 2차 매도
         # ------------------------------------------
         elif current_signal == 3:
-            # 우선순위 1: 재진입 신호 체크 (추세 반전)
-            entry_result = await cls.check_entry_signal(
-                redis_client=redis_client,
-                swing_id=swing_id,
-                symbol=st_code,
-                current_price=current_price,
-                frgn_ntby_qty=frgn_ntby_qty,
-                acml_vol=acml_vol,
-                prdy_vrss_vol_rate=prdy_vrss_vol_rate,
-                prdy_ctrt=prdy_ctrt,
-                cached_indicators=cached_indicators
-            )
+            # 손절 신호 체크 (SIGNAL 1/2와 동일)
+            exit_result = None
+            if entry_price > 0:
+                exit_result = await cls.check_exit_signal(
+                    redis_client=redis_client,
+                    position_id=swing_id,
+                    symbol=st_code,
+                    current_price=current_price,
+                    entry_price=Decimal(entry_price),
+                    frgn_ntby_qty=frgn_ntby_qty,
+                    acml_vol=acml_vol,
+                    cached_indicators=cached_indicators
+                )
 
-            if entry_result and entry_result.get("action") == "BUY":
+            if exit_result and exit_result.get("action") == "SELL":
+                logger.warning(
+                    f"[{st_code}] SIGNAL 3 즉시 매도 신호 발동! 현재가={int(current_price):,}원, "
+                    f"평단가={entry_price:,}원"
+                )
+
                 if user_id:
-                    # 재진입 1차 매수 (기존 잔량 유지 + 추가 매수)
-                    reentry_target_amount = init_amount * Decimal(buy_ratio) / Decimal(100)
-                    order_result = await SwingOrderExecutor.execute_buy_with_partial(
-                        redis_client=redis_client,
-                        swing_id=swing_id,
+                    # 손절은 전량 매도
+                    order_result = await SwingOrderExecutor.execute_second_sell(
                         user_id=user_id,
-                        st_code=st_code,
-                        current_price=current_price,
-                        target_amount=reentry_target_amount,
-                        avg_daily_amount=avg_daily_amount,
-                        signal_on_complete=1
+                        st_code=st_code
                     )
 
                     if order_result.get("success"):
-                        # 기존 잔량 + 새로 매수한 수량으로 평단가 재계산
-                        new_avg_price = order_result.get("avg_price", int(current_price))
-                        new_qty = order_result.get("qty", 0)
-                        entry_price = SwingOrderExecutor.calculate_avg_entry_price(
-                            prev_qty=hold_qty,
-                            prev_price=entry_price,
-                            new_qty=new_qty,
-                            new_price=new_avg_price
-                        )
-                        hold_qty = hold_qty + new_qty
-                        if order_result.get("completed", True):
-                            new_signal = 1
-                        peak_price = int(current_price)
+                        new_signal = 0
+                        entry_price = 0
+                        hold_qty = 0
+                        peak_price = 0
 
-                        # 거래 내역 저장 (재진입)
-                        reasons = ["재진입 매수", f"{buy_ratio}%"]
+                        # 거래 내역 저장
                         trade_service = TradeHistoryService(db)
                         await trade_service.record_trade(
                             swing_id=swing_id,
-                            trade_type="B",
+                            trade_type="S",
                             order_result=order_result,
-                            reasons=reasons
+                            reasons=exit_result.get("reasons", ["손절"])
                         )
 
-                        # 2차 매수 시간 필터용 Redis 키 생성 (20분 TTL)
-                        await redis_client.setex(
-                            f"first_buy_time:{swing_id}",
-                            1200,
-                            datetime.now().isoformat()
-                        )
-                        logger.info(f"[{user_id} - 주식: {st_code}] 재진입 매수 완료: 평단가={entry_price:,}원, 총수량={hold_qty}주")
+                        logger.info(f"[{user_id} - 주식: {st_code}] SIGNAL 3 손절 전량 매도 완료, 사이클 종료")
                     else:
-                        logger.error(f"[{user_id} - 주식: {st_code}] 재진입 매수 실패: {order_result.get('reason')}")
+                        logger.error(f"[{st_code}] SIGNAL 3 손절 매도 실패: {order_result.get('reason')}")
                 else:
-                    logger.warning(f"[{st_code}] USER_ID 없음, 재진입 주문 실행 불가")
+                    logger.warning(f"[{st_code}] USER_ID 없음, 손절 주문 실행 불가")
 
             else:
-                # 우선순위 2: 2차 매도 신호 체크
-                eod_result = await cls.check_eod_sell_signal(swing, cached_indicators)
+                # 우선순위 1: 재진입 신호 체크 (추세 반전)
+                entry_result = await cls.check_entry_signal(
+                    redis_client=redis_client,
+                    swing_id=swing_id,
+                    symbol=st_code,
+                    current_price=current_price,
+                    frgn_ntby_qty=frgn_ntby_qty,
+                    acml_vol=acml_vol,
+                    prdy_vrss_vol_rate=prdy_vrss_vol_rate,
+                    prdy_ctrt=prdy_ctrt,
+                    cached_indicators=cached_indicators
+                )
 
-                if eod_result.get("action") == "SELL_ALL":
-                    logger.info(f"[{st_code}] 2차 전량 매도 실행 (잔량: {hold_qty}주)")
-
+                if entry_result and entry_result.get("action") == "BUY":
                     if user_id:
-                        order_result = await SwingOrderExecutor.execute_sell_with_partial(
+                        # 재진입 1차 매수 (기존 잔량 유지 + 추가 매수)
+                        reentry_target_amount = init_amount * Decimal(buy_ratio) / Decimal(100)
+                        order_result = await SwingOrderExecutor.execute_buy_with_partial(
                             redis_client=redis_client,
                             swing_id=swing_id,
                             user_id=user_id,
                             st_code=st_code,
                             current_price=current_price,
-                            target_qty=hold_qty,
+                            target_amount=reentry_target_amount,
                             avg_daily_amount=avg_daily_amount,
-                            signal_on_complete=0
+                            signal_on_complete=1
                         )
 
                         if order_result.get("success"):
-                            hold_qty -= order_result.get("qty", 0)
+                            # 기존 잔량 + 새로 매수한 수량으로 평단가 재계산
+                            new_avg_price = order_result.get("avg_price", int(current_price))
+                            new_qty = order_result.get("qty", 0)
+                            entry_price = SwingOrderExecutor.calculate_avg_entry_price(
+                                prev_qty=hold_qty,
+                                prev_price=entry_price,
+                                new_qty=new_qty,
+                                new_price=new_avg_price
+                            )
+                            hold_qty = hold_qty + new_qty
                             if order_result.get("completed", True):
-                                new_signal = 0
-                                entry_price = 0
-                                hold_qty = 0
-                                peak_price = 0
+                                new_signal = 1
+                            peak_price = int(current_price)
 
-                            # 거래 내역 저장
+                            # 거래 내역 저장 (재진입)
+                            reasons = ["재진입 매수", f"{buy_ratio}%"]
                             trade_service = TradeHistoryService(db)
                             await trade_service.record_trade(
                                 swing_id=swing_id,
-                                trade_type="S",
+                                trade_type="B",
                                 order_result=order_result,
-                                reasons=eod_result.get("reasons", ["2차 전량 매도"])
+                                reasons=reasons
                             )
 
-                            logger.info(f"[{user_id} - 주식: {st_code}] 2차 매도 완료, 사이클 종료")
+                            # 2차 매수 시간 필터용 Redis 키 생성 (20분 TTL)
+                            await redis_client.setex(
+                                f"first_buy_time:{swing_id}",
+                                1200,
+                                datetime.now().isoformat()
+                            )
+                            logger.info(f"[{user_id} - 주식: {st_code}] 재진입 매수 완료: 평단가={entry_price:,}원, 총수량={hold_qty}주")
                         else:
-                            logger.error(f"[{user_id} - 주식: {st_code}] 2차 매도 실패: {order_result.get('reason')}")
+                            logger.error(f"[{user_id} - 주식: {st_code}] 재진입 매수 실패: {order_result.get('reason')}")
                     else:
-                        logger.warning(f"[{st_code}] USER_ID 없음, 매도 주문 실행 불가")
+                        logger.warning(f"[{st_code}] USER_ID 없음, 재진입 주문 실행 불가")
+
+                else:
+                    # 우선순위 2: 2차 매도 신호 체크
+                    eod_result = await cls.check_eod_sell_signal(swing, cached_indicators)
+
+                    if eod_result.get("action") == "SELL_ALL":
+                        logger.info(f"[{st_code}] 2차 전량 매도 실행 (잔량: {hold_qty}주)")
+
+                        if user_id:
+                            order_result = await SwingOrderExecutor.execute_sell_with_partial(
+                                redis_client=redis_client,
+                                swing_id=swing_id,
+                                user_id=user_id,
+                                st_code=st_code,
+                                current_price=current_price,
+                                target_qty=hold_qty,
+                                avg_daily_amount=avg_daily_amount,
+                                signal_on_complete=0
+                            )
+
+                            if order_result.get("success"):
+                                hold_qty -= order_result.get("qty", 0)
+                                if order_result.get("completed", True):
+                                    new_signal = 0
+                                    entry_price = 0
+                                    hold_qty = 0
+                                    peak_price = 0
+
+                                # 거래 내역 저장
+                                trade_service = TradeHistoryService(db)
+                                await trade_service.record_trade(
+                                    swing_id=swing_id,
+                                    trade_type="S",
+                                    order_result=order_result,
+                                    reasons=eod_result.get("reasons", ["2차 전량 매도"])
+                                )
+
+                                logger.info(f"[{user_id} - 주식: {st_code}] 2차 매도 완료, 사이클 종료")
+                            else:
+                                logger.error(f"[{user_id} - 주식: {st_code}] 2차 매도 실패: {order_result.get('reason')}")
+                        else:
+                            logger.warning(f"[{st_code}] USER_ID 없음, 매도 주문 실행 불가")
 
         return {
             "new_signal": new_signal,
@@ -778,5 +836,6 @@ class TradingStrategy(ABC):
                 new_signal != current_signal
                 or hold_qty != original_hold_qty
                 or entry_price != original_entry_price
+                or peak_price != original_peak_price
             )
         }

@@ -15,8 +15,8 @@
 **[2차 방어선] EOD 조건부 trailing stop (일일 종가 기준)**
 *   **추세 약화:** (+DI - -DI) 격차 2일 연속 감소 (14일 스무딩된 DI 방향성 균형 이동)
 *   **수급 약화:** OBV z-score 감소 (2일전 대비)
-1.  **1차 분할 매도:** BUY_COMPLETE 상태 + 고점 대비 ≥5% 하락
-2.  **2차 전량 매도:** SELL_PRIMARY 상태 + 고점 대비 ≥8% 하락
+1.  **1차 분할 매도:** BUY_COMPLETE 상태 + 고점 대비 ≥ ATR×2.0 하락 (최소 3%)
+2.  **2차 전량 매도:** SELL_PRIMARY 상태 + 고점 대비 ≥ ATR×3.0 하락 (최소 5%)
 """
 import pandas as pd
 from typing import Dict, List, Optional, Tuple
@@ -64,7 +64,7 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
 
             # === 1단계: 포지션 보유 시 매도 조건 체크 ===
             if position_status in ['BUY_COMPLETE', 'SELL_PRIMARY']:
-                peak_price = max(peak_price, row["STCK_CLPR"])
+                peak_price = max(peak_price, row["STCK_HGPR"])
 
                 # [1차 방어선] 즉시 매도 조건 체크 (저가 기준)
                 immediate_sell_signal, reason, sell_price = self._check_immediate_sell_conditions(row)
@@ -149,8 +149,8 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
         """
         low_price = row["STCK_LWPR"]
 
-        # EMA-ATR 동적 손절 (NaN 체크)
-        if pd.notna(row["ema_20"]) and pd.notna(row["atr"]):
+        # EMA-ATR 동적 손절 (NaN 체크 + ATR=0 가드)
+        if pd.notna(row["ema_20"]) and pd.notna(row["atr"]) and row["atr"] > 0:
             ema_stop_loss = row["ema_20"] - (row["atr"] * self.ATR_MULTIPLIER)
             if low_price <= ema_stop_loss:
                 return True, "추세 이탈 손절", ema_stop_loss
@@ -193,6 +193,16 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
 
         drawdown_pct = (peak_price - row["STCK_LWPR"]) / peak_price * 100
 
+        # ATR 기반 동적 trailing stop 임계값 계산
+        atr = row.get("atr", 0)
+        if pd.notna(atr) and atr > 0 and peak_price > 0:
+            atr_pct = (atr / peak_price) * 100
+            trailing_partial = max(atr_pct * self.TRAILING_STOP_ATR_PARTIAL_MULT, self.TRAILING_STOP_PARTIAL_MIN)
+            trailing_full = max(atr_pct * self.TRAILING_STOP_ATR_FULL_MULT, self.TRAILING_STOP_FULL_MIN)
+        else:
+            trailing_partial = self.TRAILING_STOP_PARTIAL
+            trailing_full = self.TRAILING_STOP_FULL
+
         # 약화 사유 동적 생성
         weakness_reasons = []
         if trend_weakening:
@@ -201,13 +211,13 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
             weakness_reasons.append("수급약화")
         weakness_str = "+".join(weakness_reasons)
 
-        # 2차 전량 매도: SELL_PRIMARY 상태 + 8% 이상 하락
-        if position_status == 'SELL_PRIMARY' and drawdown_pct >= self.TRAILING_STOP_FULL:
-            return "SELL_ALL", f"2차 전량매도(고점대비 -{drawdown_pct:.1f}%+{weakness_str})"
+        # 2차 전량 매도: SELL_PRIMARY 상태 + ATR 기반 임계값 이상 하락
+        if position_status == 'SELL_PRIMARY' and drawdown_pct >= trailing_full:
+            return "SELL_ALL", f"2차 전량매도(고점대비 -{drawdown_pct:.1f}%+{weakness_str}, 기준:{trailing_full:.1f}%)"
 
-        # 1차 분할 매도: BUY_COMPLETE 상태 + 5% 이상 하락
-        if position_status == 'BUY_COMPLETE' and drawdown_pct >= self.TRAILING_STOP_PARTIAL:
-            return "SELL_PRIMARY", f"1차 분할매도(고점대비 -{drawdown_pct:.1f}%+{weakness_str})"
+        # 1차 분할 매도: BUY_COMPLETE 상태 + ATR 기반 임계값 이상 하락
+        if position_status == 'BUY_COMPLETE' and drawdown_pct >= trailing_partial:
+            return "SELL_PRIMARY", f"1차 분할매도(고점대비 -{drawdown_pct:.1f}%+{weakness_str}, 기준:{trailing_partial:.1f}%)"
 
         return None, ""
 
@@ -235,12 +245,13 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
 
         price_near_ema = row["STCK_CLPR"] >= row["ema_20"] * 0.995
         supply_strong = (row["obv_z"] > 0) and (row["obv_z"] > prev_prev_row["obv_z"])
-        surge_filtered = row["daily_return"] <= self.MAX_SURGE_RATIO
+        surge_filtered = prev_row["daily_return"] <= self.MAX_SURGE_RATIO  # 전일 급등 필터 (D-1 vs D-2)
+        intraday_surge_filtered = abs(row["daily_return"]) <= self.MAX_SURGE_RATIO  # 당일 급등 필터 (D0 vs D-1)
         trend_upward = row["plus_di"] > row["minus_di"] and row["adx"] > prev_row["adx"]
         ema_rising = row["ema_20"] > prev_row["ema_20"]
         prev_day_bullish = prev_row["STCK_CLPR"] > prev_prev_row["STCK_CLPR"]
 
-        if all([price_near_ema, supply_strong, surge_filtered, trend_upward, ema_rising, prev_day_bullish]):
+        if all([price_near_ema, supply_strong, surge_filtered, intraday_surge_filtered, trend_upward, ema_rising, prev_day_bullish]):
             return True, "EMA근접+거래량증가+추세강화+EMA상승+전일양봉"
         return False, ""
 

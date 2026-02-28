@@ -106,7 +106,7 @@ class SwingModel(Base):
     ACCOUNT_NO = Column(String(50), nullable=False, comment='계좌 번호')
     MRKT_CODE = Column(String(50), nullable=False, comment='조건 시장 분류 코드(J:KRX, NX:NXT, UN:통합)')
     ST_CODE = Column(String(50), nullable=False, comment='종목 코드')
-    USE_YN = Column(CHAR(1), nullable=False, default='Y', comment='사용 여부')
+    USE_YN = Column(CHAR(1), nullable=False, default='N', comment='사용 여부')
     INIT_AMOUNT = Column(DECIMAL(15, 2), nullable=False, comment='초기 투자금')
     CUR_AMOUNT = Column(DECIMAL(15, 2), nullable=False, comment='현재 투자금')
     SWING_TYPE = Column(CHAR(1), nullable=False, comment='스윙 타입 (A: 이평선, B: 일목균형표)')
