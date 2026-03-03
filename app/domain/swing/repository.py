@@ -69,6 +69,7 @@ class SwingRepository:
             ACCOUNT_NO=swing.account_no,
             MRKT_CODE=swing.mrkt_code,
             ST_CODE=swing.st_code,
+            USE_YN=swing.use_yn,
             INIT_AMOUNT=swing.init_amount,
             CUR_AMOUNT=swing.cur_amount,
             SWING_TYPE=swing.swing_type,

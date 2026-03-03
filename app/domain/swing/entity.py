@@ -16,7 +16,7 @@ class SwingTrade:
     account_no: str = ""
     mrkt_code: str = ""
     st_code: str = ""
-    use_yn: str = "Y"
+    use_yn: str = "N"
     init_amount: Decimal = Decimal(0)
     cur_amount: Decimal = Decimal(0)
     swing_type: str = "S"  # S: 단일 이평선, B: 일목균형표
