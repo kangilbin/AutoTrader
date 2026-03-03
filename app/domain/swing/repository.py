@@ -4,9 +4,9 @@ Swing Repository - 데이터 접근 계층
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, delete, text, and_
 from typing import Optional, List
-
-from app.common.database import SwingModel, EmaOptModel
+from app.common.database import SwingModel, EmaOptModel, StockModel
 from app.domain.swing.entity import SwingTrade, EmaOption
+from app.domain.swing.schemas import SwingResponse
 import logging
 
 logger = logging.getLogger(__name__)
@@ -32,11 +32,16 @@ class SwingRepository:
         result = await self.db.execute(query)
         return result.scalars().all()
 
-    async def find_all_by_account_no(self, account_no: str) -> List[SwingModel]:
+    async def find_all_by_account_no(self, account_no: str) -> List[dict]:
         """계좌번호로 스윙 목록 조회"""
-        query = select(SwingModel).filter(SwingModel.ACCOUNT_NO == account_no)
+        query = (
+            select(*SwingModel.__table__.columns, StockModel.ST_NM)
+            .join(StockModel, SwingModel.ST_CODE == StockModel.ST_CODE, isouter=True)
+            .filter(SwingModel.ACCOUNT_NO == account_no)
+        )
         result = await self.db.execute(query)
-        return result.scalars().all()
+        return [SwingResponse(**row).model_dump() for row in result.mappings().all()]
+
 
     async def find_active_swings(self) -> List:
         """활성화된 스윙 목록 조회 (배치용)"""
