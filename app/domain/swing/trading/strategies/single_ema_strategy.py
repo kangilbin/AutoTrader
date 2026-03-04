@@ -24,7 +24,6 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
     # ========================================
     # 매수 조건
     CONSECUTIVE_REQUIRED = 2         # 연속 확인 횟수 (10분)
-    PULLBACK_BUY_OBV_MIN = 0.5       # OBV z-score 최소값 (눌림목 반등, 베이스는 0.0)
 
     # 공통
     SECOND_BUY_TIME_MIN = 1200       # 1차 매수 후 최소 경과 시간 (초, 20분)
@@ -272,23 +271,55 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
             logger.error(f"[{symbol}] 매수 신호 지표 계산 실패: {e}", exc_info=True)
             return None
 
-        # 캐시에서 전전일 데이터 추출
-        prev_close = cached_indicators.get('prev_close')
-        prev_obv_z = cached_indicators.get('prev_obv_z')
-        prev_adx = cached_indicators.get('prev_adx')
-        prev_ema20 = cached_indicators.get('prev_ema20')
+        # 캐시에서 전일/전전일 데이터 추출
+        prev_close = cached_indicators.get('prev_close')       # 전전일 종가
+        prev_obv_z = cached_indicators.get('prev_obv_z')       # 전전일 OBV z-score
+        prev_adx = cached_indicators.get('prev_adx')           # 전일 ADX
+        prev_ema20 = cached_indicators.get('prev_ema20')       # 전일 EMA20
+        yesterday_close = cached_indicators.get('close')       # 전일 종가
+        yesterday_ema20 = cached_indicators.get('ema20')       # 전일 EMA20 (종가 기준)
+        atr = cached_indicators.get('realtime_atr', 0)
 
-        # 조건 검증
-        price_above_ema = curr_price >= realtime_ema20 * 0.995  # 0.5% 여유
-        supply_strong = (realtime_obv_z > 0) and (prev_obv_z is not None and realtime_obv_z > prev_obv_z)
+        # === 공통 필터 ===
         surge_filtered = (prev_close is not None and prev_close > 0 and
-                         (cached_indicators['close'] - prev_close) / prev_close <= cls.MAX_SURGE_RATIO)
+                         (yesterday_close - prev_close) / prev_close <= cls.MAX_SURGE_RATIO)
         intraday_surge_filtered = abs(prdy_ctrt) / 100 <= cls.MAX_SURGE_RATIO
-        trend_upward = realtime_plus_di > realtime_minus_di and (prev_adx is not None and realtime_adx > prev_adx)
-        ema_rising = (prev_ema20 is not None and realtime_ema20 > prev_ema20)
-        prev_day_bullish = (prev_close is not None and cached_indicators['close'] > prev_close)
+        prev_day_bullish = (prev_close is not None and yesterday_close > prev_close)
 
-        current_signal = all([price_above_ema, supply_strong, surge_filtered, intraday_surge_filtered, trend_upward, ema_rising, prev_day_bullish])
+        if not (surge_filtered and intraday_surge_filtered and prev_day_bullish):
+            # 공통 필터 미충족 → 연속성 리셋
+            new_state = {'curr_signal': False, 'consecutive_count': 0, 'last_update': datetime.now().isoformat()}
+            await redis_client.setex(f"entry:{swing_id}", 900, json.dumps(new_state))
+            return None
+
+        # === 시나리오 A: 눌림목 매집 진입 ===
+        scenario_a = False
+        if atr > 0:
+            accum_lower = realtime_ema20 + (atr * cls.ACCUM_ENTRY_ATR_LOWER)
+            accum_upper = realtime_ema20 + (atr * cls.ACCUM_ENTRY_ATR_UPPER)
+
+            if accum_lower <= curr_price <= accum_upper:
+                obv_accumulating = (realtime_obv_z > cls.ACCUM_ENTRY_OBV_MIN) and (prev_obv_z is not None and realtime_obv_z > prev_obv_z)
+                adx_mid_range = cls.ACCUM_ENTRY_ADX_MIN <= realtime_adx <= cls.ACCUM_ENTRY_ADX_MAX
+                ema_rising = (prev_ema20 is not None and realtime_ema20 > prev_ema20)
+                trend_direction = realtime_plus_di > realtime_minus_di  # 상승 추세 방향
+
+                scenario_a = obv_accumulating and adx_mid_range and ema_rising and trend_direction
+
+        # === 시나리오 B: 추세 추종 EMA 돌파 진입 ===
+        scenario_b = False
+        if yesterday_ema20 is not None and yesterday_close is not None:
+            ema_crossover = (yesterday_close < yesterday_ema20) and (curr_price > realtime_ema20)
+            within_gap_limit = curr_price <= realtime_ema20 * cls.BREAKOUT_ENTRY_GAP_MAX
+
+            if ema_crossover and within_gap_limit:
+                trend_direction = realtime_plus_di > realtime_minus_di
+                adx_sufficient = realtime_adx > cls.BREAKOUT_ENTRY_ADX_MIN  # 최소 추세 강도
+                obv_positive = realtime_obv_z > cls.BREAKOUT_ENTRY_OBV_MIN
+
+                scenario_b = trend_direction and adx_sufficient and obv_positive
+
+        current_signal = scenario_a or scenario_b
 
         # 연속성 체크 (Redis, swing_id별 분리)
         prev_state_key = f"entry:{swing_id}"
@@ -306,10 +337,12 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
         await redis_client.setex(prev_state_key, 900, json.dumps(new_state))
 
         if consecutive >= cls.CONSECUTIVE_REQUIRED:
-            logger.info(f"[{symbol}] 1차 매수 신호 발생 (연속 {consecutive}회)")
-            return {'action': 'BUY', 'price': curr_price, 'reasons': ["1차 매수"]}
+            scenario_name = "눌림목매집" if scenario_a else "EMA돌파"
+            logger.info(f"[{symbol}] 1차 매수 신호 발생 ({scenario_name}, 연속 {consecutive}회)")
+            return {'action': 'BUY', 'price': curr_price, 'reasons': ["1차 매수", scenario_name]}
         elif current_signal:
-            logger.info(f"[{symbol}] 매수 신호 대기 중 ({consecutive}/{cls.CONSECUTIVE_REQUIRED})")
+            scenario_name = "눌림목매집" if scenario_a else "EMA돌파"
+            logger.info(f"[{symbol}] 매수 신호 대기 중 ({scenario_name}, {consecutive}/{cls.CONSECUTIVE_REQUIRED})")
 
         return None
 
@@ -348,19 +381,14 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
         prdy_vrss_vol_rate: float,
         cached_indicators: Dict
     ) -> Optional[Dict]:
-        """
-        2차 매수 신호 체크 (하이브리드: 추세 강화형 + 눌림목 반등)
-
-        시나리오 A: 추세 강화형 (EMA + ATR × 0.3 ~ 2.5)
-        시나리오 B: 눌림목 반등 (EMA - ATR × 0.5 ~ EMA + ATR × 0.3)
-        """
+        """2차 매수 신호 체크 (통합: 추세 안정화 후 추가 매수)"""
         try:
             curr_price = float(current_price)
 
             # 시간 필터: 1차 매수 후 최소 20분 경과 체크
             time_key = f"first_buy_time:{swing_id}"
             if await redis_client.exists(time_key):
-                return None  # 키 존재 = 20분 미경과 → 2차 매수 불가
+                return None
 
             # 지표 사용 (모두 실시간 증분 계산 완료 상태)
             realtime_adx = cached_indicators['realtime_adx']
@@ -370,61 +398,22 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
             realtime_ema20 = cached_indicators['realtime_ema20']
             realtime_obv_z = cached_indicators['realtime_obv_z']
 
-            # === 시나리오 A: 추세 강화형 ===
-            # 가격 가드레일: EMA + ATR × (0.3 ~ 2.5)
-            trend_lower = realtime_ema20 + (atr * cls.TREND_BUY_ATR_LOWER)
-            trend_upper = realtime_ema20 + (atr * cls.TREND_BUY_ATR_UPPER)
+            # 가격 위치: EMA 이상 ~ EMA + ATR × 2.0 (추세 확인 + 과열 방지)
+            lower = realtime_ema20 + (atr * cls.SECOND_BUY_ATR_LOWER)
+            upper = realtime_ema20 + (atr * cls.SECOND_BUY_ATR_UPPER)
 
-            if trend_lower <= curr_price <= trend_upper:
-                # 추세 강도: ADX > 25
-                if realtime_adx > cls.TREND_BUY_ADX_MIN:
-                    # 추세 방향: +DI > -DI
-                    if realtime_plus_di > realtime_minus_di:
-                        # 수급 지속: OBV z-score
-                        if realtime_obv_z >= cls.TREND_BUY_OBV_THRESHOLD:
-                            atr_ratio = f"{(curr_price-realtime_ema20)/atr:.2f}" if atr > 0 else "N/A"
-                            logger.info(f"[{symbol}] ✅ 2차 매수 신호 (추세 강화형): EMA+ATR×{atr_ratio}")
-                            return {
-                                'action': 'BUY',
-                                'price': curr_price,
-                                'reasons': ["2차 매수", "추세 강화"]
-                            }
-
-            # === 시나리오 B: 눌림목 반등 ===
-            # 가격 가드레일: EMA - ATR × 0.5 ~ EMA + ATR × 0.3
-            pullback_lower = realtime_ema20 + (atr * cls.PULLBACK_BUY_ATR_LOWER)  # EMA - ATR × 0.5
-            pullback_upper = realtime_ema20 + (atr * cls.PULLBACK_BUY_ATR_UPPER)  # EMA + ATR × 0.3
-
-            if pullback_lower <= curr_price <= pullback_upper:
-                # 추세 강도: 18 <= ADX <= 23 (중간 추세, 조정 구간)
-                if cls.PULLBACK_BUY_ADX_MIN <= realtime_adx <= cls.PULLBACK_BUY_ADX_MAX:
-                    # 추세 방향: +DI > -DI
-                    if realtime_plus_di > realtime_minus_di:
-                        # 수급 유지: OBV z-score (중립 이상)
-                        supply_ok = realtime_obv_z > cls.PULLBACK_BUY_OBV_MIN
-                        if supply_ok:
-                            # 반등 신호: 장중 저가 대비 0.4% 반등
-                            intraday_low_key = f"intraday_low:{swing_id}"
-                            intraday_low_str = await redis_client.get(intraday_low_key)
-
-                            if intraday_low_str:
-                                intraday_low = float(intraday_low_str)
-                                # 현재가가 저가보다 낮으면 갱신
-                                if curr_price < intraday_low:
-                                    await redis_client.setex(intraday_low_key, 86400, str(curr_price))
-                                    intraday_low = curr_price
-
-                                # 저점 대비 0.4% 이상 반등했는지 확인
-                                if curr_price >= intraday_low * cls.PULLBACK_BUY_REBOUND_RATIO:
-                                    logger.info(f"[{symbol}] ✅ 2차 매수 신호 (눌림목 반등): 저가 대비 {((curr_price/intraday_low-1)*100):.2f}% 반등")
-                                    return {
-                                        'action': 'BUY',
-                                        'price': curr_price,
-                                        'reasons': ["2차 매수", "눌림목 반등"]
-                                    }
-                            else:
-                                # 최초 저가 기록
-                                await redis_client.setex(intraday_low_key, 86400, str(curr_price))
+            if lower <= curr_price <= upper:
+                # 추세 안정: ADX >= 20 + 상승 방향
+                if realtime_adx >= cls.SECOND_BUY_ADX_MIN and realtime_plus_di > realtime_minus_di:
+                    # 수급 확인: OBV z-score
+                    if realtime_obv_z >= cls.SECOND_BUY_OBV_MIN:
+                        atr_ratio = f"{(curr_price-realtime_ema20)/atr:.2f}" if atr > 0 else "N/A"
+                        logger.info(f"[{symbol}] ✅ 2차 매수 신호 (추세안정): EMA+ATR×{atr_ratio}, ADX={realtime_adx:.1f}")
+                        return {
+                            'action': 'BUY',
+                            'price': curr_price,
+                            'reasons': ["2차 매수", "추세 안정"]
+                        }
 
             return None
 
@@ -519,7 +508,7 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
         # 조건 2: 수급 약화 — OBV z-score 감소 (2일전 대비)
         supply_weakening = row["obv_z"] < prev_prev_row["obv_z"]
 
-        if not (trend_weakening or supply_weakening):
+        if not (trend_weakening and supply_weakening):
             return None, updated_peak
 
         # 고점 대비 하락률 계산

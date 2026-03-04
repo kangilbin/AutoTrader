@@ -18,25 +18,28 @@ class BaseSingleEMAStrategy:
     # EMA 기간
     EMA_PERIOD = 20
 
-    # 매수 조건
+    # 매수 공통 조건
     OBV_Z_BUY_THRESHOLD = 1.0
     OBV_LOOKBACK = 7
     MAX_SURGE_RATIO = 0.05       # 전일 대비 최대 급등률 (5%)
 
-    # 2차 매수 조건
-    # [시나리오 A] 추세 강화형 (EMA-ATR 가드레일)
-    TREND_BUY_ATR_LOWER = 0.3        # 하한: EMA + ATR × 0.3 (추세 가속 최소선)
-    TREND_BUY_ATR_UPPER = 2.0        # 상한: EMA + ATR × 2.0 (과열 방지선)
-    TREND_BUY_OBV_THRESHOLD = 1.2    # OBV z-score 최소값
-    TREND_BUY_ADX_MIN = 25           # ADX 최소값 (강한 추세)
+    # 1차 매수 [시나리오 A] 눌림목 매집 진입
+    ACCUM_ENTRY_ATR_LOWER = -0.5     # 하한: EMA - ATR × 0.5
+    ACCUM_ENTRY_ATR_UPPER = 0.5      # 상한: EMA + ATR × 0.5
+    ACCUM_ENTRY_ADX_MIN = 18         # ADX 하한 (약한 추세 배제)
+    ACCUM_ENTRY_ADX_MAX = 30         # ADX 상한
+    ACCUM_ENTRY_OBV_MIN = 0.0        # OBV z-score 최소값
 
-    # [시나리오 B] 눌림목 반등 (EMA-ATR 가드레일)
-    PULLBACK_BUY_ATR_LOWER = -0.5    # 하한: EMA - ATR × 0.5 (조정 허용 하한)
-    PULLBACK_BUY_ATR_UPPER = 0.3     # 상한: EMA + ATR × 0.3 (조정 범위 상한)
-    PULLBACK_BUY_OBV_MIN = 0.0       # OBV z-score 최소값 (중립 이상)
-    PULLBACK_BUY_ADX_MIN = 18        # ADX 하한 (추세 유지)
-    PULLBACK_BUY_ADX_MAX = 23        # ADX 상한 (조정 구간)
-    PULLBACK_BUY_REBOUND_RATIO = 1.004  # 저점 대비 반등 비율 (0.4%)
+    # 1차 매수 [시나리오 B] 추세 추종 EMA 돌파 진입
+    BREAKOUT_ENTRY_GAP_MAX = 1.03    # EMA 괴리율 상한 (돌파 직후만)
+    BREAKOUT_ENTRY_ADX_MIN = 15      # ADX 최소값 (최소 추세 강도)
+    BREAKOUT_ENTRY_OBV_MIN = 0.0     # OBV z-score 최소값
+
+    # 2차 매수 조건 (통합: 추세 안정화 후 추가 매수)
+    SECOND_BUY_ATR_LOWER = 0.5       # 하한: EMA + ATR × 0.5 (1차 매집 범위 이탈 확인)
+    SECOND_BUY_ATR_UPPER = 2.0       # 상한: EMA + ATR × 2.0 (과열 방지)
+    SECOND_BUY_ADX_MIN = 20          # ADX 최소값 (안정적 추세)
+    SECOND_BUY_OBV_MIN = 0.5         # OBV z-score 최소값
 
     # 매도 조건
     # [1차 방어선] 장중 손절

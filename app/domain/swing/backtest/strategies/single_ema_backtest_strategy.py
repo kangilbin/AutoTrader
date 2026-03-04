@@ -4,8 +4,9 @@
 실전 매매 전략과 동일한 이원화된 하이브리드 매도 로직을 적용하여 백테스트의 정확도를 높입니다.
 
 **매수 조건 (Entry Conditions):**
-*   **2차 매수 시나리오 A (추세 강화형):** EMA + ATR × (0.3~2.0), ADX > 25, OBV z-score >= 1.2
-*   **2차 매수 시나리오 B (눌림목 반등):** EMA ± ATR × 0.5, 18 <= ADX <= 23, 저가 대비 0.4% 반등
+*   **1차 매수 시나리오 A (눌림목 매집):** EMA ± ATR × 0.5, ADX 18~30 + +DI>-DI, OBV 상승
+*   **1차 매수 시나리오 B (추세 추종 돌파):** EMA 상향 돌파, +DI>-DI, ADX>15
+*   **2차 매수 (통합):** EMA + ATR × (0.5~2.0), ADX >= 20, OBV z-score >= 0.5
 
 **매도 조건 (Exit Conditions):**
 
@@ -13,10 +14,11 @@
 *   **EMA-ATR 동적 손절:** 저가가 EMA - (ATR × 1.0) 도달
 
 **[2차 방어선] EOD 조건부 trailing stop (일일 종가 기준)**
-*   **추세 약화:** (+DI - -DI) 격차 2일 연속 감소 (14일 스무딩된 DI 방향성 균형 이동)
-*   **수급 약화:** OBV z-score 감소 (2일전 대비)
-1.  **1차 분할 매도:** BUY_COMPLETE 상태 + 고점 대비 ≥ ATR×2.0 하락 (최소 3%)
-2.  **2차 전량 매도:** SELL_PRIMARY 상태 + 고점 대비 ≥ ATR×3.0 하락 (최소 5%)
+*   **추세 약화 AND 수급 약화 동시 충족 시:**
+*   추세 약화: (+DI - -DI) 격차 2일 연속 감소
+*   수급 약화: OBV z-score 감소 (2일전 대비)
+1.  **1차 분할 매도:** BUY_COMPLETE 상태 + 고점(고가) 대비 저가 ≥ ATR×2.0 하락 (최소 3%)
+2.  **2차 전량 매도:** SELL_PRIMARY 상태 + 고점(고가) 대비 저가 ≥ ATR×3.0 하락 (최소 5%)
 """
 import pandas as pd
 from typing import Dict, List, Optional, Tuple
@@ -29,7 +31,6 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
 
     # === 백테스팅 전용 파라미터 ===
     CONSECUTIVE_REQUIRED = 1     # 백테스팅에서는 연속 확인 불필요
-    PULLBACK_BUY_OBV_MIN = 0.5   # 시나리오 B OBV 기준
 
     # === 거래 비용 ===
     COMMISSION_RATE = 0.00147
@@ -180,14 +181,10 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
 
         # 조건 2: 수급 약화 — OBV z-score 감소 (2일전 대비)
         supply_weakening = row["obv_z"] < prev_prev_row["obv_z"]
-        row_date = row["STCK_BSOP_DATE"]
-        if hasattr(row_date, "month") and row_date.month == 7 and row_date.day == 22:
-            print("hellow TEST")
-
-        if not (trend_weakening or supply_weakening):
+        if not (trend_weakening and supply_weakening):
             return None, ""
 
-        # 고점 대비 하락률 계산
+        # 고점 대비 하락률 계산 (종가 기준 — 실전과 동일)
         if peak_price <= 0:
             return None, ""
 
@@ -213,11 +210,11 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
 
         # 2차 전량 매도: SELL_PRIMARY 상태 + ATR 기반 임계값 이상 하락
         if position_status == 'SELL_PRIMARY' and drawdown_pct >= trailing_full:
-            return "SELL_ALL", f"2차 전량매도(고점대비 -{drawdown_pct:.1f}%+{weakness_str}, 기준:{trailing_full:.1f}%)"
+            return "SELL_ALL", f"2차 전량매도({weakness_str}, 고점대비 -{drawdown_pct:.1f}% 하락, 변동성 기준 -{trailing_full:.1f}% 초과)"
 
         # 1차 분할 매도: BUY_COMPLETE 상태 + ATR 기반 임계값 이상 하락
         if position_status == 'BUY_COMPLETE' and drawdown_pct >= trailing_partial:
-            return "SELL_PRIMARY", f"1차 분할매도(고점대비 -{drawdown_pct:.1f}%+{weakness_str}, 기준:{trailing_partial:.1f}%)"
+            return "SELL_PRIMARY", f"1차 분할매도({weakness_str}, 고점대비 -{drawdown_pct:.1f}% 하락, 변동성 기준 -{trailing_partial:.1f}% 초과)"
 
         return None, ""
 
@@ -233,34 +230,58 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
         )
 
     def _check_entry_conditions(self, row: pd.Series, prev_row: pd.Series = None, prev_prev_row: pd.Series = None) -> Tuple[bool, str]:
-        if any(pd.isna(row[col]) for col in ["ema_20", "obv_z", "plus_di", "minus_di", "daily_return", "adx"]):
+        """1차 매수 진입: 시나리오 A(눌림목 매집) + 시나리오 B(추세 추종 돌파)"""
+        required_cols = ["ema_20", "obv_z", "plus_di", "minus_di", "daily_return", "adx", "atr"]
+        if any(pd.isna(row[col]) for col in required_cols):
             return False, ""
 
-        # prev_row, prev_prev_row 필수 체크
         if prev_row is None or prev_prev_row is None:
             return False, ""
-        row_date = row["STCK_BSOP_DATE"]
-        if hasattr(row_date, "month") and row_date.month == 10 and row_date.day == 16:
-            print("hellow TEST")
 
-        price_near_ema = row["STCK_CLPR"] >= row["ema_20"] * 0.995
-        supply_strong = (row["obv_z"] > 0) and (row["obv_z"] > prev_prev_row["obv_z"])
-        surge_filtered = prev_row["daily_return"] <= self.MAX_SURGE_RATIO  # 전일 급등 필터 (D-1 vs D-2)
-        intraday_surge_filtered = abs(row["daily_return"]) <= self.MAX_SURGE_RATIO  # 당일 급등 필터 (D0 vs D-1)
-        trend_upward = row["plus_di"] > row["minus_di"] and row["adx"] > prev_row["adx"]
-        ema_rising = row["ema_20"] > prev_row["ema_20"]
+        current_price = row["STCK_CLPR"]
+
+        # === 공통 필터 ===
+        surge_filtered = prev_row["daily_return"] <= self.MAX_SURGE_RATIO
+        intraday_surge_filtered = abs(row["daily_return"]) <= self.MAX_SURGE_RATIO
+        if not (surge_filtered and intraday_surge_filtered):
+            return False, ""
+
         prev_day_bullish = prev_row["STCK_CLPR"] > prev_prev_row["STCK_CLPR"]
+        if not prev_day_bullish:
+            return False, ""
 
-        if all([price_near_ema, supply_strong, surge_filtered, intraday_surge_filtered, trend_upward, ema_rising, prev_day_bullish]):
-            return True, "EMA근접+거래량증가+추세강화+EMA상승+전일양봉"
+        # === 시나리오 A: 눌림목 매집 진입 ===
+        accum_lower = row["ema_20"] + (row["atr"] * self.ACCUM_ENTRY_ATR_LOWER)
+        accum_upper = row["ema_20"] + (row["atr"] * self.ACCUM_ENTRY_ATR_UPPER)
+
+        if accum_lower <= current_price <= accum_upper:
+            obv_accumulating = (row["obv_z"] > self.ACCUM_ENTRY_OBV_MIN) and (row["obv_z"] > prev_prev_row["obv_z"])
+            adx_mid_range = self.ACCUM_ENTRY_ADX_MIN <= row["adx"] <= self.ACCUM_ENTRY_ADX_MAX
+            ema_rising = row["ema_20"] > prev_prev_row["ema_20"]  # 2일 연속 상승
+            trend_direction = row["plus_di"] > row["minus_di"]  # 상승 추세 방향
+
+            if obv_accumulating and adx_mid_range and ema_rising and trend_direction:
+                return True, "눌림목매집(EMA근접+OBV상승+중간추세)"
+
+        # === 시나리오 B: 추세 추종 EMA 돌파 진입 ===
+        ema_crossover = (prev_row["STCK_CLPR"] < prev_row["ema_20"]) and (current_price > row["ema_20"])
+        within_gap_limit = current_price <= row["ema_20"] * self.BREAKOUT_ENTRY_GAP_MAX
+
+        if ema_crossover and within_gap_limit:
+            trend_direction = row["plus_di"] > row["minus_di"]
+            adx_sufficient = row["adx"] > self.BREAKOUT_ENTRY_ADX_MIN  # 최소 추세 강도
+            obv_positive = row["obv_z"] > self.BREAKOUT_ENTRY_OBV_MIN
+
+            if trend_direction and adx_sufficient and obv_positive:
+                return True, "EMA돌파(상향돌파+추세확인+거래량동반)"
+
         return False, ""
 
     def _check_second_buy_conditions(self, row: pd.Series, prev_row: pd.Series = None, prev_prev_row: pd.Series = None) -> Tuple[bool, str]:
-        """하이브리드 2차 매수: 추세 강화형 + 눌림목 반등 (EMA-ATR 가드레일)"""
+        """2차 매수: 추세 안정화 확인 후 추가 매수 (단일 조건)"""
         if any(pd.isna(row[col]) for col in ["ema_20", "obv_z", "atr", "adx", "plus_di", "minus_di"]):
             return False, ""
 
-        # prev_row, prev_prev_row 필수 체크
         if prev_row is None or prev_prev_row is None:
             return False, ""
 
@@ -270,35 +291,16 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
 
         current_price = row["STCK_CLPR"]
 
-        # === 시나리오 A: 추세 강화형 ===
-        # 가격 가드레일: EMA + ATR × (0.3 ~ 2.5)
-        trend_lower = row["ema_20"] + (row["atr"] * self.TREND_BUY_ATR_LOWER)
-        trend_upper = row["ema_20"] + (row["atr"] * self.TREND_BUY_ATR_UPPER)
+        # 가격 위치: EMA 이상 ~ EMA + ATR × 2.0 (추세 확인 + 과열 방지)
+        lower = row["ema_20"] + (row["atr"] * self.SECOND_BUY_ATR_LOWER)
+        upper = row["ema_20"] + (row["atr"] * self.SECOND_BUY_ATR_UPPER)
 
-        if trend_lower <= current_price <= trend_upper:
-            # 추세 강도: ADX > 25
-            if row["adx"] > self.TREND_BUY_ADX_MIN:
-                # 추세 방향: +DI > -DI
-                if row["plus_di"] > row["minus_di"]:
-                    # 수급 지속: OBV z-score >= 1.2
-                    if row["obv_z"] >= self.TREND_BUY_OBV_THRESHOLD:
-                        return True, "추세강화(ADX강세+OBV지속)"
-
-        # === 시나리오 B: 눌림목 반등 ===
-        # 가격 가드레일: EMA - ATR × 0.5 ~ EMA + ATR × 0.3
-        pullback_lower = row["ema_20"] + (row["atr"] * self.PULLBACK_BUY_ATR_LOWER)  # EMA - ATR × 0.5
-        pullback_upper = row["ema_20"] + (row["atr"] * self.PULLBACK_BUY_ATR_UPPER)  # EMA + ATR × 0.3
-
-        if pullback_lower <= current_price <= pullback_upper:
-            # 추세 강도: 18 <= ADX <= 23 (중간 추세, 조정 구간)
-            if self.PULLBACK_BUY_ADX_MIN <= row["adx"] <= self.PULLBACK_BUY_ADX_MAX:
-                # 추세 방향: +DI > -DI
-                if row["plus_di"] > row["minus_di"]:
-                    # 수급 유지: OBV z-score > 0 (중립 이상)
-                    if row["obv_z"] > self.PULLBACK_BUY_OBV_MIN:
-                        # 반등 신호: 당일 저가 대비 0.4% 이상 회복
-                        if current_price >= row["STCK_LWPR"] * self.PULLBACK_BUY_REBOUND_RATIO:
-                            return True, "눌림목반등(조정구간+저가회복)"
+        if lower <= current_price <= upper:
+            # 추세 안정: ADX >= 20 + 상승 방향
+            if row["adx"] >= self.SECOND_BUY_ADX_MIN and row["plus_di"] > row["minus_di"]:
+                # 수급 확인: OBV z-score
+                if row["obv_z"] >= self.SECOND_BUY_OBV_MIN:
+                    return True, "추세안정(EMA상단+ADX확인+OBV양전)"
 
         return False, ""
         
