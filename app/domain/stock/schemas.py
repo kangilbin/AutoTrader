@@ -11,7 +11,7 @@ class StockResponse(BaseModel):
     """종목 정보 응답"""
     ST_CODE: str
     SD_CODE: Optional[str] = None
-    NAME: Optional[str] = None
+    ST_NM: Optional[str] = None
     DATA_YN: Optional[str] = None
     DEL_YN: Optional[str] = None
     REG_DT: Optional[datetime] = None
