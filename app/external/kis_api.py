@@ -454,7 +454,7 @@ async def get_target_price(code: str):
     query = {
         "FID_COND_MRKT_DIV_CODE": "J",
         "FID_INPUT_ISCD": code,
-        "FID_ORG_ADJ_PRC": "1",
+        "FID_ORG_ADJ_PRC": "0",
         "FID_PERIOD_DIV_CODE": "D"
     }
     response = await fetch("POST", api_url, "KIS", json=query, headers=headers)
