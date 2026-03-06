@@ -1,6 +1,8 @@
 """
 Swing Service - 비즈니스 로직 및 트랜잭션 관리
 """
+import asyncio
+
 from dateutil.relativedelta import relativedelta
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import SQLAlchemyError, IntegrityError
@@ -16,6 +18,8 @@ import pandas as pd
 from app.domain.swing.repository import SwingRepository
 from app.domain.swing.entity import SwingTrade, EmaOption
 from app.domain.swing.schemas import SwingCreateRequest, SwingResponse
+from app.domain.stock.service import StockService
+from app.domain.stock.stock_data_batch import fetch_and_store_3_years_data
 from app.exceptions import DatabaseError, NotFoundError, DuplicateError
 from app.external.kis_api import get_stock_balance
 from app.common.redis import Redis
@@ -58,6 +62,16 @@ class SwingService:
                 await self.repo.save_ema_option(ema)
 
             await self.db.commit()
+
+            # 데이터 적재 여부 확인 후 백그라운드 실행
+            stock_service = StockService(self.db)
+            stock_info = await stock_service.get_stock_info(request.ST_CODE)
+
+            if stock_info.get("DATA_YN") == 'N':
+                asyncio.create_task(
+                    fetch_and_store_3_years_data(user_id, request.ST_CODE, stock_info)
+                )
+                logger.info(f"[{request.ST_CODE}] 데이터 적재 백그라운드 태스크 시작")
 
             # 등록된 종목의 EMA20 캐싱
             await self.cache_single_ema(request.ST_CODE)
@@ -283,8 +297,6 @@ class SwingService:
         Returns:
             캐싱 성공 여부
         """
-        from app.domain.stock.service import StockService
-
         try:
             stock_service = StockService(self.db)
             redis_client = await Redis.get_connection()
@@ -338,8 +350,6 @@ class SwingService:
         Returns:
             워밍업 결과 (성공/실패 건수)
         """
-        from app.domain.stock.service import StockService
-
         logger.info("=== EMA 캐시 워밍업 시작 ===")
 
         stock_service = StockService(self.db)
