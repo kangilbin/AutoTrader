@@ -281,8 +281,6 @@ class SwingService:
                 return False
 
             yesterday = indicators.iloc[-1]
-            day_before = indicators.iloc[-2]  # 전전일
-
             required_cols = ['ema_20', 'adx', 'plus_di', 'minus_di', 'atr', 'obv', 'obv_z']
             if not all(col in yesterday.index for col in required_cols):
                 logger.warning(f"[{st_code}] 필수 지표 누락")
@@ -302,9 +300,8 @@ class SwingService:
             minus_dm14 = (float(yesterday['minus_di']) * atr) / 100
 
             # 평탄화된 캐시 구조 (cache_single_indicators와 동일)
-            ema20 = float(yesterday['ema_20'])
             indicators_data = {
-                "ema20": ema20,
+                "ema20": float(yesterday['ema_20']),
                 "adx": float(yesterday['adx']),
                 "plus_dm14": plus_dm14,      # 중간값 저장 (실시간 계산용)
                 "minus_dm14": minus_dm14,    # 중간값 저장 (실시간 계산용)
@@ -313,14 +310,11 @@ class SwingService:
                 "obv_z": float(yesterday['obv_z']),
                 "obv_recent_diffs": recent_6_diffs,
                 "close": yesterday['STCK_CLPR'],
+                "open": yesterday['STCK_OPRC'],   # 어제 시가
                 "high": yesterday['STCK_HGPR'],  # 어제 고가
                 "low": yesterday['STCK_LWPR'],   # 어제 저가
                 "date": yesterday['STCK_BSOP_DATE'],
                 "avg_daily_amount": avg_daily_amount,  # 일평균 거래대금 (체결 분할용)
-                "prev_close": float(day_before['STCK_CLPR']),  # 전전일 종가
-                "prev_obv_z": float(day_before['obv_z']),      # 전전일 OBV z-score
-                "prev_adx": float(day_before['adx']),          # 전전일 ADX (추세 강화 판단용)
-                "prev_ema20": float(day_before['ema_20']),     # 전전일 EMA20 (EMA 상승 판단용)
             }
 
             now = datetime.now()
@@ -407,9 +401,8 @@ class SwingService:
                         fail_count += 1
                         continue
 
-                    # 어제/전전일 데이터 추출 (실전 거래에서 사용할 기준)
+                    # 어제 데이터 추출 (실전 거래에서 사용할 기준)
                     yesterday = indicators.iloc[-1]
-                    day_before = indicators.iloc[-2]  # 전전일
 
                     # 필수 지표 존재 여부 확인
                     required_cols = ['ema_20', 'adx', 'plus_di', 'minus_di', 'atr', 'obv', 'obv_z']
@@ -445,14 +438,11 @@ class SwingService:
                         "obv_z": float(yesterday['obv_z']),
                         "obv_recent_diffs": [float(x) for x in recent_6_diffs],
                         "close": float(yesterday['STCK_CLPR']),
+                        "open": float(yesterday['STCK_OPRC']),   # 어제 시가
                         "high": float(yesterday['STCK_HGPR']),  # 어제 고가
                         "low": float(yesterday['STCK_LWPR']),   # 어제 저가
                         "date": yesterday['STCK_BSOP_DATE'],
                         "avg_daily_amount": avg_daily_amount,   # 일평균 거래대금 (체결 분할용)
-                        "prev_close": float(day_before['STCK_CLPR']),  # 전전일 종가
-                        "prev_obv_z": float(day_before['obv_z']),      # 전전일 OBV z-score
-                        "prev_adx": float(day_before['adx']),          # 전전일 ADX
-                        "prev_ema20": float(day_before['ema_20']),     # 전전일 EMA20
                     }
 
                     now = datetime.now()
