@@ -53,9 +53,10 @@ async def get_swing(
 @router.delete("/{swing_id}")
 async def delete_swing(
     swing_id: int,
+    swing_type: str,
     service: Annotated[SwingService, Depends(get_swing_service)],
     user_id: Annotated[str, Depends(get_current_user)]
 ):
     """스윙 전략 삭제"""
-    await service.delete_swing(swing_id)
+    await service.delete_swing(swing_id, swing_type)
     return {"message": "스윙 삭제 완료"}

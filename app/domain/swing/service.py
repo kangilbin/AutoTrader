@@ -106,10 +106,13 @@ class SwingService:
             logger.error(f"스윙 수정 실패: {e}", exc_info=True)
             raise DatabaseError("스윙 수정에 실패했습니다")
 
-    async def delete_swing(self, swing_id: int) -> bool:
+    async def delete_swing(self, swing_id: int, swing_type: str) -> bool:
         """스윙 삭제"""
         try:
             result = await self.repo.delete(swing_id)
+
+            if swing_type == 'A':
+                await self.repo.delete_ema_option(swing_id)
             await self.db.commit()
             if not result:
                 raise NotFoundError("스윙 전략", swing_id)

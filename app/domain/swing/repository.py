@@ -86,6 +86,14 @@ class SwingRepository:
         await self.db.refresh(db_ema)
         return db_ema
 
+    async def delete_ema_option(self, swing_id: int) -> bool:
+        """스이평선 삭제 (flush만 수행)"""
+        query = delete(EmaOptModel).filter(EmaOptModel.SWING_ID == swing_id)
+        result = await self.db.execute(query)
+        await self.db.flush()
+        return result.rowcount > 0
+
+
     async def update(self, swing_id: int, data: dict) -> Optional[SwingModel]:
         """스윙 수정 (flush만 수행)"""
         query = (
