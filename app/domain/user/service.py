@@ -29,7 +29,7 @@ class UserService:
 
     async def refresh_token(self, refresh_token: str) -> str:
         """토큰 갱신"""
-        token_data = verify_token(refresh_token)
+        token_data = verify_token(refresh_token, expected_type="refresh")
         if token_data is None:
             raise AuthenticationError("유효하지 않은 리프레시 토큰입니다")
 
