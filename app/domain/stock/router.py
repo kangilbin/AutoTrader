@@ -32,8 +32,9 @@ async def search_stock(
 @router.get("/price")
 async def get_asking_price(
     st_code: str,
+    db: Annotated[AsyncSession, Depends(get_db)],
     user_id: Annotated[str, Depends(get_current_user)]
 ):
     """주식 호가 조회"""
-    response = await get_inquire_asking_price(user_id, st_code)
+    response = await get_inquire_asking_price(user_id, st_code, db)
     return success_response("주식 호가 조회", response)

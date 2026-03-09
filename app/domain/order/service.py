@@ -2,6 +2,7 @@
 Order Service - 비즈니스 로직
 """
 import logging
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.order.entity import Order, ModifyOrder
 from app.domain.order.schemas import OrderCreateRequest, OrderModifyRequest
@@ -12,9 +13,8 @@ logger = logging.getLogger(__name__)
 class OrderService:
     """주문 서비스"""
 
-    def __init__(self):
-        # 순환 참조 방지를 위해 지연 임포트
-        pass
+    def __init__(self, db: AsyncSession):
+        self.db = db
 
     async def place_order(self, user_id: str, request: OrderCreateRequest) -> dict:
         """
@@ -27,7 +27,6 @@ class OrderService:
         Returns:
             주문 결과
         """
-        # 순환 참조 방지를 위해 지연 임포트
         from app.external.kis_api import place_order_api
 
         # 도메인 엔티티 생성 및 검증
@@ -38,7 +37,7 @@ class OrderService:
         )
 
         # KIS API 호출
-        result = await place_order_api(user_id, order)
+        result = await place_order_api(user_id, order, self.db)
         return result
 
     async def get_cancelable_orders(
@@ -60,7 +59,7 @@ class OrderService:
         """
         from app.external.kis_api import get_cancelable_orders_api
 
-        return await get_cancelable_orders_api(user_id, fk100, nk100)
+        return await get_cancelable_orders_api(user_id, self.db, fk100, nk100)
 
     async def modify_or_cancel_order(
         self,
@@ -91,5 +90,5 @@ class OrderService:
         )
 
         # KIS API 호출
-        result = await modify_or_cancel_order_api(user_id, modify_order)
+        result = await modify_or_cancel_order_api(user_id, modify_order, self.db)
         return result

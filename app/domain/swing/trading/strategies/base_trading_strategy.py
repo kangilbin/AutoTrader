@@ -309,7 +309,8 @@ class TradingStrategy(ABC):
                         current_price=current_price,
                         target_amount=target_amount,
                         avg_daily_amount=avg_daily_amount,
-                        signal_on_complete=1
+                        signal_on_complete=1,
+                        db=db
                     )
 
                     if order_result.get("success"):
@@ -368,7 +369,8 @@ class TradingStrategy(ABC):
                         # 손절은 전량 매도
                         order_result = await SwingOrderExecutor.execute_second_sell(
                             user_id=user_id,
-                            st_code=st_code
+                            st_code=st_code,
+                            db=db
                         )
 
                         if order_result.get("success"):
@@ -412,7 +414,8 @@ class TradingStrategy(ABC):
                                 current_price=current_price,
                                 target_qty=sell_qty,
                                 avg_daily_amount=avg_daily_amount,
-                                signal_on_complete=3
+                                signal_on_complete=3,
+                                db=db
                             )
 
                             if order_result.get("success"):
@@ -450,7 +453,8 @@ class TradingStrategy(ABC):
                                 current_price=current_price,
                                 target_qty=hold_qty,
                                 avg_daily_amount=avg_daily_amount,
-                                signal_on_complete=0
+                                signal_on_complete=0,
+                                db=db
                             )
 
                             if order_result.get("success"):
@@ -502,7 +506,8 @@ class TradingStrategy(ABC):
                                     current_price=current_price,
                                     target_amount=second_target_amount,
                                     avg_daily_amount=avg_daily_amount,
-                                    signal_on_complete=2
+                                    signal_on_complete=2,
+                                    db=db
                                 )
 
                                 if order_result.get("success"):
@@ -563,7 +568,8 @@ class TradingStrategy(ABC):
                         # 손절은 전량 매도
                         order_result = await SwingOrderExecutor.execute_second_sell(
                             user_id=user_id,
-                            st_code=st_code
+                            st_code=st_code,
+                            db=db
                         )
 
                         if order_result.get("success"):
@@ -603,7 +609,8 @@ class TradingStrategy(ABC):
                                 current_price=current_price,
                                 target_qty=sell_qty,
                                 avg_daily_amount=avg_daily_amount,
-                                signal_on_complete=3
+                                signal_on_complete=3,
+                                db=db
                             )
 
                             if order_result.get("success"):
@@ -641,7 +648,8 @@ class TradingStrategy(ABC):
                                 current_price=current_price,
                                 target_qty=hold_qty,
                                 avg_daily_amount=avg_daily_amount,
-                                signal_on_complete=0
+                                signal_on_complete=0,
+                                db=db
                             )
 
                             if order_result.get("success"):
@@ -695,7 +703,8 @@ class TradingStrategy(ABC):
                     # 손절은 전량 매도
                     order_result = await SwingOrderExecutor.execute_second_sell(
                         user_id=user_id,
-                        st_code=st_code
+                        st_code=st_code,
+                        db=db
                     )
 
                     if order_result.get("success"):
@@ -745,7 +754,8 @@ class TradingStrategy(ABC):
                             current_price=current_price,
                             target_amount=reentry_target_amount,
                             avg_daily_amount=avg_daily_amount,
-                            signal_on_complete=1
+                            signal_on_complete=1,
+                            db=db
                         )
 
                         if order_result.get("success"):
@@ -801,7 +811,8 @@ class TradingStrategy(ABC):
                                 current_price=current_price,
                                 target_qty=hold_qty,
                                 avg_daily_amount=avg_daily_amount,
-                                signal_on_complete=0
+                                signal_on_complete=0,
+                                db=db
                             )
 
                             if order_result.get("success"):

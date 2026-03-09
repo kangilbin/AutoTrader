@@ -57,9 +57,12 @@ class AuthService:
         if not auth_data:
             raise NotFoundError("인증키", auth_id)
 
-        # Redis에 계좌번호 저장
+        # Redis에 계좌번호, 인증키 ID 저장
         redis = await get_redis()
-        await redis.hset(user_id, "ACCOUNT_NO", account_no)
+        await redis.hset(user_id, mapping={
+            "ACCOUNT_NO": account_no,
+            "AUTH_ID": str(auth_id),
+        })
 
         # OAuth 토큰 발급
         await oauth_token(
