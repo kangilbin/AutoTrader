@@ -106,6 +106,7 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
                             buy_count = 1
                             position_status = 'BUY_COMPLETE'
                             peak_price = row["STCK_CLPR"]
+                            continue
 
             # === 2단계: 포지션 미보유 또는 추가매수 가능 시 매수 조건 체크 ===
             can_buy = position_status is None or (position_status == 'BUY_COMPLETE' and buy_count < 2)
@@ -239,6 +240,10 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
             return False, ""
 
         current_price = row["STCK_CLPR"]
+
+        row_date = row["STCK_BSOP_DATE"]
+        if hasattr(row_date, "month") and row_date.month == 6 and row_date.day == 2:
+            print("hellow TEST")
 
         # === 공통 필터 ===
         surge_filtered = abs(row["daily_return"]) <= self.MAX_SURGE_RATIO
