@@ -5,7 +5,7 @@ import json
 import logging
 from typing import Dict, Optional
 from decimal import Decimal
-from datetime import datetime, timedelta, date
+from datetime import datetime, timedelta
 from .base_trading_strategy import TradingStrategy
 from .base_single_ema import BaseSingleEMAStrategy
 from app.domain.swing.indicators import TechnicalIndicators
@@ -76,6 +76,10 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
                 'low': data['low'],
                 'date': data['date'],
                 'avg_daily_amount': data['avg_daily_amount'],
+                # 전전일 DI (2차 방어선 게이트용)
+                'prev_plus_di': data.get('prev_plus_di'),
+                'prev_minus_di': data.get('prev_minus_di'),
+                'prev_obv_z': data.get('prev_obv_z'),
             }
         except Exception as e:
             logger.warning(f"[{symbol}] 캐시 조회 실패: {e}")
@@ -460,90 +464,100 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
         return {"action": "HOLD", "reasons": []}
 
     @classmethod
-    async def update_eod_signals_to_db(
+    async def check_trailing_stop_signal(
         cls,
-        row,
-        prev_row,
-        prev_prev_row,
-        peak_price: float,
-        signal: int
-    ):
+        symbol: str,
+        current_price: Decimal,
+        peak_price: int,
+        signal: int,
+        cached_indicators: Dict
+    ) -> Optional[Dict]:
         """
-        EOD trailing stop 체크 + PEAK_PRICE 업데이트
+        [2차 방어선] 장중 trailing stop 신호 체크
+
+        게이트 조건 (확정값 + 실시간값):
+          - DI 격차 2일 연속 감소: today < prev < prev_prev
+          - OBV z-score 감소: today < prev
+
+        하락률 판단 (현재가 기준):
+          - SIGNAL 1/2: 고점 대비 ATR×2.0 이상 → SELL_PRIMARY (1차 분할)
+          - SIGNAL 3: 고점 대비 ATR×3.0 이상 → SELL_ALL (2차 전량)
 
         Args:
-            row: 오늘 지표
-            prev_row: 어제 지표
-            prev_prev_row: 그저께 지표
-            peak_price: 현재 PEAK_PRICE
+            symbol: 종목코드
+            current_price: 현재가
+            peak_price: PEAK_PRICE (DB)
             signal: 현재 SIGNAL (1, 2, 3)
+            cached_indicators: 실시간 증분 계산 완료된 지표
 
         Returns:
-            (eod_signals_json, updated_peak_price)
+            {"action": "SELL_PRIMARY"|"SELL_ALL", "reasons": [...]} or None
         """
-        close = float(row['STCK_CLPR'])
+        curr_price = float(current_price)
 
-        # 고점 업데이트
-        updated_peak = max(peak_price or 0, close)
+        if peak_price <= 0:
+            return None
 
-        # NaN 체크
-        required_cols = ["minus_di", "plus_di", "obv_z"]
-        if any(pd.isna(row.get(col)) for col in required_cols):
-            return None, updated_peak
-        if any(pd.isna(prev_row.get(col)) for col in ["minus_di", "plus_di", "obv_z"]):
-            return None, updated_peak
-        if any(pd.isna(prev_prev_row.get(col)) for col in ["minus_di", "plus_di"]):
-            return None, updated_peak
+        # === 실시간 지표 ===
+        realtime_plus_di = cached_indicators.get('realtime_plus_di')
+        realtime_minus_di = cached_indicators.get('realtime_minus_di')
+        realtime_obv_z = cached_indicators.get('realtime_obv_z')
+        realtime_atr = cached_indicators.get('realtime_atr', 0)
 
-        # 조건 1: 추세 약화 — (+DI - -DI) 격차 2일 연속 감소
-        di_spread_today = row["plus_di"] - row["minus_di"]
-        di_spread_prev = prev_row["plus_di"] - prev_row["minus_di"]
-        di_spread_prev2 = prev_prev_row["plus_di"] - prev_prev_row["minus_di"]
+        # === 전일 확정값 (캐시) ===
+        # plus_dm14/minus_dm14와 atr에서 DI 역산
+        yesterday_atr = cached_indicators.get('atr', 0)
+        if yesterday_atr > 0:
+            yesterday_plus_di = (cached_indicators.get('plus_dm14', 0) / yesterday_atr) * 100
+            yesterday_minus_di = (cached_indicators.get('minus_dm14', 0) / yesterday_atr) * 100
+        else:
+            return None
+        yesterday_obv_z = cached_indicators.get('obv_z')
+
+        # === 전전일 확정값 (캐시) ===
+        prev_prev_plus_di = cached_indicators.get('prev_plus_di')
+        prev_prev_minus_di = cached_indicators.get('prev_minus_di')
+
+        # NaN/None 체크
+        required = [realtime_plus_di, realtime_minus_di, realtime_obv_z,
+                    yesterday_obv_z, prev_prev_plus_di, prev_prev_minus_di]
+        if any(v is None for v in required):
+            return None
+
+        # === 게이트 조건 ===
+        di_spread_today = realtime_plus_di - realtime_minus_di
+        di_spread_prev = yesterday_plus_di - yesterday_minus_di
+        di_spread_prev2 = prev_prev_plus_di - prev_prev_minus_di
+
         trend_weakening = di_spread_today < di_spread_prev < di_spread_prev2
-
-        # 조건 2: 수급 약화 — OBV z-score 감소 (전일 대비)
-        supply_weakening = row["obv_z"] < prev_row["obv_z"]
+        supply_weakening = realtime_obv_z < yesterday_obv_z
 
         if not (trend_weakening and supply_weakening):
-            return None, updated_peak
+            return None
 
-        # 고점 대비 하락률 계산
-        if updated_peak <= 0:
-            return None, updated_peak
-        drawdown_pct = (updated_peak - close) / updated_peak * 100
+        # === 하락률 계산 ===
+        drawdown_pct = (peak_price - curr_price) / peak_price * 100
 
-        # ATR 기반 동적 trailing stop 임계값 계산
-        atr = float(row.get('atr', 0))
-        if atr > 0 and updated_peak > 0:
-            atr_pct = (atr / updated_peak) * 100  # ATR을 고점 대비 비율(%)로 변환
+        # ATR 기반 동적 임계값
+        if realtime_atr > 0 and peak_price > 0:
+            atr_pct = (realtime_atr / peak_price) * 100
             trailing_partial = max(atr_pct * cls.TRAILING_STOP_ATR_PARTIAL_MULT, cls.TRAILING_STOP_PARTIAL_MIN)
             trailing_full = max(atr_pct * cls.TRAILING_STOP_ATR_FULL_MULT, cls.TRAILING_STOP_FULL_MIN)
         else:
-            # ATR 무효 시 고정값 폴백
             trailing_partial = cls.TRAILING_STOP_PARTIAL
             trailing_full = cls.TRAILING_STOP_FULL
 
-        # 약화 사유 동적 생성
-        weakness_reasons = []
-        if trend_weakening:
-            weakness_reasons.append("추세약화")
-        if supply_weakening:
-            weakness_reasons.append("수급약화")
-        weakness_str = "+".join(weakness_reasons)
-
-        # 매도 결정
-        action = None
-        reason = ""
+        # === 매도 결정 ===
+        weakness_str = "추세약화+수급약화"
 
         if signal == 3 and drawdown_pct >= trailing_full:
-            action = "SELL_ALL"
             reason = f"2차 전량매도(고점대비 -{drawdown_pct:.1f}%+{weakness_str}, 기준:{trailing_full:.1f}%)"
-        elif signal in (1, 2) and drawdown_pct >= trailing_partial:
-            action = "SELL_PRIMARY"
+            logger.warning(f"[{symbol}] 2차 방어선 발동: {reason}")
+            return {"action": "SELL_ALL", "reasons": [reason]}
+
+        if signal in (1, 2) and drawdown_pct >= trailing_partial:
             reason = f"1차 분할매도(고점대비 -{drawdown_pct:.1f}%+{weakness_str}, 기준:{trailing_partial:.1f}%)"
+            logger.warning(f"[{symbol}] 2차 방어선 발동: {reason}")
+            return {"action": "SELL_PRIMARY", "reasons": [reason]}
 
-        if action:
-            eod_json = json.dumps({"action": action, "reason": reason, "date": date.today().isoformat()})
-            return eod_json, updated_peak
-
-        return None, updated_peak
+        return None

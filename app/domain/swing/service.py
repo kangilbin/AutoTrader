@@ -426,6 +426,9 @@ class SwingService:
                     plus_dm14 = (float(yesterday['plus_di']) * atr) / 100
                     minus_dm14 = (float(yesterday['minus_di']) * atr) / 100
 
+                    # 전전일 데이터 추출 (2차 방어선 게이트 조건용)
+                    prev_prev = indicators.iloc[-2]
+
                     # 평탄화된 캐시 구조 (cache_single_indicators와 동일)
                     ema20 = float(yesterday['ema_20'])
                     indicators_data = {
@@ -443,6 +446,10 @@ class SwingService:
                         "low": float(yesterday['STCK_LWPR']),   # 어제 저가
                         "date": yesterday['STCK_BSOP_DATE'],
                         "avg_daily_amount": avg_daily_amount,   # 일평균 거래대금 (체결 분할용)
+                        # 전전일 DI (2차 방어선 게이트: DI 격차 2일 연속 감소 판단)
+                        "prev_plus_di": float(prev_prev['plus_di']) if not pd.isna(prev_prev['plus_di']) else None,
+                        "prev_minus_di": float(prev_prev['minus_di']) if not pd.isna(prev_prev['minus_di']) else None,
+                        "prev_obv_z": float(prev_prev['obv_z']) if not pd.isna(prev_prev['obv_z']) else None,
                     }
 
                     now = datetime.now()
