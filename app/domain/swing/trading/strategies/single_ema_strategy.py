@@ -5,7 +5,7 @@ import json
 import logging
 from typing import Dict, Optional
 from decimal import Decimal
-from datetime import datetime, timedelta
+from datetime import datetime, date
 from .base_trading_strategy import TradingStrategy
 from .base_single_ema import BaseSingleEMAStrategy
 from app.domain.swing.indicators import TechnicalIndicators
@@ -493,11 +493,11 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
         Returns:
             {"action": "SELL_PRIMARY"|"SELL_ALL", "reasons": [...]} or None
         """
-        curr_price = float(current_price)
+        curr_price = int(current_price)
 
         if peak_price <= 0:
             return None
-
+        updated_peak = max(peak_price or 0, curr_price)
         # === 실시간 지표 ===
         realtime_plus_di = cached_indicators.get('realtime_plus_di')
         realtime_minus_di = cached_indicators.get('realtime_minus_di')
@@ -530,34 +530,47 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
         di_spread_prev2 = prev_prev_plus_di - prev_prev_minus_di
 
         trend_weakening = di_spread_today < di_spread_prev < di_spread_prev2
-        supply_weakening = realtime_obv_z < yesterday_obv_z
+
+        # 조건 2: 수급 약화 — OBV z-score 임계값 이하
+        supply_weakening = round(realtime_obv_z,2) < cls.SUPPLY_WEAKNESS_OBV_Z
 
         if not (trend_weakening and supply_weakening):
             return None
 
-        # === 하락률 계산 ===
-        drawdown_pct = (peak_price - curr_price) / peak_price * 100
+        # ATR Trailing Stop 손절가 계산
+        if updated_peak <= 0:
+            return None
 
-        # ATR 기반 동적 임계값
-        if realtime_atr > 0 and peak_price > 0:
-            atr_pct = (realtime_atr / peak_price) * 100
-            trailing_partial = max(atr_pct * cls.TRAILING_STOP_ATR_PARTIAL_MULT, cls.TRAILING_STOP_PARTIAL_MIN)
-            trailing_full = max(atr_pct * cls.TRAILING_STOP_ATR_FULL_MULT, cls.TRAILING_STOP_FULL_MIN)
+        atr = round(realtime_atr, 2)
+        if atr > 0:
+            stop_partial = updated_peak - atr * cls.TRAILING_STOP_ATR_PARTIAL_MULT
+            stop_full = updated_peak - atr * cls.TRAILING_STOP_ATR_FULL_MULT
         else:
-            trailing_partial = cls.TRAILING_STOP_PARTIAL
-            trailing_full = cls.TRAILING_STOP_FULL
+            stop_partial = updated_peak * (1 - cls.TRAILING_STOP_PARTIAL / 100)
+            stop_full = updated_peak * (1 - cls.TRAILING_STOP_FULL / 100)
 
-        # === 매도 결정 ===
-        weakness_str = "추세약화+수급약화"
+        # 약화 사유 동적 생성
+        weakness_reasons = []
+        if trend_weakening:
+            weakness_reasons.append("추세약화")
+        if supply_weakening:
+            weakness_reasons.append("수급약화")
+        weakness_str = "+".join(weakness_reasons)
 
-        if signal == 3 and drawdown_pct >= trailing_full:
-            reason = f"2차 전량매도(고점대비 -{drawdown_pct:.1f}%+{weakness_str}, 기준:{trailing_full:.1f}%)"
-            logger.warning(f"[{symbol}] 2차 방어선 발동: {reason}")
-            return {"action": "SELL_ALL", "reasons": [reason]}
+        drawdown_pct = round((updated_peak - curr_price) / updated_peak * 100, 1)
 
-        if signal in (1, 2) and drawdown_pct >= trailing_partial:
-            reason = f"1차 분할매도(고점대비 -{drawdown_pct:.1f}%+{weakness_str}, 기준:{trailing_partial:.1f}%)"
-            logger.warning(f"[{symbol}] 2차 방어선 발동: {reason}")
-            return {"action": "SELL_PRIMARY", "reasons": [reason]}
+        # 매도 결정
+        action = None
+        reason = ""
+
+        if signal == 3 and curr_price <= stop_full:
+            action = "SELL_ALL"
+            reason = f"2차 전량매도({weakness_str}, 고점대비 -{drawdown_pct}%, 손절가 {stop_full:.0f}원)"
+        elif signal in (1, 2) and curr_price <= stop_partial:
+            action = "SELL_PRIMARY"
+            reason = f"1차 분할매도({weakness_str}, 고점대비 -{drawdown_pct}%, 손절가 {stop_partial:.0f}원)"
+
+        if action:
+            return {"action": action, "reasons": [reason]}
 
         return None
