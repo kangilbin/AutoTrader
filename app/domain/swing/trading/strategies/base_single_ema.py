@@ -51,8 +51,6 @@ class BaseSingleEMAStrategy:
     # [2차 방어선] 조건부 trailing stop (ATR 기반 동적 임계값)
     TRAILING_STOP_ATR_PARTIAL_MULT = 2.0  # ATR × 2.0 하락 시 1차 분할 매도
     TRAILING_STOP_ATR_FULL_MULT = 3.0     # ATR × 3.0 하락 시 2차 전량 매도
-    TRAILING_STOP_PARTIAL_MIN = 3.0       # 최소 하한 (ATR 기반이 너무 작을 때 안전장치)
-    TRAILING_STOP_FULL_MIN = 5.0          # 최소 하한 (ATR 기반이 너무 작을 때 안전장치)
     # 폴백 (ATR 무효 시 고정값)
     TRAILING_STOP_PARTIAL = 5.0
     TRAILING_STOP_FULL = 8.0

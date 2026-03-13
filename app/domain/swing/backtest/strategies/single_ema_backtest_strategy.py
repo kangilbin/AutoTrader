@@ -16,9 +16,9 @@
 **[2차 방어선] EOD 조건부 trailing stop (일일 종가 기준)**
 *   **추세 약화 AND 수급 약화 동시 충족 시:**
 *   추세 약화: (+DI - -DI) 격차 2일 연속 감소
-*   수급 약화: OBV z-score 감소 (전일 대비)
-1.  **1차 분할 매도:** BUY_COMPLETE 상태 + 고점(고가) 대비 저가 ≥ ATR×2.0 하락 (최소 3%)
-2.  **2차 전량 매도:** SELL_PRIMARY 상태 + 고점(고가) 대비 저가 ≥ ATR×3.0 하락 (최소 5%)
+*   수급 약화: OBV z-score < -0.65 (SUPPLY_WEAKNESS_OBV_Z 임계값)
+1.  **1차 분할 매도:** BUY_COMPLETE 상태 + 저가 ≤ 고점 - ATR×2.0
+2.  **2차 전량 매도:** SELL_PRIMARY 상태 + 저가 ≤ 고점 - ATR×3.0
 """
 import pandas as pd
 from typing import Dict, List, Optional, Tuple
