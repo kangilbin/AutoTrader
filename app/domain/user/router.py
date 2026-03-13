@@ -1,16 +1,15 @@
 """
 User API Router
 """
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Annotated
 
 from app.common.database import get_db
 from app.common.dependencies import get_current_user
 from app.core.response import success_response
-from app.exceptions import AuthenticationError
 from app.domain.user.service import UserService
-from app.domain.user.schemas import UserUpdateRequest
+from app.domain.user.schemas import UserUpdateRequest, RefreshTokenRequest
 from app.common.redis import get_redis
 
 router = APIRouter(prefix="/users", tags=["Users"])
@@ -23,16 +22,11 @@ def get_user_service(db: AsyncSession = Depends(get_db)) -> UserService:
 
 @router.post("/refresh")
 async def refresh(
-    request: Request,
+    request: RefreshTokenRequest,
     service: Annotated[UserService, Depends(get_user_service)]
 ):
     """토큰 갱신"""
-    body = await request.json()
-    refresh_token = body.get("refresh_token")
-    if not refresh_token:
-        raise AuthenticationError("refresh_token이 필요합니다")
-
-    access_token = await service.refresh_token(refresh_token)
+    access_token = await service.refresh_token(request.refresh_token)
     return success_response("토큰 재발급", {"access_token": access_token})
 
 @router.patch("/profile")

@@ -9,9 +9,13 @@ from decimal import Decimal
 import json
 import logging
 
+import pandas as pd
+import talib as ta
+from dateutil.relativedelta import relativedelta
+
 from app.domain.trade_history.repository import TradeHistoryRepository
 from app.domain.trade_history.schemas import TradeHistoryResponse
-from app.exceptions import DatabaseError, NotFoundError
+from app.exceptions import DatabaseError, NotFoundError, PermissionDeniedError
 
 logger = logging.getLogger(__name__)
 
@@ -135,3 +139,80 @@ class TradeHistoryService:
         except SQLAlchemyError as e:
             logger.error(f"최근 매도 내역 조회 실패: {e}", exc_info=True)
             raise DatabaseError("최근 매도 내역 조회에 실패했습니다")
+
+    async def get_trade_history_with_chart(
+        self, user_id: str, swing_id: int, year: int
+    ) -> dict:
+        """
+        매매 내역 + 주가 차트 + EMA20 데이터 통합 조회
+
+        Args:
+            user_id: 사용자 ID (소유권 검증)
+            swing_id: 스윙 ID
+            year: 조회 연도
+
+        Returns:
+            TradeHistoryWithChartResponse 구조의 dict
+        """
+        from app.domain.stock.service import StockService
+
+        try:
+            # 1. 스윙 조회 + 소유권 검증
+            swing = await self.repo.find_swing_with_ownership(swing_id, user_id)
+
+            if not swing:
+                raise NotFoundError("스윙 전략", swing_id)
+
+            # 3. 연도별 매매 내역 조회
+            trades = await self.repo.find_by_swing_id_and_year(swing_id, year)
+            trades_data = [
+                TradeHistoryResponse.model_validate(t).model_dump() for t in trades
+            ]
+
+            # 4. 주가 데이터 조회 (EMA20 워밍업을 위해 2개월 전부터)
+            start_date = datetime(year, 1, 1) - relativedelta(months=2)
+            stock_service = StockService(self.db)
+            price_days = await stock_service.get_stock_history(
+                swing.MRKT_CODE, swing.ST_CODE, start_date
+            )
+
+            price_history = []
+            ema20_history = []
+
+            if price_days:
+                prices_df = pd.DataFrame(price_days)
+
+                # EMA20 계산 (백테스팅과 동일 패턴)
+                close_arr = pd.to_numeric(prices_df["STCK_CLPR"], errors="coerce").values
+                prices_df["ema20"] = ta.EMA(close_arr, timeperiod=20)
+
+                # 해당 연도만 필터링
+                year_start = f"{year}0101"
+                year_end = f"{year}1231"
+                year_mask = (prices_df["STCK_BSOP_DATE"] >= year_start) & (
+                    prices_df["STCK_BSOP_DATE"] <= year_end
+                )
+                year_df = prices_df.loc[year_mask].copy()
+
+                price_history = year_df[
+                    ["STCK_BSOP_DATE", "STCK_OPRC", "STCK_HGPR", "STCK_LWPR", "STCK_CLPR", "ACML_VOL"]
+                ].to_dict(orient="records")
+
+                ema20_history = year_df[["STCK_BSOP_DATE", "ema20"]].assign(
+                    ema20=year_df["ema20"].round(2).where(year_df["ema20"].notna(), None)
+                ).to_dict(orient="records")
+
+            return {
+                "swing_id": swing_id,
+                "st_code": swing.ST_CODE,
+                "year": year,
+                "trades": trades_data,
+                "price_history": price_history,
+                "ema20_history": ema20_history,
+            }
+
+        except (NotFoundError, PermissionDeniedError):
+            raise
+        except SQLAlchemyError as e:
+            logger.error(f"매매 내역 차트 조회 실패: {e}", exc_info=True)
+            raise DatabaseError("매매 내역 조회에 실패했습니다")

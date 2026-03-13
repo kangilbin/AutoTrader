@@ -2,10 +2,10 @@
 Trade History Repository - 데이터 접근 계층
 """
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, extract
 from typing import Optional, List
 from datetime import datetime
-from app.common.database import TradeHistoryModel
+from app.common.database import TradeHistoryModel, SwingModel, AccountModel
 import logging
 
 logger = logging.getLogger(__name__)
@@ -80,6 +80,54 @@ class TradeHistoryRepository:
             )
             .order_by(TradeHistoryModel.TRADE_DATE.desc())
             .limit(1)
+        )
+        result = await self.db.execute(query)
+        return result.scalar_one_or_none()
+
+    async def find_by_swing_id_and_year(self, swing_id: int, year: int) -> List[TradeHistoryModel]:
+        """
+        특정 스윙의 연도별 거래 내역 조회
+
+        Args:
+            swing_id: 스윙 ID
+            year: 조회 연도
+
+        Returns:
+            거래 내역 리스트 (날짜 오름차순)
+        """
+        query = (
+            select(TradeHistoryModel)
+            .where(
+                TradeHistoryModel.SWING_ID == swing_id,
+                extract('year', TradeHistoryModel.TRADE_DATE) == year,
+            )
+            .order_by(TradeHistoryModel.TRADE_DATE.asc())
+        )
+        result = await self.db.execute(query)
+        return result.scalars().all()
+
+    async def find_swing_with_ownership(
+        self, swing_id: int, user_id: str
+    ) -> Optional[SwingModel]:
+        """
+        스윙 조회 + 소유권 검증
+
+        SWING_TRADE → ACCOUNT 조인으로 사용자 소유 여부 확인
+
+        Args:
+            swing_id: 스윙 ID
+            user_id: 사용자 ID
+
+        Returns:
+            소유권 검증된 SwingModel 또는 None
+        """
+        query = (
+            select(SwingModel)
+            .join(AccountModel, SwingModel.ACCOUNT_NO == AccountModel.ACCOUNT_NO)
+            .where(
+                SwingModel.SWING_ID == swing_id,
+                AccountModel.USER_ID == user_id,
+            )
         )
         result = await self.db.execute(query)
         return result.scalar_one_or_none()

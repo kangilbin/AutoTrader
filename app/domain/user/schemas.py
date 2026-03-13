@@ -7,6 +7,11 @@ from pydantic import BaseModel
 from typing import Optional
 
 
+class RefreshTokenRequest(BaseModel):
+    """토큰 갱신 요청"""
+    refresh_token: str
+
+
 class UserUpdateRequest(BaseModel):
     """회원 정보 수정 요청"""
     USER_NAME: Optional[str] = None

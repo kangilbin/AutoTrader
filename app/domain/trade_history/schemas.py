@@ -4,7 +4,7 @@ Trade History Schemas - Request/Response DTO
 from pydantic import BaseModel, ConfigDict
 from datetime import datetime
 from decimal import Decimal
-from typing import Optional
+from typing import Optional, List
 
 
 class TradeHistoryResponse(BaseModel):
@@ -20,6 +20,32 @@ class TradeHistoryResponse(BaseModel):
     REG_DT: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class PriceHistoryItem(BaseModel):
+    """일별 주가 데이터"""
+    STCK_BSOP_DATE: str
+    STCK_OPRC: Decimal
+    STCK_HGPR: Decimal
+    STCK_LWPR: Decimal
+    STCK_CLPR: Decimal
+    ACML_VOL: int
+
+
+class Ema20HistoryItem(BaseModel):
+    """EMA20 데이터"""
+    STCK_BSOP_DATE: str
+    ema20: Optional[float] = None
+
+
+class TradeHistoryWithChartResponse(BaseModel):
+    """매매 내역 + 차트 데이터 응답"""
+    swing_id: int
+    st_code: str
+    year: int
+    trades: List[TradeHistoryResponse]
+    price_history: List[PriceHistoryItem]
+    ema20_history: List[Ema20HistoryItem]
 
 
 class TradeHistoryCreateRequest(BaseModel):

@@ -25,6 +25,7 @@ from app.domain.routers import (
     gemini_router,
     backtest_router,
     health_router,
+    trade_history_router,
 )
 
 logging.basicConfig(level=logging.DEBUG)
@@ -100,6 +101,7 @@ app.include_router(swing_router)
 app.include_router(oauth_router)
 app.include_router(gemini_router)
 app.include_router(backtest_router)
+app.include_router(trade_history_router)
 
 
 @app.get("/", tags=["Root"])
