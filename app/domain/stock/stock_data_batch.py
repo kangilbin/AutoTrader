@@ -134,30 +134,3 @@ async def fetch_and_store_3_years_data(user_id: str, mrkt_code: str, st_code: st
     finally:
         await db.close()
 
-
-async def get_batch_status(mrkt_code: str, st_code: str) -> dict:
-    """
-    배치 작업 상태 조회
-
-    Args:
-        mrkt_code: 시장 코드
-        st_code: 종목 코드
-
-    Returns:
-        dict: 상태 정보
-    """
-    db = await Database.get_session()
-    try:
-        stock_service = StockService(db)
-        stock_data = await stock_service.get_stock_info(mrkt_code, st_code)
-        return {
-            "mrkt_code": mrkt_code,
-            "st_code": st_code,
-            "status": stock_data.get("DATA_YN"),
-            "last_updated": stock_data.get("MOD_DT")
-        }
-    except Exception as e:
-        logger.error(f"Failed to get status for {mrkt_code}/{st_code}: {e}")
-        raise
-    finally:
-        await db.close()

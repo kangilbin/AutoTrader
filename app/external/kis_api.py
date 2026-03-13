@@ -69,47 +69,6 @@ async def oauth_token(user_id: str, simulation_yn: str, api_key: str, secret_key
     return data
 
 
-async def get_approval(user_id: str):
-    """실시간 (웹소켓) 접속키 발급"""
-    redis = await get_redis()
-    user_auth = await redis.hgetall(f"{user_id}_access_token")
-
-    if not user_auth:
-        raise ExternalServiceError("KIS", "사용자 인증 정보가 없습니다.")
-
-    if user_auth.get("simulation_yn") == "Y":
-        url = settings.DEV_API_URL
-        socket_url = settings.DEV_SOCKET_URL
-
-    else:
-        url = settings.REAL_API_URL
-        socket_url = settings.REAL_SOCKET_URL
-
-    path = "oauth2/Approval"
-    api_url = f"{url}/{path}"
-
-    query = {
-        "grant_type": "client_credentials",
-        "appkey": user_auth.get('api_key'),
-        "secretkey": user_auth.get('secret_key')
-    }
-    response = await fetch("POST", api_url,  "KIS", json=query)
-    body = response["body"]
-    approval_key = body.get("approval_key")
-    if not approval_key:
-        raise ExternalServiceError("KIS", kis_error_message(response, "approval_key 발급 실패"))
-
-    data = {
-        "socket_token": approval_key,
-        "url": socket_url
-    }
-    # Redis에 토큰 저장 만료기간(expires_in) 설정
-    redis = await get_redis()
-    await redis.hset(f"{user_id}_socket_token", mapping=data)
-    await redis.expire(f"{user_id}_socket_token", 86400)
-    return data
-
-
 async def _get_user_auth(user_id: str, db: AsyncSession):
     """사용자 인증 정보 조회 (토큰 만료 시 DB에서 인증키 조회 후 재발급)"""
     redis = await get_redis()
@@ -139,42 +98,6 @@ async def _get_user_auth(user_id: str, db: AsyncSession):
 # ============================================================
 # 잔고 조회 관련
 # ============================================================
-
-async def get_balance(user_id: str, db: AsyncSession) -> int:
-    """현금 잔고 조회"""
-    user_data, access_data = await _get_user_auth(user_id, db)
-    path = "uapi/domestic-stock/v1/trading/inquire-psbl-order"
-
-    if access_data.get("simulation_yn") == "Y":
-        url = settings.DEV_API_URL
-    else:
-        url = settings.REAL_API_URL
-    api_url = f"{url}/{path}"
-
-    if access_data.get("simulation_yn") == "Y":
-        tr_id = "VTTC8908R"  # 모의투자
-    else:
-        tr_id = "TTTC8908R"  # 실전투자
-
-    headers = kis_headers(
-        access_data,
-        tr_id=tr_id,
-    )
-
-    query = {
-        "CANO": user_data.get("ACCOUNT_NO")[:8],
-        "ACNT_PRDT_CD": user_data.get("ACCOUNT_NO")[-2:],
-        "PDNO": "",
-        "ORD_UNPR": "",
-        "ORD_DVSN": "01",
-        "CMA_EVLU_AMT_ICLD_YN": "Y",
-        "OVRS_ICLD_YN": "Y"
-    }
-    response = await fetch("GET", api_url, "KIS", params=query, headers=headers)
-    body = response["body"]
-    cash = body['output']['ord_psbl_cash']
-    return int(cash)
-
 
 async def get_stock_balance(user_id: str, db: AsyncSession, fk100="", nk100="", result: Optional[List] = None,):
     """보유 주식 조회"""

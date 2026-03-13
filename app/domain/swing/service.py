@@ -52,11 +52,11 @@ class SwingService:
             # 이평선 전략인 경우 옵션 저장
             if request.SWING_TYPE == 'A':
                 ema = EmaOption(
-                    account_no=request.ACCOUNT_NO,
-                    st_code=request.ST_CODE,
-                    short_term=request.SHORT_TERM,
-                    medium_term=request.MEDIUM_TERM,
-                    long_term=request.LONG_TERM
+                    ACCOUNT_NO=request.ACCOUNT_NO,
+                    ST_CODE=request.ST_CODE,
+                    SHORT_TERM=request.SHORT_TERM,
+                    MEDIUM_TERM=request.MEDIUM_TERM,
+                    LONG_TERM=request.LONG_TERM
                 )
                 ema.validate()
                 await self.repo.save_ema_option(ema)
@@ -166,7 +166,7 @@ class SwingService:
                         init_amount=Decimal(0),
                         swing_type='S'
                     )
-                    swing.use_yn = 'N'
+                    swing.USE_YN = 'N'
                     db_swing = await self.repo.save(swing)
                     swing_result = SwingResponse.model_validate(db_swing).model_dump()
                     result_data = {
@@ -229,14 +229,6 @@ class SwingService:
     async def get_active_swings(self) -> List:
         """활성화된 스윙 목록 조회 (배치용)"""
         return await self.repo.find_active_swings()
-
-    async def get_holding_swings(self) -> List:
-        """포지션 보유 중인 스윙 목록 조회 (SIGNAL 1 or 2)"""
-        return await self.repo.find_holding_swings()
-
-    async def get_eod_target_swings(self) -> List:
-        """EOD 체크 대상 스윙 조회 (SIGNAL 1, 2, 3)"""
-        return await self.repo.find_holding_and_partial_sold_swings()
 
     async def cache_single_indicators(self, mrkt_code: str, st_code: str) -> bool:
         """

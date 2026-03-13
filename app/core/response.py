@@ -30,22 +30,3 @@ def error_response(
     }
 
 
-def paginated_response(
-    message: str,
-    data: list,
-    total: int,
-    page: int,
-    size: int
-) -> dict:
-    """페이지네이션 응답 생성 헬퍼"""
-    total_pages = (total + size - 1) // size if size > 0 else 0
-    return {
-        "success": True,
-        "message": message,
-        "data": data,
-        "total": total,
-        "page": page,
-        "size": size,
-        "total_pages": total_pages,
-        "timestamp": datetime.now().isoformat()
-    }
