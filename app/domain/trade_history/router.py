@@ -1,7 +1,7 @@
 """
 Trade History API Router
 """
-from datetime import datetime
+from datetime import date
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Annotated, Optional
@@ -24,11 +24,16 @@ async def get_trade_history_with_chart(
     swing_id: int,
     service: Annotated[TradeHistoryService, Depends(get_trade_history_service)],
     user_id: Annotated[str, Depends(get_current_user)],
-    year: Optional[int] = Query(default=None, description="조회 연도 (기본: 현재 연도)")
+    start_date: Optional[date] = Query(default=None, description="조회 시작일 (YYYY-MM-DD)"),
+    end_date: Optional[date] = Query(default=None, description="조회 종료일 (YYYY-MM-DD)")
 ):
-    """매매 내역 + 차트 데이터 조회 (1년 단위 페이징)"""
-    if year is None:
-        year = datetime.now().year
+    """매매 내역 + 차트 데이터 조회 (기간 지정)"""
+    # 기본값: 현재 연도 1월 1일 ~ 오늘
+    today = date.today()
+    if start_date is None:
+        start_date = date(today.year, 1, 1)
+    if end_date is None:
+        end_date = today
 
-    result = await service.get_trade_history_with_chart(user_id, swing_id, year)
+    result = await service.get_trade_history_with_chart(user_id, swing_id, start_date, end_date)
     return success_response("매매 내역 조회 완료", result)
