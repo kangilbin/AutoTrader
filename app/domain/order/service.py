@@ -4,8 +4,8 @@ Order Service - 비즈니스 로직
 import logging
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.order.entity import Order, ModifyOrder
-from app.domain.order.schemas import OrderCreateRequest, OrderModifyRequest
+from app.domain.order.entity import ModifyOrder
+from app.domain.order.schemas import OrderModifyRequest
 
 logger = logging.getLogger(__name__)
 
@@ -15,30 +15,6 @@ class OrderService:
 
     def __init__(self, db: AsyncSession):
         self.db = db
-
-    async def place_order(self, user_id: str, request: OrderCreateRequest) -> dict:
-        """
-        주식 매수/매도 주문
-
-        Args:
-            user_id: 사용자 ID
-            request: 주문 요청
-
-        Returns:
-            주문 결과
-        """
-        from app.external.kis_api import place_order_api
-
-        # 도메인 엔티티 생성 및 검증
-        order = Order.create(
-            ord_dv=request.ORD_DV,
-            itm_no=request.ITM_NO,
-            qty=request.QTY
-        )
-
-        # KIS API 호출
-        result = await place_order_api(user_id, order, self.db)
-        return result
 
     async def get_cancelable_orders(
         self,

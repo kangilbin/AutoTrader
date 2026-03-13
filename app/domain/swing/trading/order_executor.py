@@ -109,6 +109,17 @@ class SwingOrderExecutor:
 
         # 잔여 금액으로 1주도 못 사면 완료
         if remaining_amount < curr_price:
+            # 거래 내역 DB 저장
+            from app.domain.trade_history import TradeHistoryService
+            trade_service = TradeHistoryService(db)
+            await trade_service.record_trade(
+                swing_id=swing_id,
+                trade_type="B",
+                order_result={"qty": executed_qty, "avg_price": avg_price,
+                              "order_no": order_no, "amount": executed_amount},
+                reasons=[f"단일매수({signal_on_complete}차)", "100% 완료"]
+            )
+
             logger.info(f"[{st_code}] {signal_on_complete}차 매수 완료 (단일): {executed_qty}주, {avg_price:,}원")
             return {"success": True, "completed": True, "qty": executed_qty,
                     "avg_price": avg_price, "amount": executed_amount, "phase": signal_on_complete}
@@ -173,6 +184,19 @@ class SwingOrderExecutor:
 
         # 단일 주문으로 완료
         if actual_qty >= target_qty:
+            avg_sell_price = execution.get("avg_price", int(curr_price)) if execution else int(curr_price)
+
+            # 거래 내역 DB 저장
+            from app.domain.trade_history import TradeHistoryService
+            trade_service = TradeHistoryService(db)
+            await trade_service.record_trade(
+                swing_id=swing_id,
+                trade_type="S",
+                order_result={"qty": actual_qty, "avg_price": avg_sell_price,
+                              "order_no": order_no, "amount": actual_qty * avg_sell_price},
+                reasons=[f"단일매도({signal_on_complete}차)", "100% 완료"]
+            )
+
             logger.info(f"[{st_code}] {signal_on_complete}차 매도 완료 (단일): {actual_qty}주")
             return {"success": True, "completed": True, "qty": actual_qty, "phase": signal_on_complete}
 
