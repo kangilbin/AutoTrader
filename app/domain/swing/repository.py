@@ -149,3 +149,46 @@ class SwingRepository:
         )
         result = await self.db.execute(query)
         return [row[0] for row in result.all()]
+
+    async def find_swings_by_signals(self, signals: List[int]) -> List:
+        """
+        특정 SIGNAL 값 목록에 해당하는 활성 스윙 조회 (배치용)
+
+        Args:
+            signals: 조회할 SIGNAL 값 리스트 (예: [4, 5] 또는 [1, 2])
+
+        Returns:
+            조건에 맞는 스윙 목록 (USER_ID, API_KEY, SECRET_KEY 포함)
+        """
+        from sqlalchemy import text
+
+        # SIGNAL 값을 문자열로 변환하여 IN 절 생성
+        signal_str = ','.join(str(s) for s in signals)
+
+        query = text(
+            f"SELECT ST.*, A.USER_ID, U.API_KEY, U.SECRET_KEY "
+            f"FROM SWING_TRADE ST "
+            f"LEFT JOIN ACCOUNT A ON ST.ACCOUNT_NO = A.ACCOUNT_NO "
+            f"LEFT JOIN AUTH_KEY U ON A.USER_ID = U.USER_ID AND A.AUTH_ID = U.AUTH_ID "
+            f"WHERE ST.USE_YN = 'Y' AND ST.SIGNAL IN ({signal_str})"
+        )
+        result = await self.db.execute(query)
+        return result.all()
+
+    async def find_holding_swings(self) -> List:
+        """
+        포지션 보유 중인 활성 스윙 조회 (SIGNAL 1 또는 2)
+
+        Returns:
+            SIGNAL이 1 또는 2인 활성 스윙 목록
+        """
+        return await self.find_swings_by_signals([1, 2])
+
+    async def find_pending_sell_swings(self) -> List:
+        """
+        매도 대기 중인 활성 스윙 조회 (SIGNAL 4 또는 5)
+
+        Returns:
+            SIGNAL이 4 또는 5인 활성 스윙 목록
+        """
+        return await self.find_swings_by_signals([4, 5])
