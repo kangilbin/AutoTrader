@@ -27,6 +27,10 @@ class TradeHistoryService:
         self.db = db
         self.repo = TradeHistoryRepository(db)
 
+    # 거래 비용률 (백테스트와 동일)
+    COMMISSION_RATE = Decimal("0.00147")  # 증권사 수수료율
+    TAX_RATE = Decimal("0.0020")  # 거래세율
+
     async def record_trade(
         self,
         swing_id: int,
@@ -56,16 +60,26 @@ class TradeHistoryService:
             # 매매 사유 JSON 변환
             trade_reasons = json.dumps(reasons, ensure_ascii=False) if reasons else None
 
+            sell_price = Decimal(str(order_result.get("avg_price", 0)))
+            sell_qty = order_result.get("qty", 0)
+            sell_amount = Decimal(str(order_result.get("amount", 0)))
+
             # 거래 데이터 준비
             trade_data = {
                 "SWING_ID": swing_id,
                 "TRADE_DATE": datetime.now(),
                 "TRADE_TYPE": trade_type,
-                "TRADE_PRICE": Decimal(str(order_result.get("avg_price", 0))),
-                "TRADE_QTY": order_result.get("qty", 0),
-                "TRADE_AMOUNT": Decimal(str(order_result.get("amount", 0))),
+                "TRADE_PRICE": sell_price,
+                "TRADE_QTY": sell_qty,
+                "TRADE_AMOUNT": sell_amount,
                 "TRADE_REASONS": trade_reasons,
             }
+
+            # 매도 시 실현손익 계산
+            if trade_type == "S" and sell_qty > 0:
+                trade_data.update(
+                    await self._calculate_sell_pnl(swing_id, sell_price, sell_qty, sell_amount)
+                )
 
             # Repository를 통해 저장 (flush만)
             db_trade = await self.repo.save(trade_data)
@@ -81,6 +95,51 @@ class TradeHistoryService:
         except SQLAlchemyError as e:
             logger.error(f"거래 내역 저장 실패: {e}", exc_info=True)
             raise DatabaseError("거래 내역 저장에 실패했습니다")
+
+    async def _calculate_sell_pnl(
+        self,
+        swing_id: int,
+        sell_price: Decimal,
+        sell_qty: int,
+        sell_amount: Decimal,
+    ) -> dict:
+        """
+        매도 시 실현손익 계산
+
+        Args:
+            swing_id: 스윙 ID
+            sell_price: 매도 체결가
+            sell_qty: 매도 수량
+            sell_amount: 매도 금액
+
+        Returns:
+            {"TOTAL_FEE": ..., "REALIZED_PNL": ...}
+        """
+        from app.domain.swing.entity import SwingTrade
+        from sqlalchemy import select
+
+        # 스윙의 매수 평균단가 조회
+        result = await self.db.execute(
+            select(SwingTrade.ENTRY_PRICE).where(SwingTrade.SWING_ID == swing_id)
+        )
+        entry_price = result.scalar_one_or_none()
+
+        if not entry_price or entry_price <= 0:
+            logger.warning(f"[SWING {swing_id}] 매수 평균단가 없음, 손익 계산 스킵")
+            return {}
+
+        avg_buy_price = Decimal(str(entry_price))
+
+        # 제비용합계 (수수료 + 세금)
+        total_fee = sell_amount * (self.COMMISSION_RATE + self.TAX_RATE)
+
+        # 실현손익: (매도가 - 매수평균가) × 수량 - 제비용
+        realized_pnl = (sell_price - avg_buy_price) * sell_qty - total_fee
+
+        return {
+            "TOTAL_FEE": round(total_fee, 2),
+            "REALIZED_PNL": round(realized_pnl, 2),
+        }
 
     async def get_trade_history(self, swing_id: int) -> List[dict]:
         """
@@ -159,13 +218,18 @@ class TradeHistoryService:
                 )
                 period_df = prices_df.loc[period_mask].copy()
 
-                price_history = period_df[
+                price_df = period_df[
                     ["STCK_BSOP_DATE", "STCK_OPRC", "STCK_HGPR", "STCK_LWPR", "STCK_CLPR", "ACML_VOL"]
-                ].to_dict(orient="records")
+                ]
+                price_history = price_df.where(price_df.notna(), None).to_dict(orient="records")
 
-                ema20_history = period_df[["STCK_BSOP_DATE", "ema20"]].assign(
-                    ema20=period_df["ema20"].round(2).where(period_df["ema20"].notna(), None)
-                ).to_dict(orient="records")
+                ema20_history = [
+                    {
+                        "STCK_BSOP_DATE": row["STCK_BSOP_DATE"],
+                        "ema20": round(row["ema20"], 2) if pd.notna(row["ema20"]) else None,
+                    }
+                    for _, row in period_df.iterrows()
+                ]
 
             return {
                 "swing_id": swing_id,
@@ -181,4 +245,67 @@ class TradeHistoryService:
             raise
         except SQLAlchemyError as e:
             logger.error(f"매매 내역 차트 조회 실패: {e}", exc_info=True)
+            raise DatabaseError("매매 내역 조회에 실패했습니다")
+
+    async def get_trade_stats(self, user_id: str, swing_id: int) -> dict:
+        """
+        매매 통계 조회 (전체 기간)
+
+        Args:
+            user_id: 사용자 ID (소유권 검증)
+            swing_id: 스윙 ID
+
+        Returns:
+            {"total_count": int, "buy_count": int, "sell_count": int}
+        """
+        try:
+            swing = await self.repo.find_swing_with_ownership(swing_id, user_id)
+            if not swing:
+                raise NotFoundError("스윙 전략", swing_id)
+
+            return await self.repo.count_by_swing_id(swing_id)
+
+        except (NotFoundError, PermissionDeniedError):
+            raise
+        except SQLAlchemyError as e:
+            logger.error(f"매매 통계 조회 실패: {e}", exc_info=True)
+            raise DatabaseError("매매 통계 조회에 실패했습니다")
+
+    async def get_trade_history_list(
+        self, user_id: str, swing_id: int, page: int = 1, size: int = 100
+    ) -> dict:
+        """
+        매매 내역 페이징 조회
+
+        Args:
+            user_id: 사용자 ID (소유권 검증)
+            swing_id: 스윙 ID
+            page: 페이지 번호 (1부터)
+            size: 페이지 크기
+
+        Returns:
+            TradeHistoryPageResponse 구조의 dict
+        """
+        try:
+            swing = await self.repo.find_swing_with_ownership(swing_id, user_id)
+            if not swing:
+                raise NotFoundError("스윙 전략", swing_id)
+
+            trades, total_count = await self.repo.find_by_swing_id_paged(swing_id, page, size)
+            trades_data = [
+                TradeHistoryResponse.model_validate(t).model_dump() for t in trades
+            ]
+
+            return {
+                "trades": trades_data,
+                "total_count": total_count,
+                "page": page,
+                "size": size,
+                "has_next": (page * size) < total_count,
+            }
+
+        except (NotFoundError, PermissionDeniedError):
+            raise
+        except SQLAlchemyError as e:
+            logger.error(f"매매 내역 페이징 조회 실패: {e}", exc_info=True)
             raise DatabaseError("매매 내역 조회에 실패했습니다")

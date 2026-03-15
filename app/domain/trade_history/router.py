@@ -19,6 +19,30 @@ def get_trade_history_service(db: AsyncSession = Depends(get_db)) -> TradeHistor
     return TradeHistoryService(db)
 
 
+@router.get("/{swing_id}/stats")
+async def get_trade_stats(
+    swing_id: int,
+    service: Annotated[TradeHistoryService, Depends(get_trade_history_service)],
+    user_id: Annotated[str, Depends(get_current_user)],
+):
+    """매매 통계 조회 (전체 기간)"""
+    result = await service.get_trade_stats(user_id, swing_id)
+    return success_response("매매 통계 조회 완료", result)
+
+
+@router.get("/{swing_id}/list")
+async def get_trade_history_list(
+    swing_id: int,
+    service: Annotated[TradeHistoryService, Depends(get_trade_history_service)],
+    user_id: Annotated[str, Depends(get_current_user)],
+    page: int = Query(default=1, ge=1, description="페이지 번호"),
+    size: int = Query(default=100, ge=1, le=500, description="페이지 크기"),
+):
+    """매매 내역 페이징 조회"""
+    result = await service.get_trade_history_list(user_id, swing_id, page, size)
+    return success_response("매매 내역 조회 완료", result)
+
+
 @router.get("/{swing_id}")
 async def get_trade_history_with_chart(
     swing_id: int,

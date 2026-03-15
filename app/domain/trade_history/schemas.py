@@ -16,6 +16,8 @@ class TradeHistoryResponse(BaseModel):
     TRADE_PRICE: Decimal
     TRADE_QTY: int
     TRADE_AMOUNT: Decimal
+    TOTAL_FEE: Optional[Decimal] = None  # 제비용합계 (매도 시)
+    REALIZED_PNL: Optional[Decimal] = None  # 실현손익 (매도 시)
     TRADE_REASONS: Optional[str] = None  # JSON 문자열
     REG_DT: datetime
 
@@ -47,6 +49,22 @@ class TradeHistoryWithChartResponse(BaseModel):
     trades: List[TradeHistoryResponse]
     price_history: List[PriceHistoryItem]
     ema20_history: List[Ema20HistoryItem]
+
+
+class TradeStatsResponse(BaseModel):
+    """매매 통계 응답"""
+    total_count: int
+    buy_count: int
+    sell_count: int
+
+
+class TradeHistoryPageResponse(BaseModel):
+    """매매 내역 페이징 응답"""
+    trades: List[TradeHistoryResponse]
+    total_count: int
+    page: int
+    size: int
+    has_next: bool
 
 
 class TradeHistoryCreateRequest(BaseModel):
