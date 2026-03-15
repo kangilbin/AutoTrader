@@ -7,6 +7,7 @@ from typing import Optional, List
 from app.common.database import SwingModel, EmaOptModel, StockModel
 from app.domain.swing.entity import SwingTrade, EmaOption
 from app.domain.swing.schemas import SwingResponse
+from datetime import datetime
 import logging
 
 logger = logging.getLogger(__name__)
@@ -124,7 +125,7 @@ class SwingRepository:
         Returns:
             업데이트된 행 개수
         """
-        from datetime import datetime
+
         query = (
             update(SwingModel)
             .filter(SwingModel.SIGNAL == old_value)
@@ -160,8 +161,6 @@ class SwingRepository:
         Returns:
             조건에 맞는 스윙 목록 (USER_ID, API_KEY, SECRET_KEY 포함)
         """
-        from sqlalchemy import text
-
         # SIGNAL 값을 문자열로 변환하여 IN 절 생성
         signal_str = ','.join(str(s) for s in signals)
 
