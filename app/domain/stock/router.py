@@ -1,6 +1,8 @@
 """
 Stock API Router
 """
+import asyncio
+
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Annotated
@@ -9,7 +11,12 @@ from app.common.database import get_db
 from app.common.dependencies import get_current_user
 from app.core.response import success_response
 from app.domain.stock.service import StockService
-from app.external.kis_api import get_inquire_asking_price
+from app.external.kis_api import (
+    get_inquire_asking_price,
+    get_fluctuation_rank,
+    get_volume_rank,
+    get_volume_power_rank,
+)
 
 router = APIRouter(prefix="/stocks", tags=["Stocks"])
 
@@ -38,3 +45,21 @@ async def get_asking_price(
     """주식 호가 조회"""
     response = await get_inquire_asking_price(user_id, st_code, db)
     return success_response("주식 호가 조회", response)
+
+
+@router.get("/ranking")
+async def ranking(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user_id: Annotated[str, Depends(get_current_user)]
+):
+    """주식 순위 통합 조회 (등락률, 거래량, 체결강도)"""
+    fluctuation, volume, volume_power = await asyncio.gather(
+        get_fluctuation_rank(user_id, db),
+        get_volume_rank(user_id, db),
+        get_volume_power_rank(user_id, db),
+    )
+    return success_response("주식 순위 조회", {
+        "fluctuation": fluctuation,
+        "volume": volume,
+        "volume_power": volume_power,
+    })
