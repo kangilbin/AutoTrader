@@ -1,9 +1,7 @@
 """
 Stock API Router
 """
-import asyncio
-
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Annotated
 
@@ -47,19 +45,34 @@ async def get_asking_price(
     return success_response("주식 호가 조회", response)
 
 
-@router.get("/ranking")
-async def ranking(
+@router.get("/ranking/fluctuation")
+async def fluctuation_rank(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user_id: Annotated[str, Depends(get_current_user)],
+    rank_sort: Annotated[str, Query(description="0:상승율순, 1:하락율순")] = "0",
+    prc_cls: Annotated[str, Query(description="상승율(0:저가대비,1:종가대비) / 하락율(0:고가대비,1:종가대비) / 기타(0:전체)")] = "1",
+):
+    """등락률 순위"""
+    response = await get_fluctuation_rank(user_id, db, rank_sort, prc_cls)
+    return success_response("등락률 순위 조회", response)
+
+
+@router.get("/ranking/volume")
+async def volume_rank(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    user_id: Annotated[str, Depends(get_current_user)],
+    blng_cls: Annotated[str, Query(description="0:평균거래량, 1:거래증가율, 3:거래금액순")] = "3",
+):
+    """거래량 순위"""
+    response = await get_volume_rank(user_id, db, blng_cls)
+    return success_response("거래량 순위 조회", response)
+
+
+@router.get("/ranking/volume-power")
+async def volume_power_rank(
     db: Annotated[AsyncSession, Depends(get_db)],
     user_id: Annotated[str, Depends(get_current_user)]
 ):
-    """주식 순위 통합 조회 (등락률, 거래량, 체결강도)"""
-    fluctuation, volume, volume_power = await asyncio.gather(
-        get_fluctuation_rank(user_id, db),
-        get_volume_rank(user_id, db),
-        get_volume_power_rank(user_id, db),
-    )
-    return success_response("주식 순위 조회", {
-        "fluctuation": fluctuation,
-        "volume": volume,
-        "volume_power": volume_power,
-    })
+    """체결강도 순위"""
+    response = await get_volume_power_rank(user_id, db)
+    return success_response("체결강도 순위 조회", response)

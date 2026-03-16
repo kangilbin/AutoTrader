@@ -498,7 +498,7 @@ async def get_inquire_price(user_id: str, code: str, db: AsyncSession):
     body = response["body"]
     return body
 
-async def get_fluctuation_rank(user_id: str, db: AsyncSession):
+async def get_fluctuation_rank(user_id: str, db: AsyncSession, rank_sort_cls_code: str = "0", prc_cls_code: str = "1"):
     """국내주식 등락률 순위"""
     user_data, access_data = await _get_user_auth(user_id, db)
     path = "/uapi/domestic-stock/v1/ranking/fluctuation"
@@ -512,18 +512,26 @@ async def get_fluctuation_rank(user_id: str, db: AsyncSession):
     )
 
     query = {
+        "fid_rsfl_rate2": "",
         "fid_cond_mrkt_div_code": "J",
         "fid_cond_scr_div_code": "20170",
         "fid_input_iscd": "0000",
-        "fid_rank_sort_cls_code": "0",
+        "fid_rank_sort_cls_code": rank_sort_cls_code,
         "fid_input_cnt_1": "0",
-        "fid_prc_cls_code": "1",
+        "fid_prc_cls_code": prc_cls_code,
+        "fid_input_price_1": "",
+        "fid_input_price_2": "",
+        "fid_vol_cnt": "",
+        "fid_trgt_cls_code": "0",
+        "fid_trgt_exls_cls_code": "0",
+        "fid_div_cls_code": "0",
+        "fid_rsfl_rate1": "",
     }
     response = await fetch("GET", api_url, "KIS", params=query, headers=headers)
     body = response["body"]
-    return body.get("output1")
+    return body.get("output")
 
-async def get_volume_rank(user_id: str, db: AsyncSession):
+async def get_volume_rank(user_id: str, db: AsyncSession, blng_cls_code: str = "3"):
     """국내주식 거래량 순위"""
     user_data, access_data = await _get_user_auth(user_id, db)
     path = "/uapi/domestic-stock/v1/quotations/volume-rank"
@@ -541,13 +549,17 @@ async def get_volume_rank(user_id: str, db: AsyncSession):
         "FID_COND_SCR_DIV_CODE": "20170",
         "FID_INPUT_ISCD": "0000",
         "FID_DIV_CLS_CODE": "0",
-        "FID_BLNG_CLS_CODE": "3",
+        "FID_BLNG_CLS_CODE": blng_cls_code,
         "FID_TRGT_CLS_CODE": "111111111",
         "FID_TRGT_EXLS_CLS_CODE": "0000000000",
+        "FID_INPUT_PRICE_1": "",
+        "FID_INPUT_PRICE_2": "",
+        "FID_VOL_CNT": "",
+        "FID_INPUT_DATE_1": "",
     }
     response = await fetch("GET", api_url, "KIS", params=query, headers=headers)
     body = response["body"]
-    return body.get("Output")
+    return body.get("output")
 
 async def get_volume_power_rank(user_id: str, db: AsyncSession):
     """국내주식 체결강도 순위"""
@@ -569,6 +581,9 @@ async def get_volume_power_rank(user_id: str, db: AsyncSession):
         "fid_input_iscd": "0000",
         "fid_div_cls_code": "0",
         "fid_trgt_cls_code": "0",
+        "fid_input_price_1": "",
+        "fid_input_price_2": "",
+        "fid_vol_cnt": "",
     }
     response = await fetch("GET", api_url, "KIS", params=query, headers=headers)
     body = response["body"]
