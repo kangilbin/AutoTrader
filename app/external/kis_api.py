@@ -524,7 +524,7 @@ async def get_fluctuation_rank(user_id: str, db: AsyncSession, rank_sort_cls_cod
         "fid_vol_cnt": "",
         "fid_trgt_cls_code": "0",
         "fid_trgt_exls_cls_code": "0",
-        "fid_div_cls_code": "0",
+        "fid_div_cls_code": "1",
         "fid_rsfl_rate1": "",
     }
     response = await fetch("GET", api_url, "KIS", params=query, headers=headers)
@@ -548,7 +548,7 @@ async def get_volume_rank(user_id: str, db: AsyncSession, blng_cls_code: str = "
         "FID_COND_MRKT_DIV_CODE": "J",
         "FID_COND_SCR_DIV_CODE": "20170",
         "FID_INPUT_ISCD": "0000",
-        "FID_DIV_CLS_CODE": "0",
+        "FID_DIV_CLS_CODE": "1",
         "FID_BLNG_CLS_CODE": blng_cls_code,
         "FID_TRGT_CLS_CODE": "111111111",
         "FID_TRGT_EXLS_CLS_CODE": "0000000000",
@@ -561,7 +561,7 @@ async def get_volume_rank(user_id: str, db: AsyncSession, blng_cls_code: str = "
     body = response["body"]
     return body.get("output")
 
-async def get_volume_power_rank(user_id: str, db: AsyncSession):
+async def get_volume_power_rank(user_id: str, db: AsyncSession, input_iscd: str = "0000"):
     """국내주식 체결강도 순위"""
     user_data, access_data = await _get_user_auth(user_id, db)
     path = "/uapi/domestic-stock/v1/ranking/volume-power"
@@ -575,10 +575,10 @@ async def get_volume_power_rank(user_id: str, db: AsyncSession):
     )
 
     query = {
-        "fid_trgt_exls_cls_code": "0",
+        "fid_trgt_exls_cls_code": "1",
         "fid_cond_mrkt_div_code": "J",
         "fid_cond_scr_div_code": "20168",
-        "fid_input_iscd": "0000",
+        "fid_input_iscd": input_iscd,
         "fid_div_cls_code": "0",
         "fid_trgt_cls_code": "0",
         "fid_input_price_1": "",

@@ -71,8 +71,9 @@ async def volume_rank(
 @router.get("/ranking/volume-power")
 async def volume_power_rank(
     db: Annotated[AsyncSession, Depends(get_db)],
-    user_id: Annotated[str, Depends(get_current_user)]
+    user_id: Annotated[str, Depends(get_current_user)],
+    input_iscd: Annotated[str, Query(description="0000:전체, 0001:거래소, 1001:코스닥, 2001:코스피2000")] = "0000"
 ):
     """체결강도 순위"""
-    response = await get_volume_power_rank(user_id, db)
+    response = await get_volume_power_rank(user_id, db, input_iscd)
     return success_response("체결강도 순위 조회", response)
