@@ -6,6 +6,7 @@ main.py에서 등록:
     register_exception_handlers(app)
 """
 import logging
+import sentry_sdk
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from app.exceptions.base import AppError
@@ -44,6 +45,10 @@ def register_exception_handlers(app: FastAPI):
             exc_info=exc.status_code >= 500  # 5xx만 스택 트레이스 출력
         )
 
+        # 5xx 에러만 Sentry에 전송
+        if exc.status_code >= 500:
+            sentry_sdk.capture_exception(exc)
+
         # 응답 생성
         response_body = {
             "success": False,
@@ -76,6 +81,9 @@ def register_exception_handlers(app: FastAPI):
                 "exception_type": type(exc).__name__
             }
         )
+
+        # 미처리 예외는 항상 Sentry에 전송
+        sentry_sdk.capture_exception(exc)
 
         return JSONResponse(
             status_code=500,

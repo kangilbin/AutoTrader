@@ -10,6 +10,7 @@ from app.common.redis import Redis
 # from app.common.scheduler import schedule_start
 from app.common.middleware import DeviceAuthMiddleware
 from app.exceptions.handlers import register_exception_handlers
+from app.core.sentry import init_sentry
 from app.domain.swing.service import SwingService
 
 # 라우터 임포트
@@ -30,6 +31,9 @@ from app.domain.routers import (
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
+
+# Sentry 초기화 (FastAPI 앱 생성 전에 호출해야 ASGI 미들웨어 자동 등록)
+init_sentry()
 
 
 @asynccontextmanager

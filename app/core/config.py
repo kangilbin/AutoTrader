@@ -50,6 +50,11 @@ class Settings(BaseSettings):
     SMTP_PASSWORD: Optional[str] = None  # 앱 비밀번호 (환경변수에서 설정)
     ADMIN_EMAIL: str = "kib3388@naver.com"  # 관리자 이메일
 
+    # Sentry
+    SENTRY_DSN: Optional[str] = None
+    SENTRY_ENVIRONMENT: str = "development"
+    SENTRY_TRACES_SAMPLE_RATE: float = 0.1
+
     # App
     DEBUG: bool = False
     APP_NAME: str = "AutoTrader"
