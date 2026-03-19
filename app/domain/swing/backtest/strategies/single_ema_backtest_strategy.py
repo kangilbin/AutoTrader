@@ -315,7 +315,7 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
         
     def _prepare_data(self, df: pd.DataFrame) -> pd.DataFrame:
         if "STCK_BSOP_DATE" in df.columns:
-            df["STCK_BSOP_DATE"] = pd.to_datetime(df["STCK_BSOP_DATE"])
+            df["STCK_BSOP_DATE"] = pd.to_datetime(df["STCK_BSOP_DATE"], format="%Y%m%d")
             df = df.sort_values("STCK_BSOP_DATE").reset_index(drop=True)
         for col in ["STCK_CLPR", "STCK_HGPR", "STCK_LWPR", "STCK_OPRC", "ACML_VOL"]:
             if col in df.columns:

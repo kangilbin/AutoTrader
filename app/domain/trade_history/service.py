@@ -225,10 +225,10 @@ class TradeHistoryService:
 
                 ema20_history = [
                     {
-                        "STCK_BSOP_DATE": row["STCK_BSOP_DATE"],
-                        "ema20": round(row["ema20"], 2) if pd.notna(row["ema20"]) else None,
+                        "STCK_BSOP_DATE": row.STCK_BSOP_DATE,
+                        "ema20": round(row.ema20, 2) if pd.notna(row.ema20) else None,
                     }
-                    for _, row in period_df.iterrows()
+                    for row in period_df.itertuples(index=False)
                 ]
 
             return {
