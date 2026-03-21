@@ -33,6 +33,7 @@ from app.domain.trade_history import TradeHistoryService
 from .order_executor import SwingOrderExecutor
 from .trading_strategy_factory import TradingStrategyFactory
 from app.common.redis import Redis
+from app.domain.notification.service import PushNotificationService
 
 logger = logging.getLogger(__name__)
 
@@ -154,6 +155,7 @@ async def process_single_swing(
             if partial_state_str and user_id:
                 entry_price = int(swing.ENTRY_PRICE) if swing.ENTRY_PRICE else 0
                 hold_qty = swing.HOLD_QTY or 0
+                prev_signal = swing.SIGNAL
 
                 partial_result = await SwingOrderExecutor.continue_partial_execution(
                     redis_client=redis_client,
@@ -184,11 +186,19 @@ async def process_single_swing(
 
                 await db.flush()
                 await db.commit()
+
+                # 푸쉬 알림 (fire-and-forget)
+                if user_id and swing.SIGNAL != prev_signal:
+                    _fire_trade_notification(user_id, swing, prev_signal, st_code)
+
                 return
 
             # === 3. PEAK_PRICE 갱신 (Entity 메서드) ===
             if swing.has_position():
                 swing.update_peak_price(int(current_high))
+
+            # 변경 전 SIGNAL 저장 (알림용)
+            prev_signal = swing.SIGNAL
 
             # === 4. SIGNAL별 오케스트레이션 ===
             if swing.is_waiting():
@@ -225,6 +235,10 @@ async def process_single_swing(
             # === 5. Entity 변경사항 저장 ===
             await db.flush()
             await db.commit()
+
+            # === 6. 푸쉬 알림 (fire-and-forget) ===
+            if user_id and swing.SIGNAL != prev_signal:
+                _fire_trade_notification(user_id, swing, prev_signal, st_code)
 
         except Exception as e:
             logger.error(
@@ -772,6 +786,55 @@ async def collect_single_stock(stock, stock_service: StockService):
         except Exception as e:
             logger.error(f"[DAY COLLECT] 데이터 수집 실패 ({code}): {e}")
             raise
+
+
+def _fire_trade_notification(
+    user_id: str, swing, prev_signal: int, st_code: str
+):
+    """SIGNAL 변경에 따른 푸쉬 알림 (fire-and-forget)"""
+    new_signal = swing.SIGNAL
+    entry_price = int(swing.ENTRY_PRICE) if swing.ENTRY_PRICE else 0
+    hold_qty = swing.HOLD_QTY or 0
+
+    # 매수 체결 (SIGNAL 증가: 0→1, 1→2)
+    if new_signal in (1, 2) and prev_signal < new_signal:
+        phase = new_signal
+        asyncio.create_task(
+            PushNotificationService.send_trade_notification(
+                user_id=user_id,
+                noti_type="TRADE",
+                st_code=st_code,
+                qty=hold_qty,
+                price=entry_price,
+                reasons=[f"{phase}차 매수 완료"],
+            )
+        )
+
+    # 1차 분할 매도 (SIGNAL 1,2 → 3)
+    elif new_signal == 3 and prev_signal in (1, 2):
+        asyncio.create_task(
+            PushNotificationService.send_trade_notification(
+                user_id=user_id,
+                noti_type="TRADE",
+                st_code=st_code,
+                qty=hold_qty,
+                price=entry_price,
+                reasons=["1차 분할 매도 완료"],
+            )
+        )
+
+    # 전량 매도 (SIGNAL → 0)
+    elif new_signal == 0 and prev_signal in (1, 2, 3):
+        asyncio.create_task(
+            PushNotificationService.send_trade_notification(
+                user_id=user_id,
+                noti_type="TRADE",
+                st_code=st_code,
+                qty=0,
+                price=entry_price,
+                reasons=["전량 매도 완료"],
+            )
+        )
 
 
 async def ema_cache_warmup_job():

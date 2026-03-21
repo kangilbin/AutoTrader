@@ -14,6 +14,7 @@ from app.domain.gemini.router import router as gemini_router
 from app.domain.routers.backtest_router import router as backtest_router
 from app.domain.routers.health_router import router as health_router
 from app.domain.trade_history.router import router as trade_history_router
+from app.domain.notification.router import router as notification_router
 
 __all__ = [
     "user_router",
@@ -28,4 +29,5 @@ __all__ = [
     "backtest_router",
     "health_router",
     "trade_history_router",
+    "notification_router",
 ]

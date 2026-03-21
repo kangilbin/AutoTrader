@@ -9,6 +9,7 @@ ORM 모델은 각 도메인의 entity.py에 정의되어 있습니다.
 - app/domain/swing/entity.py: SwingTrade, EmaOption
 - app/domain/trade_history/entity.py: TradeHistory
 - app/domain/device/entity.py: Device
+- app/domain/notification/entity.py: UserNotiSetting, UserPushToken
 """
 from sqlalchemy import MetaData
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
@@ -84,6 +85,7 @@ def _import_all_entities():
     import app.domain.swing.entity  # noqa: F401
     import app.domain.trade_history.entity  # noqa: F401
     import app.domain.device.entity  # noqa: F401
+    import app.domain.notification.entity  # noqa: F401
 
 
 async def get_db():
