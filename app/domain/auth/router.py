@@ -8,7 +8,6 @@ from typing import Annotated
 from app.common.database import get_db
 from app.common.dependencies import get_current_user
 from app.core.response import success_response
-from app.exceptions import DatabaseError
 from app.domain.auth.service import AuthService
 from app.domain.auth.schemas import AuthCreateRequest, AuthChoiceRequest
 from app.external.kis_api import oauth_token
@@ -38,19 +37,16 @@ async def register_auth(
     user_id: Annotated[str, Depends(get_current_user)]
 ):
     """보안키 등록"""
-    try:
-        # KIS API 검증
-        await oauth_token(
-            user_id,
-            request.SIMULATION_YN,
-            request.API_KEY,
-            request.SECRET_KEY
-        )
+    # KIS API 검증
+    await oauth_token(
+        user_id,
+        request.SIMULATION_YN,
+        request.API_KEY,
+        request.SECRET_KEY
+    )
 
-        auth_info = await service.create_auth(user_id, request)
-        return success_response("보안키 등록 완료", auth_info)
-    except Exception as e:
-        raise DatabaseError("보안키 등록 중 오류가 발생했습니다", operation="auth_register", original_error=e)
+    auth_info = await service.create_auth(user_id, request)
+    return success_response("보안키 등록 완료", auth_info)
 
 
 @router.post("/choice")

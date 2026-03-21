@@ -167,9 +167,9 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
         조건: 추세 약화((+DI - -DI) 격차 2일 연속 감소) + 수급 약화(OBV z-score 감소) 충족 시
         → 고점 대비 하락률로 매도 단계 결정
         """
-        row_date = row["STCK_BSOP_DATE"]
-        if hasattr(row_date, "month") and row_date.month == 7 and row_date.day == 21:
-            print("hellow TEST")
+        # row_date = row["STCK_BSOP_DATE"] 테스트를 위한 디버그
+        # if hasattr(row_date, "month") and row_date.month == 7 and row_date.day == 21:
+        #     print("hellow TEST")
 
         # NaN 체크
         required_cols = ["minus_di", "plus_di", "obv_z"]

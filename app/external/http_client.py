@@ -47,7 +47,7 @@ async def fetch(method: str, url: str, service_name: str = "External API", **kwa
                 "url": str(e.request.url),
                 "method": method,
                 "status_code": e.response.status_code,
-                "response_text": e.response.text,
+                "response_text": e.response.json().get('error_description'),
             },
         )
     except httpx.RequestError as e:
