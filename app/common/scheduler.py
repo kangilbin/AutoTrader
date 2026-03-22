@@ -17,13 +17,23 @@ async def schedule_start():
         CronTrigger(minute='29', hour='8', day_of_week='mon-fri')
     )
 
-    # 스윙 트레이딩 배치 작업: 평일 10시-14시55분, 5분마다 실행
+    # 스윙 트레이딩 배치 작업: 평일 10시-14시59분, 5분마다 실행
     scheduler.add_job(
         trade_job,
         CronTrigger(
-            minute='*/5',      # 5분마다
-            hour='10-14',      # 10시-14시 59분
-            day_of_week='mon-fri'  # 월-금
+            minute='*/5',
+            hour='10-14',
+            day_of_week='mon-fri'
+        )
+    )
+
+    # 장 마감 전 추가 실행: 평일 15시00분-15시20분, 5분마다
+    scheduler.add_job(
+        trade_job,
+        CronTrigger(
+            minute='0,5,10,15,20',
+            hour='15',
+            day_of_week='mon-fri'
         )
     )
 

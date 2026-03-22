@@ -1,8 +1,18 @@
 {
-  "sessionCount": 33,
+  "sessionCount": 37,
   "lastSession": {
-    "startedAt": "2026-03-21T06:13:13.320Z",
+    "startedAt": "2026-03-22T11:46:50.457Z",
     "platform": "claude",
     "level": "Starter"
+  },
+  "features": {
+    "trading-fix": {
+      "phase": "archived",
+      "matchRate": 100,
+      "iterationCount": 0,
+      "startedAt": "2026-03-22T14:00:00.000Z",
+      "archivedAt": "2026-03-22T18:00:00.000Z",
+      "archivedTo": "docs/archive/2026-03/trading-fix/"
+    }
   }
 }

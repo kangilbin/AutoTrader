@@ -24,6 +24,7 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
     # ========================================
     # 매수 조건
     CONSECUTIVE_REQUIRED = 2         # 연속 확인 횟수 (10분)
+    ENTRY_STATE_TTL = 1800           # 연속성 상태 Redis TTL (초, 30분)
 
     # 공통
     SECOND_BUY_TIME_MIN = 1200       # 1차 매수 후 최소 경과 시간 (초, 20분)
@@ -282,7 +283,7 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
         if not (surge_filtered and prev_day_bullish):
             # 공통 필터 미충족 → 연속성 리셋
             new_state = {'curr_signal': False, 'consecutive_count': 0, 'last_update': datetime.now().isoformat()}
-            await redis_client.setex(f"entry:{swing_id}", 900, json.dumps(new_state))
+            await redis_client.setex(f"entry:{swing_id}", cls.ENTRY_STATE_TTL, json.dumps(new_state))
             return None
 
         # === 시나리오 A: 눌림목 매집 진입 ===
@@ -328,7 +329,7 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
 
         # 상태 저장
         new_state = {'curr_signal': current_signal, 'consecutive_count': consecutive, 'last_update': datetime.now().isoformat()}
-        await redis_client.setex(prev_state_key, 900, json.dumps(new_state))
+        await redis_client.setex(prev_state_key, cls.ENTRY_STATE_TTL, json.dumps(new_state))
 
         if consecutive >= cls.CONSECUTIVE_REQUIRED:
             scenario_name = "눌림목매집" if scenario_a else "EMA돌파"

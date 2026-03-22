@@ -2,6 +2,7 @@
 스윙 매매 주문 실행 서비스
 분할 매수/매도 로직 구현 + 체결 확인
 """
+import asyncio
 import json
 import logging
 from decimal import Decimal
@@ -101,9 +102,13 @@ class SwingOrderExecutor:
             return {"success": False, "reason": error_msg}
 
         order_no = result.get("output", {}).get("ODNO")
-        execution = await check_order_execution(user_id, order_no, db)
-        executed_qty = execution.get("executed_qty", qty) if execution else qty
-        avg_price = execution.get("avg_price", int(curr_price)) if execution else int(curr_price)
+        execution = await _check_execution_with_retry(user_id, order_no, db)
+        if not execution:
+            logger.warning(f"[{st_code}] 체결 확인 불가 (주문번호: {order_no}), 다음 사이클에서 재확인")
+            return {"success": True, "completed": False, "qty": 0, "avg_price": 0,
+                    "order_no": order_no, "unconfirmed": True}
+        executed_qty = execution.get("executed_qty", qty)
+        avg_price = execution.get("avg_price", int(curr_price))
         executed_amount = float(executed_qty * avg_price)
         remaining_amount = float(target_amount) - executed_amount
 
@@ -124,14 +129,14 @@ class SwingOrderExecutor:
             return {"success": True, "completed": True, "qty": executed_qty,
                     "avg_price": avg_price, "amount": executed_amount, "phase": signal_on_complete}
 
-        # Redis 상태 저장 (분할 진행)
+        # 분할 진행 상태 (Redis 저장을 caller에 위임)
         partial_state = {
             "type": "buy",
             "phase": signal_on_complete,
             "target_amount": float(target_amount),
             "executed_amount": executed_amount,
         }
-        await redis_client.setex(f"partial_exec:{swing_id}", 86400, json.dumps(partial_state))
+        # Redis 저장을 caller에 위임 (DB commit 후 저장하도록)
 
         progress_pct = executed_amount / float(target_amount) * 100
         logger.info(
@@ -139,7 +144,8 @@ class SwingOrderExecutor:
             f"첫 {executed_qty}주 ({progress_pct:.1f}%), 나머지 분할 진행 예정"
         )
         return {"success": True, "completed": False, "qty": executed_qty,
-                "avg_price": avg_price, "amount": executed_amount, "phase": signal_on_complete}
+                "avg_price": avg_price, "amount": executed_amount, "phase": signal_on_complete,
+                "partial_state": partial_state}
 
     @classmethod
     async def execute_sell_with_partial(
@@ -179,12 +185,16 @@ class SwingOrderExecutor:
             return {"success": False, "reason": error_msg}
 
         order_no = result.get("output", {}).get("ODNO")
-        execution = await check_order_execution(user_id, order_no, db)
-        actual_qty = execution.get("executed_qty", order_qty) if execution else order_qty
+        execution = await _check_execution_with_retry(user_id, order_no, db)
+        if not execution:
+            logger.warning(f"[{st_code}] 체결 확인 불가 (주문번호: {order_no}), 다음 사이클에서 재확인")
+            return {"success": True, "completed": False, "qty": 0, "avg_price": 0,
+                    "order_no": order_no, "unconfirmed": True}
+        actual_qty = execution.get("executed_qty", order_qty)
 
         # 단일 주문으로 완료
         if actual_qty >= target_qty:
-            avg_sell_price = execution.get("avg_price", int(curr_price)) if execution else int(curr_price)
+            avg_sell_price = execution.get("avg_price", int(curr_price))
 
             # 거래 내역 DB 저장
             from app.domain.trade_history import TradeHistoryService
@@ -200,21 +210,22 @@ class SwingOrderExecutor:
             logger.info(f"[{st_code}] {signal_on_complete}차 매도 완료 (단일): {actual_qty}주")
             return {"success": True, "completed": True, "qty": actual_qty, "phase": signal_on_complete}
 
-        # Redis 상태 저장 (분할 진행)
+        # 분할 진행 상태 (Redis 저장을 caller에 위임)
         partial_state = {
             "type": "sell",
             "phase": signal_on_complete,
             "target_qty": target_qty,
             "executed_qty": actual_qty,
         }
-        await redis_client.setex(f"partial_exec:{swing_id}", 86400, json.dumps(partial_state))
+        # Redis 저장을 caller에 위임
 
         progress_pct = actual_qty / target_qty * 100
         logger.info(
             f"[{st_code}] {signal_on_complete}차 분할 매도 시작: "
             f"첫 {actual_qty}주 ({progress_pct:.1f}%), 나머지 분할 진행 예정"
         )
-        return {"success": True, "completed": False, "qty": actual_qty, "phase": signal_on_complete}
+        return {"success": True, "completed": False, "qty": actual_qty, "phase": signal_on_complete,
+                "partial_state": partial_state}
 
     @classmethod
     async def continue_partial_execution(
@@ -260,13 +271,13 @@ class SwingOrderExecutor:
             atr = cached_indicators.get("realtime_atr", 0)
             if ema > 0 and atr > 0 and curr_price <= ema - atr:
                 logger.warning(f"[{st_code}] 분할 매수 중 손절 신호 → 매수 중단 (보유 {current_hold_qty}주)")
-                await redis_client.delete(partial_key)
                 return {
                     "completed": False,
                     "aborted": True,
                     "signal_on_complete": 1 if current_hold_qty > 0 else 0,
                     "entry_price": current_entry_price,
                     "hold_qty": current_hold_qty,
+                    "clear_partial": True,
                 }
 
             target_amount = state["target_amount"]
@@ -278,10 +289,10 @@ class SwingOrderExecutor:
             order_qty = int(order_amount / curr_price)
 
             if order_qty <= 0:
-                await redis_client.delete(partial_key)
                 logger.info(f"[{st_code}] {state['phase']}차 분할 매수 완료 (잔여금액 소진)")
                 return {"completed": True, "aborted": False, "signal_on_complete": state["phase"],
-                        "entry_price": current_entry_price, "hold_qty": current_hold_qty}
+                        "entry_price": current_entry_price, "hold_qty": current_hold_qty,
+                        "clear_partial": True}
 
             order = Order.create(ord_dv="buy", itm_no=st_code, qty=order_qty)
             result = await place_order_api(user_id, order, db)
@@ -292,9 +303,13 @@ class SwingOrderExecutor:
                         "entry_price": current_entry_price, "hold_qty": current_hold_qty}
 
             order_no = result.get("output", {}).get("ODNO")
-            execution = await check_order_execution(user_id, order_no, db)
-            executed_qty = execution.get("executed_qty", order_qty) if execution else order_qty
-            avg_price = execution.get("avg_price", int(curr_price)) if execution else int(curr_price)
+            execution = await _check_execution_with_retry(user_id, order_no, db)
+            if not execution:
+                logger.warning(f"[{st_code}] 체결 확인 불가 (주문번호: {order_no}), 다음 사이클에서 재확인")
+                return {"success": True, "completed": False, "qty": 0, "avg_price": 0,
+                        "order_no": order_no, "unconfirmed": True}
+            executed_qty = execution.get("executed_qty", order_qty)
+            avg_price = execution.get("avg_price", int(curr_price))
 
             chunk_amount = float(executed_qty * avg_price)
             new_executed_amount = executed_amount + chunk_amount
@@ -319,16 +334,16 @@ class SwingOrderExecutor:
 
             # 완료 여부
             if target_amount - new_executed_amount < curr_price:
-                await redis_client.delete(partial_key)
                 logger.info(f"[{st_code}] {state['phase']}차 분할 매수 완료: 총 {new_hold_qty}주, 평단가={new_entry_price:,}원")
                 return {"completed": True, "aborted": False, "signal_on_complete": state["phase"],
-                        "entry_price": new_entry_price, "hold_qty": new_hold_qty}
+                        "entry_price": new_entry_price, "hold_qty": new_hold_qty,
+                        "clear_partial": True}
 
             state["executed_amount"] = new_executed_amount
-            await redis_client.setex(partial_key, 86400, json.dumps(state))
             logger.info(f"[{st_code}] 분할 매수 진행: {progress_pct:.1f}% (누적 {new_hold_qty}주)")
             return {"completed": False, "aborted": False, "signal_on_complete": state["phase"],
-                    "entry_price": new_entry_price, "hold_qty": new_hold_qty}
+                    "entry_price": new_entry_price, "hold_qty": new_hold_qty,
+                    "partial_state": state}
 
         # ── 매도 부분 실행 ──
         elif exec_type == "sell":
@@ -337,10 +352,10 @@ class SwingOrderExecutor:
             remaining_qty = target_qty - executed_qty_so_far
 
             if remaining_qty <= 0:
-                await redis_client.delete(partial_key)
                 return {"completed": True, "aborted": False, "signal_on_complete": state["phase"],
                         "entry_price": current_entry_price if current_hold_qty > 0 else 0,
-                        "hold_qty": current_hold_qty}
+                        "hold_qty": current_hold_qty,
+                        "clear_partial": True}
 
             per_cycle_amount = avg_daily_amount * cls.SLIPPAGE_RATIO if avg_daily_amount > 0 else remaining_qty * curr_price
             per_cycle_qty = max(1, int(per_cycle_amount / curr_price))
@@ -355,9 +370,13 @@ class SwingOrderExecutor:
                         "entry_price": current_entry_price, "hold_qty": current_hold_qty}
 
             order_no = result.get("output", {}).get("ODNO")
-            execution = await check_order_execution(user_id, order_no, db)
-            actual_qty = execution.get("executed_qty", order_qty) if execution else order_qty
-            avg_sell_price = execution.get("avg_price", int(curr_price)) if execution else int(curr_price)
+            execution = await _check_execution_with_retry(user_id, order_no, db)
+            if not execution:
+                logger.warning(f"[{st_code}] 체결 확인 불가 (주문번호: {order_no}), 다음 사이클에서 재확인")
+                return {"success": True, "completed": False, "qty": 0, "avg_price": 0,
+                        "order_no": order_no, "unconfirmed": True}
+            actual_qty = execution.get("executed_qty", order_qty)
+            avg_sell_price = execution.get("avg_price", int(curr_price))
 
             new_executed_qty = executed_qty_so_far + actual_qty
             new_hold_qty = current_hold_qty - actual_qty
@@ -374,17 +393,30 @@ class SwingOrderExecutor:
             )
 
             if new_executed_qty >= target_qty:
-                await redis_client.delete(partial_key)
                 logger.info(f"[{st_code}] {state['phase']}차 분할 매도 완료: {new_executed_qty}주, 잔량={new_hold_qty}주")
                 return {"completed": True, "aborted": False, "signal_on_complete": state["phase"],
                         "entry_price": current_entry_price if new_hold_qty > 0 else 0,
-                        "hold_qty": new_hold_qty}
+                        "hold_qty": new_hold_qty,
+                        "clear_partial": True}
 
             state["executed_qty"] = new_executed_qty
-            await redis_client.setex(partial_key, 86400, json.dumps(state))
             logger.info(f"[{st_code}] 분할 매도 진행: {progress_pct:.1f}% (잔량 {new_hold_qty}주)")
             return {"completed": False, "aborted": False, "signal_on_complete": state["phase"],
-                    "entry_price": current_entry_price, "hold_qty": new_hold_qty}
+                    "entry_price": current_entry_price, "hold_qty": new_hold_qty,
+                    "partial_state": state}
 
         return {"completed": True, "aborted": False, "signal_on_complete": None,
                 "entry_price": current_entry_price, "hold_qty": current_hold_qty}
+
+
+async def _check_execution_with_retry(
+    user_id: str, order_no: str, db, max_retries: int = 2, delay: float = 1.0
+):
+    """체결 확인 재시도 (최대 2회, 1초 간격)"""
+    for attempt in range(max_retries):
+        execution = await check_order_execution(user_id, order_no, db)
+        if execution and execution.get("executed_qty", 0) > 0:
+            return execution
+        if attempt < max_retries - 1:
+            await asyncio.sleep(delay)
+    return None

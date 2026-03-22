@@ -19,6 +19,7 @@ SIGNAL 상태:
 - OrderExecutor: 주문 실행 (execute_buy_with_partial, execute_sell_with_partial)
 - Orchestrator (이 파일): 위 세 계층을 조율
 """
+import json
 import logging
 import asyncio
 from datetime import datetime
@@ -41,51 +42,35 @@ _SEMAPHORE = asyncio.Semaphore(5)  # 동시에 최대 5개 종목 처리
 
 
 async def trade_job():
-    """
-    매매 신호 확인 및 생성 (5분 단위)
-    - 단일 20EMA 전략
-    - 병렬 처리: 최대 5개 종목 동시 실행
-    """
+    """매매 신호 확인 및 실행 (5분 단위)"""
     db = await Database.get_session()
-
     try:
         swing_service = SwingService(db)
-
-        # Redis 연결
         redis_client = await Redis.get_connection()
-
-        # 활성화된 스윙 목록 조회
         swing_list = await swing_service.get_active_swings()
-
         logger.info(f"[BATCH START] 활성 스윙 수: {len(swing_list)}")
-
-        # 병렬 처리: asyncio.gather로 모든 스윙 동시 실행
-        tasks = [
-            process_single_swing(swing_row, swing_service, redis_client)
-            for swing_row in swing_list
-        ]
-
-        # return_exceptions=True로 설정하여 일부 실패해도 전체 진행
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-
-        # 결과 로깅
-        success_count = sum(1 for r in results if not isinstance(r, Exception))
-        error_count = len(results) - success_count
-
-        logger.info(
-            f"[BATCH END] 배치 작업 완료 - "
-            f"성공: {success_count}, 실패: {error_count}, 총: {len(results)}"
-        )
-
     except Exception as e:
-        logger.error(f"trade_job 실패: {e}", exc_info=True)
+        logger.error(f"trade_job 스윙 목록 조회 실패: {e}", exc_info=True)
+        return
     finally:
         await db.close()
+
+    tasks = [
+        process_single_swing(swing_row, redis_client)
+        for swing_row in swing_list
+    ]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    success_count = sum(1 for r in results if not isinstance(r, Exception))
+    error_count = len(results) - success_count
+    logger.info(
+        f"[BATCH END] 배치 작업 완료 - "
+        f"성공: {success_count}, 실패: {error_count}, 총: {len(results)}"
+    )
 
 
 async def process_single_swing(
     swing_row,
-    swing_service: SwingService,
     redis_client
 ):
     """
@@ -95,11 +80,12 @@ async def process_single_swing(
 
     Args:
         swing_row: SWING_TRADE 조인 결과 (USER_ID, API_KEY, SECRET_KEY 포함)
-        swing_service: SwingService 인스턴스
         redis_client: Redis 클라이언트
     """
     async with _SEMAPHORE:
+        db = await Database.get_session()
         try:
+            swing_service = SwingService(db)
             swing_id = swing_row.SWING_ID
             st_code = swing_row.ST_CODE
             user_id = swing_row.USER_ID if hasattr(swing_row, 'USER_ID') else None
@@ -145,7 +131,6 @@ async def process_single_swing(
             )
 
             avg_daily_amount = cached_indicators["avg_daily_amount"]
-            db = swing_service.db
 
             # === 2. 부분 체결 진행 중 체크 (신호 로직보다 우선) ===
             partial_key = f"partial_exec:{swing_id}"
@@ -169,12 +154,6 @@ async def process_single_swing(
                     db=db
                 )
 
-                # 부분 체결 결과로 Entity 상태 직접 업데이트
-                if partial_result.get("entry_price"):
-                    swing.ENTRY_PRICE = Decimal(partial_result["entry_price"])
-                if partial_result.get("hold_qty") is not None:
-                    swing.HOLD_QTY = partial_result["hold_qty"]
-
                 if partial_result.get("completed") or partial_result.get("aborted"):
                     new_signal = partial_result.get("signal_on_complete", swing.SIGNAL)
                     if new_signal == 0:
@@ -183,10 +162,26 @@ async def process_single_swing(
                         swing.SIGNAL = new_signal
                         swing.MOD_DT = datetime.now()
 
+                # Entity 상태 업데이트
+                if partial_result.get("entry_price"):
+                    swing.ENTRY_PRICE = Decimal(partial_result["entry_price"])
+                if partial_result.get("hold_qty") is not None:
+                    swing.HOLD_QTY = partial_result["hold_qty"]
+
                 await db.flush()
                 await db.commit()
 
-                # 푸쉬 알림 (fire-and-forget)
+                # DB commit 성공 후 Redis 정리/갱신
+                if partial_result.get("completed") or partial_result.get("aborted"):
+                    await redis_client.delete(partial_key)
+                elif partial_result.get("partial_state"):
+                    # 진행 중: 갱신된 partial state를 Redis에 저장
+                    await redis_client.setex(
+                        partial_key, 86400,
+                        json.dumps(partial_result["partial_state"])
+                    )
+
+                # 푸쉬 알림
                 if user_id and swing.SIGNAL != prev_signal:
                     _fire_trade_notification(user_id, swing, prev_signal, st_code)
 
@@ -231,19 +226,31 @@ async def process_single_swing(
                     cached_indicators, avg_daily_amount
                 )
 
-            # === 5. Entity 변경사항 저장 ===
+            # === 5. 변경사항 저장 ===
             await db.flush()
             await db.commit()
 
-            # === 6. 푸쉬 알림 (fire-and-forget) ===
+            # === 5-1. 부분 체결 Redis 상태 저장 (DB commit 성공 후) ===
+            pending_partial = getattr(swing, '_pending_partial_state', None)
+            if pending_partial:
+                await redis_client.setex(
+                    f"partial_exec:{swing.SWING_ID}", 86400,
+                    json.dumps(pending_partial)
+                )
+                swing._pending_partial_state = None
+
+            # === 6. 푸쉬 알림 ===
             if user_id and swing.SIGNAL != prev_signal:
                 _fire_trade_notification(user_id, swing, prev_signal, st_code)
 
         except Exception as e:
+            await db.rollback()
             logger.error(
                 f"스윙 처리 실패 (SWING_ID={swing_row.SWING_ID}, ST_CODE={swing_row.ST_CODE}): {e}",
                 exc_info=True
             )
+        finally:
+            await db.close()
 
 
 # ==================== SIGNAL 핸들러 ====================
@@ -291,6 +298,10 @@ async def _handle_signal_0(
     if not order_result.get("success"):
         logger.error(f"[{st_code}] 1차 매수 실패: {order_result.get('reason')}")
         return
+
+    # order_result에 partial_state가 있으면 Entity에 임시 저장
+    if order_result.get("partial_state"):
+        swing._pending_partial_state = order_result["partial_state"]
 
     # Entity 상태 전환
     avg_price = order_result.get("avg_price", int(current_price))
@@ -416,6 +427,10 @@ async def _handle_signal_1(
     if not order_result.get("success"):
         logger.error(f"[{user_id} - 주식: {st_code}] 2차 매수 실패: {order_result.get('reason')}")
         return
+
+    # order_result에 partial_state가 있으면 Entity에 임시 저장
+    if order_result.get("partial_state"):
+        swing._pending_partial_state = order_result["partial_state"]
 
     new_avg_price = order_result.get("avg_price", int(current_price))
     new_qty = order_result.get("qty", 0)
@@ -569,6 +584,10 @@ async def _handle_signal_3(
             logger.error(f"[{user_id} - 주식: {st_code}] 재진입 매수 실패: {order_result.get('reason')}")
             return
 
+        # order_result에 partial_state가 있으면 Entity에 임시 저장
+        if order_result.get("partial_state"):
+            swing._pending_partial_state = order_result["partial_state"]
+
         new_avg_price = order_result.get("avg_price", int(current_price))
         new_qty = order_result.get("qty", 0)
         combined_entry = SwingOrderExecutor.calculate_avg_entry_price(
@@ -645,6 +664,10 @@ async def _execute_full_sell(
         logger.error(f"[{st_code}] 매도 실패: {order_result.get('reason')}")
         return
 
+    # order_result에 partial_state가 있으면 Entity에 임시 저장
+    if order_result.get("partial_state"):
+        swing._pending_partial_state = order_result["partial_state"]
+
     if order_result.get("completed", True):
         swing.reset_cycle()
     else:
@@ -688,6 +711,10 @@ async def _execute_primary_sell(
     if not order_result.get("success"):
         logger.error(f"[{user_id} - 주식: {st_code}] 1차 분할 매도 실패: {order_result.get('reason')}")
         return
+
+    # order_result에 partial_state가 있으면 Entity에 임시 저장
+    if order_result.get("partial_state"):
+        swing._pending_partial_state = order_result["partial_state"]
 
     sold_qty = order_result.get("qty", 0)
     remaining = hold_qty - sold_qty
@@ -798,7 +825,7 @@ def _fire_trade_notification(
     # 매수 체결 (SIGNAL 증가: 0→1, 1→2)
     if new_signal in (1, 2) and prev_signal < new_signal:
         phase = new_signal
-        asyncio.create_task(
+        task = asyncio.create_task(
             PushNotificationService.send_trade_notification(
                 user_id=user_id,
                 noti_type="TRADE",
@@ -808,10 +835,11 @@ def _fire_trade_notification(
                 reasons=[f"{phase}차 매수 완료"],
             )
         )
+        task.add_done_callback(_on_notification_done)
 
     # 1차 분할 매도 (SIGNAL 1,2 → 3)
     elif new_signal == 3 and prev_signal in (1, 2):
-        asyncio.create_task(
+        task = asyncio.create_task(
             PushNotificationService.send_trade_notification(
                 user_id=user_id,
                 noti_type="TRADE",
@@ -821,10 +849,11 @@ def _fire_trade_notification(
                 reasons=["1차 분할 매도 완료"],
             )
         )
+        task.add_done_callback(_on_notification_done)
 
     # 전량 매도 (SIGNAL → 0)
     elif new_signal == 0 and prev_signal in (1, 2, 3):
-        asyncio.create_task(
+        task = asyncio.create_task(
             PushNotificationService.send_trade_notification(
                 user_id=user_id,
                 noti_type="TRADE",
@@ -834,6 +863,16 @@ def _fire_trade_notification(
                 reasons=["전량 매도 완료"],
             )
         )
+        task.add_done_callback(_on_notification_done)
+
+
+def _on_notification_done(task: asyncio.Task):
+    """알림 태스크 완료 콜백 — 예외 로깅"""
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc:
+        logger.warning(f"푸쉬 알림 전송 실패: {exc}")
 
 
 async def ema_cache_warmup_job():

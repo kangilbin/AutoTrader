@@ -21,9 +21,7 @@ class TradingStrategyFactory:
 
     # 실시간 거래 전략 매핑
     _strategies: dict[str, Type[TradingStrategy]] = {
-        # 'A': SingleEMAStrategy,  # 이평선 전략
-        # 'B': SingleEMAStrategy,  # 일목균형표 (TODO: IchimokuTradingStrategy 구현 필요)
-        'S': SingleEMAStrategy,  # 단일 20EMA 전략 (기본)
+        'S': SingleEMAStrategy,  # 단일 20EMA 전략 (현재 유일한 실전 전략)
     }
 
     @classmethod

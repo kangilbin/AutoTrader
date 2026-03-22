@@ -1,6 +1,6 @@
 {
   "version": "2.0",
-  "lastUpdated": "2026-03-21T07:38:14.758Z",
+  "lastUpdated": "2026-03-22T13:11:03.761Z",
   "activeFeatures": [
     "strategies",
     "swing",
@@ -16,7 +16,8 @@
     "stock",
     "device",
     "external",
-    "notification"
+    "notification",
+    "trading-fix Gap 분석 완료"
   ],
   "primaryFeature": "strategies",
   "features": {
@@ -32,9 +33,9 @@
       },
       "timestamps": {
         "started": "2026-02-28T03:35:36.461Z",
-        "lastUpdated": "2026-03-15T13:40:42.596Z"
+        "lastUpdated": "2026-03-22T13:11:03.761Z"
       },
-      "lastFile": "/Users/apple/IdeaProjects/AutoTrader/app/domain/swing/backtest/strategies/single_ema_backtest_strategy.py"
+      "lastFile": "/Users/apple/IdeaProjects/AutoTrader/app/domain/swing/trading/strategies/single_ema_strategy.py"
     },
     "swing": {
       "phase": "do",
@@ -97,7 +98,7 @@
       "documents": {},
       "timestamps": {
         "started": "2026-03-13T05:32:59.682Z",
-        "lastUpdated": "2026-03-21T07:37:39.172Z"
+        "lastUpdated": "2026-03-22T12:29:09.036Z"
       },
       "lastFile": "/Users/apple/IdeaProjects/AutoTrader/app/domain/swing/trading/auto_swing_batch.py"
     },
@@ -136,9 +137,9 @@
       "documents": {},
       "timestamps": {
         "started": "2026-03-13T06:07:32.554Z",
-        "lastUpdated": "2026-03-21T07:28:24.707Z"
+        "lastUpdated": "2026-03-22T12:22:56.163Z"
       },
-      "lastFile": "/Users/apple/IdeaProjects/AutoTrader/app/common/database.py"
+      "lastFile": "/Users/apple/IdeaProjects/AutoTrader/app/common/scheduler.py"
     },
     "account": {
       "phase": "do",
@@ -217,6 +218,20 @@
         "lastUpdated": "2026-03-21T07:38:14.757Z"
       },
       "lastFile": "/Users/apple/IdeaProjects/AutoTrader/app/domain/notification/service.py"
+    },
+    "trading-fix Gap 분석 완료": {
+      "phase": "act",
+      "phaseNumber": 5,
+      "matchRate": null,
+      "iterationCount": 0,
+      "requirements": [],
+      "documents": {},
+      "timestamps": {
+        "started": "2026-03-22T12:28:42.970Z",
+        "lastUpdated": "2026-03-22T12:28:42.971Z"
+      },
+      "previousPhase": "check",
+      "autoAdvanced": true
     }
   },
   "pipeline": {
@@ -227,7 +242,7 @@
   "session": {
     "startedAt": "2026-02-28T03:08:34.644Z",
     "onboardingCompleted": false,
-    "lastActivity": "2026-03-21T07:38:14.758Z"
+    "lastActivity": "2026-03-22T13:11:03.761Z"
   },
   "history": [
     {
@@ -2009,6 +2024,144 @@
     {
       "timestamp": "2026-03-21T07:38:14.757Z",
       "feature": "notification",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-03-22T12:18:44.139Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-03-22T12:19:01.188Z",
+      "feature": "strategies",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-03-22T12:19:02.629Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-03-22T12:19:09.291Z",
+      "feature": "strategies",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-03-22T12:19:20.505Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-03-22T12:19:26.417Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-03-22T12:19:41.827Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-03-22T12:19:49.219Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-03-22T12:20:06.170Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-03-22T12:20:22.145Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-03-22T12:20:43.511Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-03-22T12:21:02.711Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-03-22T12:21:19.731Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-03-22T12:21:47.191Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-03-22T12:22:08.901Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-03-22T12:22:34.847Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-03-22T12:22:56.163Z",
+      "feature": "AutoTrader",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-03-22T12:24:23.478Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-03-22T12:28:42.971Z",
+      "feature": "trading-fix Gap 분석 완료",
+      "phase": "act",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-03-22T12:29:09.036Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-03-22T13:10:23.297Z",
+      "feature": "strategies",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-03-22T13:10:44.768Z",
+      "feature": "strategies",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-03-22T13:11:03.761Z",
+      "feature": "strategies",
       "phase": "do",
       "action": "updated"
     }
