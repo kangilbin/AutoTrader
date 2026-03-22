@@ -1,0 +1,416 @@
+{
+  "timestamp": "2026-03-04T12:19:29.818Z",
+  "reason": "compaction",
+  "status": {
+    "version": "2.0",
+    "lastUpdated": "2026-03-04T12:11:49.184Z",
+    "activeFeatures": [
+      "strategies",
+      "swing"
+    ],
+    "primaryFeature": "strategies",
+    "features": {
+      "strategies": {
+        "phase": "do",
+        "phaseNumber": 3,
+        "matchRate": 100,
+        "iterationCount": 0,
+        "requirements": [],
+        "documents": {
+          "analysis": "docs/03-analysis/strategies.analysis.md",
+          "report": "docs/04-report/features/strategies.report.md"
+        },
+        "timestamps": {
+          "started": "2026-02-28T03:35:36.461Z",
+          "lastUpdated": "2026-03-04T12:11:49.184Z"
+        },
+        "lastFile": "/Users/apple/IdeaProjects/AutoTrader/app/domain/swing/trading/strategies/base_single_ema.py"
+      },
+      "swing": {
+        "phase": "do",
+        "phaseNumber": 3,
+        "matchRate": null,
+        "iterationCount": 0,
+        "requirements": [],
+        "documents": {},
+        "timestamps": {
+          "started": "2026-02-28T03:36:02.099Z",
+          "lastUpdated": "2026-03-03T13:14:33.793Z"
+        },
+        "lastFile": "/Users/apple/IdeaProjects/AutoTrader/app/domain/swing/indicators.py"
+      }
+    },
+    "pipeline": {
+      "currentPhase": 1,
+      "level": "Dynamic",
+      "phaseHistory": []
+    },
+    "session": {
+      "startedAt": "2026-02-28T03:08:34.644Z",
+      "onboardingCompleted": false,
+      "lastActivity": "2026-03-04T12:11:49.184Z"
+    },
+    "history": [
+      {
+        "timestamp": "2026-02-28T03:35:36.461Z",
+        "feature": "strategies",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-28T03:35:41.824Z",
+        "feature": "strategies",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-28T03:35:46.886Z",
+        "feature": "strategies",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-28T03:35:51.951Z",
+        "feature": "strategies",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-28T03:35:57.015Z",
+        "feature": "strategies",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-28T03:36:02.099Z",
+        "feature": "swing",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-28T03:36:07.180Z",
+        "feature": "swing",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-28T03:37:07.765Z",
+        "feature": "strategies",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-28T03:51:09.441Z",
+        "feature": "strategies",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-28T03:51:57.973Z",
+        "feature": "strategies",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-28T03:52:12.362Z",
+        "feature": "strategies",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-28T04:11:49.671Z",
+        "feature": "strategies",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-28T04:12:13.823Z",
+        "feature": "strategies",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-28T04:14:44.237Z",
+        "feature": "strategies",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-28T04:14:49.315Z",
+        "feature": "strategies",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-28T04:14:54.402Z",
+        "feature": "strategies",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-28T04:14:59.481Z",
+        "feature": "strategies",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-28T04:15:04.713Z",
+        "feature": "strategies",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-28T04:41:25.155Z",
+        "feature": "strategies",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-28T04:41:49.055Z",
+        "feature": "strategies",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-28T04:41:54.114Z",
+        "feature": "strategies",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-28T04:42:55.983Z",
+        "feature": "strategies",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-28T04:43:01.052Z",
+        "feature": "strategies",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-28T04:43:06.125Z",
+        "feature": "strategies",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-28T05:09:23.687Z",
+        "feature": "swing",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-28T05:16:46.135Z",
+        "feature": "swing",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-28T05:17:30.477Z",
+        "feature": "strategies",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-28T05:21:10.963Z",
+        "feature": "strategies",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-28T05:27:42.525Z",
+        "feature": "strategies",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-28T07:07:33.628Z",
+        "feature": "swing",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-03-03T12:57:08.762Z",
+        "feature": "strategies",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-03-03T12:57:21.400Z",
+        "feature": "strategies",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-03-03T13:00:33.535Z",
+        "feature": "strategies",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-03-03T13:00:35.557Z",
+        "feature": "strategies",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-03-03T13:13:23.784Z",
+        "feature": "swing",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-03-03T13:13:52.297Z",
+        "feature": "swing",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-03-03T13:14:33.793Z",
+        "feature": "swing",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-03-03T13:32:02.402Z",
+        "feature": "strategies",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-03-03T13:32:37.626Z",
+        "feature": "strategies",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-03-03T13:33:08.220Z",
+        "feature": "strategies",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-03-03T13:33:21.932Z",
+        "feature": "strategies",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-03-03T13:33:39.061Z",
+        "feature": "strategies",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-03-03T13:51:06.548Z",
+        "feature": "strategies",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-03-03T14:00:39.514Z",
+        "feature": "strategies",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-03-03T14:00:53.855Z",
+        "feature": "strategies",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-03-03T14:01:09.935Z",
+        "feature": "strategies",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-03-03T14:01:20.996Z",
+        "feature": "strategies",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-03-03T14:01:31.014Z",
+        "feature": "strategies",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-03-03T14:01:42.144Z",
+        "feature": "strategies",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-03-03T14:02:04.506Z",
+        "feature": "strategies",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-03-03T14:02:16.866Z",
+        "feature": "strategies",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-03-03T14:02:28.025Z",
+        "feature": "strategies",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-03-03T14:02:37.813Z",
+        "feature": "strategies",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-03-03T14:02:48.111Z",
+        "feature": "strategies",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-03-03T14:03:00.431Z",
+        "feature": "strategies",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-03-03T14:03:33.917Z",
+        "feature": "strategies",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-03-03T14:03:49.590Z",
+        "feature": "strategies",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-03-03T14:04:05.350Z",
+        "feature": "strategies",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-03-04T12:07:39.066Z",
+        "feature": "strategies",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-03-04T12:11:49.184Z",
+        "feature": "strategies",
+        "phase": "do",
+        "action": "updated"
+      }
+    ]
+  }
+}

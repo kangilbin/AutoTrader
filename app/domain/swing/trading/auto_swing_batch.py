@@ -24,7 +24,6 @@ import asyncio
 from datetime import datetime
 from decimal import Decimal
 from app.domain.swing.indicators import TechnicalIndicators
-from app.domain.swing.repository import SwingRepository
 from app.external.kis_api import get_target_price, get_inquire_price
 from app.common.database import Database
 from app.domain.swing.service import SwingService

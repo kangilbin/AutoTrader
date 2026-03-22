@@ -12,7 +12,7 @@ class UserNotiSetting(Base):
     __tablename__ = "USER_NOTI_SETTING"
 
     USER_ID = Column(String(50), primary_key=True, comment='사용자 ID')
-    NOTI_TYPE = Column(String(20), primary_key=True, comment='알림 유형 (BUY, SELL, SIGNAL 등)')
+    NOTI_TYPE = Column(String(20), primary_key=True, comment='알림 유형 (TRADE, SIGNAL 등)')
     USE_YN = Column(CHAR(1), nullable=False, default='N', comment='사용 여부')
     REG_DT = Column(DateTime, default=datetime.now, nullable=False, comment='등록일')
     MOD_DT = Column(DateTime, comment='수정일')
