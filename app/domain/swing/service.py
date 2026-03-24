@@ -140,11 +140,13 @@ class SwingService:
             logger.error(f"스윙 삭제 실패: {e}", exc_info=True)
             raise DatabaseError("스윙 삭제에 실패했습니다")
 
-    async def mapping_swing(self, user_id: str, account_no: str) -> List[dict]:
+    async def mapping_swing(self, user_id: str, account_no: str) -> dict:
         """스윙 목록과 보유 주식 매핑"""
         try:
             swing_list = await self.repo.find_all_by_account_no(account_no)
-            buy_list = await get_stock_balance(user_id, self.db)
+            balance_data = await get_stock_balance(user_id, self.db)
+            buy_list = balance_data["output1"]
+            output2 = balance_data["output2"]
 
             swing_dict = {swing["ST_CODE"]: swing for swing in swing_list}
             buy_dict = {item.get("pdno"): item for item in buy_list if item.get("pdno")}
@@ -219,7 +221,21 @@ class SwingService:
                     results.append(result_data)
 
             await self.db.commit()
-            return results
+
+            # output2에서 계좌 요약 정보 매핑
+            pchs_amt = int(output2.get("pchs_amt_smtl_amt", 0))
+            evlu_pfls = int(output2.get("evlu_pfls_smtl_amt", 0))
+            profit_rate = round(evlu_pfls / pchs_amt * 100, 2) if pchs_amt else 0.0
+
+            summary = {
+                "TOTAL_INVESTMENT_AMOUNT": int(output2.get("tot_evlu_amt", 0)),
+                "TOTAL_PRINCIPAL": pchs_amt,
+                "TOTAL_PROFIT": evlu_pfls,
+                "TOTAL_PROFIT_RATE": profit_rate,
+                "CASH_ASSET": int(output2.get("dnca_tot_amt", 0)),
+            }
+
+            return {"list": results, "summary": summary}
 
         except SQLAlchemyError as e:
             await self.db.rollback()

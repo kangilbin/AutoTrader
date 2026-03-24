@@ -100,7 +100,7 @@ async def _get_user_auth(user_id: str, db: AsyncSession):
 # ============================================================
 
 async def get_stock_balance(user_id: str, db: AsyncSession, fk100="", nk100="", result: Optional[List] = None,):
-    """보유 주식 조회"""
+    """보유 주식 조회 (output1: 종목 리스트, output2: 계좌 요약)"""
     user_data, access_data = await _get_user_auth(user_id, db)
 
     path = "/uapi/domestic-stock/v1/trading/inquire-balance"
@@ -146,10 +146,14 @@ async def get_stock_balance(user_id: str, db: AsyncSession, fk100="", nk100="", 
     else:
         result.extend(body.get("output1"))
 
+    # output2: 계좌 요약 (예수금, 총평가금액, 손익 등) - 마지막 호출 값이 유효
+    output2 = body.get("output2", [{}])
+    output2_data = output2[0] if output2 else {}
+
     if tr_cont == "F" or tr_cont == "M":  # 다음 페이지 존재하는 경우 자기 호출 처리
         return await get_stock_balance(user_id, db, ctx_area_fk100, ctx_area_nk100, result)
 
-    return result
+    return {"output1": result, "output2": output2_data}
 
 
 # ============================================================
