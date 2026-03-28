@@ -7,3 +7,4 @@
 | swing-order | 95% | 2026-03-15 | [Plan](swing-order/swing-order.plan.md), [Analysis](swing-order/swing-order.analysis.md), [Report](swing-order/swing-order.report.md) |
 | push-noti | 98% | 2026-03-21 | [Plan](push-noti/push-noti.plan.md), [Design](push-noti/push-noti.design.md), [Analysis](push-noti/push-noti.analysis.md), [Report](push-noti/push-noti.report.md) |
 | trading-fix | 100% | 2026-03-22 | [Plan](trading-fix/trading-fix.plan.md), [Design](trading-fix/trading-fix.design.md), [Report](trading-fix/trading-fix.report.md) |
+| auth-key | 100% | 2026-03-24 | [Plan](auth-key/auth-key.plan.md), [Report](auth-key/auth-key.report.md) |

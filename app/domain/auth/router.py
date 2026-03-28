@@ -49,6 +49,17 @@ async def register_auth(
     return success_response("보안키 등록 완료", auth_info)
 
 
+@router.delete("/{auth_id}")
+async def delete_auth(
+    auth_id: int,
+    service: Annotated[AuthService, Depends(get_auth_service)],
+    user_id: Annotated[str, Depends(get_current_user)]
+):
+    """보안키 삭제"""
+    await service.delete_auth(user_id, auth_id)
+    return success_response("보안키 삭제 완료")
+
+
 @router.post("/choice")
 async def choose_auth(
     request: AuthChoiceRequest,

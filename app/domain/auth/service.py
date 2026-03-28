@@ -91,13 +91,13 @@ class AuthService:
             logger.error(f"인증키 수정 실패: {e}", exc_info=True)
             raise DatabaseError("인증키 수정에 실패했습니다", operation="update", original_error=e)
 
-    async def delete_auth(self, auth_id: int) -> bool:
-        """인증키 삭제"""
+    async def delete_auth(self, user_id: str, auth_id: int) -> bool:
+        """인증키 삭제 - 소유권 검증 포함"""
         try:
-            result = await self.repo.delete(auth_id)
-            await self.db.commit()
+            result = await self.repo.delete(user_id, auth_id)
             if not result:
                 raise NotFoundError("인증키", auth_id)
+            await self.db.commit()
             return result
         except SQLAlchemyError as e:
             await self.db.rollback()

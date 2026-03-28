@@ -62,9 +62,11 @@ class AuthRepository:
         await self.db.flush()
         return await self.db.get(Auth, auth_id)
 
-    async def delete(self, auth_id: int) -> bool:
-        """인증키 삭제 (flush만 수행)"""
-        query = delete(Auth).filter(Auth.AUTH_ID == auth_id)
+    async def delete(self, user_id: str, auth_id: int) -> bool:
+        """인증키 삭제 (flush만 수행) - 소유권 검증 포함"""
+        query = delete(Auth).filter(
+            and_(Auth.USER_ID == user_id, Auth.AUTH_ID == auth_id)
+        )
         result = await self.db.execute(query)
         await self.db.flush()
         return result.rowcount > 0

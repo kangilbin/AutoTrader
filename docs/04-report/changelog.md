@@ -2,6 +2,37 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2026-03-24] - Auth Key Deletion API Security Fix (auth-key)
+
+### Added
+- `DELETE /auths/{auth_id}` endpoint for authentication key deletion
+- Ownership validation in AuthService.delete_auth(user_id, auth_id)
+- 3-layer security verification: JWT authentication → user_id validation → SQL WHERE clause
+
+### Changed
+- AuthService.delete_auth() signature: `delete_auth(auth_id)` → `delete_auth(user_id, auth_id)` with ownership check
+- AuthRepository.delete() signature: `delete(auth_id)` → `delete(user_id, auth_id)` with and_() condition
+
+### Fixed
+- Security vulnerability: Authentication keys could be deleted by other users → Fixed with ownership validation
+
+### Documentation
+- [Plan Document](../01-plan/features/auth-key.plan.md): Feature planning and security requirements
+- [Completion Report](../auth-key.report.md): Final PDCA cycle results and architecture details
+
+### Metrics
+- Design Match Rate: 100% (all requirements met)
+- Architecture Compliance: 100% (DDD Lite patterns)
+- Convention Compliance: 100% (Python standards)
+- Security Verification: 3-layer validation implemented
+
+### Files Modified
+1. `app/domain/auth/router.py` - DELETE endpoint implementation
+2. `app/domain/auth/service.py` - delete_auth() with ownership validation
+3. `app/domain/auth/repository.py` - delete() with and_() filter condition
+
+---
+
 ## [2026-03-22] - Swing Batch Stability Improvements (trading-fix)
 
 ### Fixed
