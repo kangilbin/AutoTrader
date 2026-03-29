@@ -1,17 +1,20 @@
 """
 Account Service - 비즈니스 로직 및 트랜잭션 관리
 """
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.exc import SQLAlchemyError
+import logging
 from datetime import datetime
 from typing import List
-import logging
 
-from app.domain.account.repository import AccountRepository
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.security import decrypt
 from app.domain.account.entity import Account
+from app.domain.account.repository import AccountRepository
 from app.domain.account.schemas import AccountCreateRequest, AccountResponse
-from app.exceptions import ValidationError, NotFoundError, DatabaseError
-from app.common.redis import get_redis
+from app.domain.auth.repository import AuthRepository
+from app.exceptions import NotFoundError, DatabaseError
+from app.external.kis_api import issue_token, verify_account_balance
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +60,22 @@ class AccountService:
             await self.db.rollback()
             logger.error(f"계좌 수정 실패: {e}", exc_info=True)
             raise DatabaseError("계좌 수정에 실패했습니다", operation="update", original_error=e)
+
+    async def verify_account(self, user_id: str, auth_id: int, account_no: str) -> dict:
+        """계좌번호 검증 - KIS 잔고 조회 API로 유효성 확인"""
+        auth_repo = AuthRepository(self.db)
+        auth_data = await auth_repo.find_by_id(user_id, auth_id)
+        if not auth_data:
+            raise NotFoundError("인증키", auth_id)
+
+        access_data = await issue_token(
+            auth_data["SIMULATION_YN"],
+            decrypt(auth_data["API_KEY"]),
+            decrypt(auth_data["SECRET_KEY"]),
+        )
+
+        await verify_account_balance(access_data, account_no)
+        return {"account_no": account_no, "valid": True}
 
     async def delete_account(self, account_id: str) -> bool:
         """계좌 삭제"""

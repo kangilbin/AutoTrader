@@ -6,6 +6,12 @@ from pydantic import BaseModel
 from typing import Optional
 
 
+class AccountVerifyRequest(BaseModel):
+    """계좌번호 검증 요청"""
+    ACCOUNT_NO: str
+    AUTH_ID: int
+
+
 class AccountCreateRequest(BaseModel):
     """계좌 등록 요청"""
     ACCOUNT_NO: str

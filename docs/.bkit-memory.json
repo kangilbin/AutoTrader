@@ -1,11 +1,17 @@
 {
-  "sessionCount": 38,
+  "sessionCount": 39,
   "lastSession": {
-    "startedAt": "2026-03-24T05:57:20.777Z",
+    "startedAt": "2026-03-29T07:08:26.533Z",
     "platform": "claude",
     "level": "Starter"
   },
   "features": {
+    "balance-api": {
+      "phase": "check",
+      "matchRate": 100,
+      "iterationCount": 0,
+      "startedAt": "2026-03-29T09:00:00.000Z"
+    },
     "trading-fix": {
       "phase": "archived",
       "matchRate": 100,

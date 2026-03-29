@@ -1,6 +1,6 @@
 {
   "version": "2.0",
-  "lastUpdated": "2026-03-28T13:01:20.058Z",
+  "lastUpdated": "2026-03-29T13:33:40.866Z",
   "activeFeatures": [
     "strategies",
     "swing",
@@ -17,7 +17,8 @@
     "device",
     "external",
     "notification",
-    "trading-fix Gap 분석 완료"
+    "trading-fix Gap 분석 완료",
+    "balance-api Gap 분석"
   ],
   "primaryFeature": "strategies",
   "features": {
@@ -150,9 +151,9 @@
       "documents": {},
       "timestamps": {
         "started": "2026-03-13T15:37:46.509Z",
-        "lastUpdated": "2026-03-13T15:46:41.861Z"
+        "lastUpdated": "2026-03-29T08:36:26.058Z"
       },
-      "lastFile": "/Users/apple/IdeaProjects/AutoTrader/app/domain/account/entity.py"
+      "lastFile": "/Users/apple/IdeaProjects/AutoTrader/app/domain/account/service.py"
     },
     "auth": {
       "phase": "do",
@@ -202,9 +203,9 @@
       "documents": {},
       "timestamps": {
         "started": "2026-03-13T16:07:44.994Z",
-        "lastUpdated": "2026-03-21T07:27:08.654Z"
+        "lastUpdated": "2026-03-29T13:33:40.866Z"
       },
-      "lastFile": "/Users/apple/IdeaProjects/AutoTrader/app/external/expo_push.py"
+      "lastFile": "/Users/apple/IdeaProjects/AutoTrader/app/external/kis_api.py"
     },
     "notification": {
       "phase": "do",
@@ -232,6 +233,20 @@
       },
       "previousPhase": "check",
       "autoAdvanced": true
+    },
+    "balance-api Gap 분석": {
+      "phase": "act",
+      "phaseNumber": 5,
+      "matchRate": null,
+      "iterationCount": 0,
+      "requirements": [],
+      "documents": {},
+      "timestamps": {
+        "started": "2026-03-29T07:25:02.896Z",
+        "lastUpdated": "2026-03-29T07:25:02.896Z"
+      },
+      "previousPhase": "check",
+      "autoAdvanced": true
     }
   },
   "pipeline": {
@@ -242,7 +257,7 @@
   "session": {
     "startedAt": "2026-02-28T03:08:34.644Z",
     "onboardingCompleted": false,
-    "lastActivity": "2026-03-28T13:01:20.058Z"
+    "lastActivity": "2026-03-29T13:33:40.866Z"
   },
   "history": [
     {
@@ -2180,6 +2195,90 @@
     {
       "timestamp": "2026-03-28T13:01:20.058Z",
       "feature": "auth",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-03-29T07:21:27.261Z",
+      "feature": "account",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-03-29T07:21:41.451Z",
+      "feature": "account",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-03-29T07:21:55.900Z",
+      "feature": "account",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-03-29T07:25:02.896Z",
+      "feature": "balance-api Gap 분석",
+      "phase": "act",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-03-29T08:14:44.859Z",
+      "feature": "account",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-03-29T08:15:01.827Z",
+      "feature": "account",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-03-29T08:15:28.268Z",
+      "feature": "external",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-03-29T08:15:51.507Z",
+      "feature": "account",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-03-29T08:16:06.500Z",
+      "feature": "account",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-03-29T08:16:21.536Z",
+      "feature": "account",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-03-29T08:35:58.316Z",
+      "feature": "external",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-03-29T08:36:11.988Z",
+      "feature": "account",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-03-29T08:36:26.058Z",
+      "feature": "account",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-03-29T13:33:40.866Z",
+      "feature": "external",
       "phase": "do",
       "action": "updated"
     }

@@ -96,6 +96,81 @@ async def _get_user_auth(user_id: str, db: AsyncSession):
 
 
 # ============================================================
+# 토큰 발급 (캐싱 없음)
+# ============================================================
+
+async def issue_token(simulation_yn: str, api_key: str, secret_key: str) -> dict:
+    """KIS OAuth 토큰 발급 (Redis 캐싱 없이 즉시 발급)"""
+    path = "oauth2/tokenP"
+    if simulation_yn == "Y":
+        api_url = settings.DEV_API_URL
+    else:
+        api_url = settings.REAL_API_URL
+
+    url = f"{api_url}/{path}"
+    query = {
+        "grant_type": "client_credentials",
+        "appkey": api_key,
+        "appsecret": secret_key,
+    }
+
+    response = await fetch("POST", url, "KIS", json=query)
+    body = response["body"]
+    access_token = body.get("access_token")
+
+    if (not access_token) or (body.get("error_code")):
+        raise ExternalServiceError("KIS", kis_error_message(body, "토큰 발급 실패"))
+
+    return {
+        "access_token": access_token,
+        "api_key": api_key,
+        "secret_key": secret_key,
+        "simulation_yn": simulation_yn,
+    }
+
+
+# ============================================================
+# 계좌 검증 관련
+# ============================================================
+
+async def verify_account_balance(access_data: dict, account_no: str):
+    """계좌번호 검증 - KIS 잔고 조회 API로 유효성 확인"""
+    path = "/uapi/domestic-stock/v1/trading/inquire-balance"
+    if access_data.get("simulation_yn") == "Y":
+        url = settings.DEV_API_URL
+    else:
+        url = settings.REAL_API_URL
+
+    api_url = f"{url}/{path}"
+
+    if access_data.get("simulation_yn") == "Y":
+        tr_id = "VTTC8434R"
+    else:
+        tr_id = "TTTC8434R"
+
+    headers = kis_headers(access_data, tr_id=tr_id)
+
+    query = {
+        "CANO": account_no[:8],
+        "ACNT_PRDT_CD": account_no[-2:],
+        "AFHR_FLPR_YN": "N",
+        "OFL_YN": "",
+        "INQR_DVSN": "02",
+        "UNPR_DVSN": "01",
+        "FUND_STTL_ICLD_YN": "N",
+        "FNCG_AMT_AUTO_RDPT_YN": "N",
+        "PRCS_DVSN": "00",
+        "CTX_AREA_FK100": "",
+        "CTX_AREA_NK100": "",
+    }
+    response = await fetch("GET", api_url, "KIS", params=query, headers=headers)
+    body = response["body"]
+
+    if body.get("rt_cd") != "0":
+        raise ExternalServiceError("KIS", body.get("msg1", "계좌번호 검증 실패"))
+
+
+# ============================================================
 # 잔고 조회 관련
 # ============================================================
 
