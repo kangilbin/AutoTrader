@@ -1,0 +1,464 @@
+"""
+KIS (한국투자증권) API 외국 주식 통합 모듈
+"""
+import logging
+from typing import List, Optional
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.common.redis import get_redis
+from app.core.config import get_settings
+from app.domain.order.entity import Order, ModifyOrder
+from app.external.headers import kis_headers
+from app.external.http_client import fetch
+from app.external.kis_api import _get_user_auth, oauth_token
+
+logger = logging.getLogger(__name__)
+settings = get_settings()
+
+async def get_stock_balance(user_id: str, db: AsyncSession, fk100="", nk100="", result: Optional[List] = None,):
+    """보유 잔고 조회 (output1: 종목 리스트, output2: 계좌 요약)"""
+    user_data, access_data = await _get_user_auth(user_id, db)
+
+    path = "uapi/domestic-stock/v1/trading/inquire-balance"
+    if access_data.get("simulation_yn") == "Y":
+        url = settings.DEV_API_URL
+    else:
+        url = settings.REAL_API_URL
+
+    api_url = f"{url}/{path}"
+
+    if access_data.get("simulation_yn") == "Y":
+        tr_id = "VTTC8434R"  # 모의투자
+    else:
+        tr_id = "TTTC8434R"  # 실전투자
+
+    headers = kis_headers(
+        access_data,
+        tr_id=tr_id,
+    )
+
+    query = {
+        "CANO": user_data.get("ACCOUNT_NO")[:8],
+        "ACNT_PRDT_CD": user_data.get("ACCOUNT_NO")[-2:],
+        "AFHR_FLPR_YN": "N",
+        "OFL_YN": "",
+        "INQR_DVSN": "02",
+        "UNPR_DVSN": "01",
+        "FUND_STTL_ICLD_YN": "N",
+        "FNCG_AMT_AUTO_RDPT_YN": "N",
+        "PRCS_DVSN": "00",
+        "CTX_AREA_FK100": fk100,
+        "CTX_AREA_NK100": nk100
+    }
+    response = await fetch("GET", api_url, "KIS", params=query, headers=headers)
+    body = response["body"]
+    header = response["header"]
+    tr_cont = header.get("tr_cont")
+
+    ctx_area_fk100 = body.get("ctx_area_fk100")
+    ctx_area_nk100 = body.get("ctx_area_nk100")
+    if result is None:
+        result = list(body.get("output1"))
+    else:
+        result.extend(body.get("output1"))
+
+    # output2: 계좌 요약 (예수금, 총평가금액, 손익 등) - 마지막 호출 값이 유효
+    output2 = body.get("output2", [{}])
+    output2_data = output2[0] if output2 else {}
+
+    if tr_cont == "F" or tr_cont == "M":  # 다음 페이지 존재하는 경우 자기 호출 처리
+        return await get_stock_balance(user_id, db, ctx_area_fk100, ctx_area_nk100, result)
+
+    return {"output1": result, "output2": output2_data}
+
+
+async def place_order_api(user_id: str, order: Order, db: AsyncSession):
+    """주식 주문"""
+    user_data, access_data = await _get_user_auth(user_id, db)
+    if access_data.get("simulation_yn") == "Y":
+        url = settings.DEV_API_URL
+    else:
+        url = settings.REAL_API_URL
+    path = "uapi/domestic-stock/v1/trading/order-cash"
+    api_url = f"{url}/{path}"
+
+    if order.ord_dv == "buy":
+        if access_data.get("simulation_yn") == "Y":
+            tr_id = "VTTC0802U"  # 모의투자
+        else:
+            tr_id = "TTTC0012U"  # 실전투자
+    elif order.ord_dv == "sell":
+        if access_data.get("simulation_yn") == "Y":
+            tr_id = "VTTC0801U"  # 모의투자
+        else:
+            tr_id = "TTTC0011U"  # 실전투자
+    else:
+        return None
+
+    headers = kis_headers(
+        access_data,
+        tr_id=tr_id,
+    )
+
+    query = {
+        "CANO": user_data.get("ACCOUNT_NO")[:8],
+        "ACNT_PRDT_CD": user_data.get("ACCOUNT_NO")[-2:],
+        "PDNO": order.itm_no,
+        "ORD_DVSN": "01",  # 시장가
+        "ORD_QTY": str(order.qty),
+        "ORD_UNPR": "0"
+    }
+    response = await fetch("POST", api_url, "KIS", body=query, headers=headers)
+    body = response["body"]
+    return body
+
+
+async def get_cancelable_orders_api(user_id: str, db: AsyncSession, fk100="", nk100=""):
+    """주식 정정/취소 가능 주문 내역"""
+    user_data, access_data = await _get_user_auth(user_id, db)
+
+    path = "uapi/domestic-stock/v1/trading/inquire-psbl-rvsecncl"
+    api_url = f"{settings.REAL_API_URL}/{path}"
+    
+    tr_id = "TTTC0084R"
+
+    headers = kis_headers(
+        access_data,
+        tr_id=tr_id,
+    )
+    query = {
+        "CANO": user_data.get("ACCOUNT_NO")[:8],
+        "ACNT_PRDT_CD": user_data.get("ACCOUNT_NO")[-2:],
+        "INQR_DVSN_1": "1",
+        "INQR_DVSN_2": "0",
+        "CTX_AREA_FK100": fk100,
+        "CTX_AREA_NK100": nk100
+    }
+    response = await fetch("POST", api_url, "KIS", json=query, headers=headers)
+    body = response["body"]
+    return body
+
+
+async def modify_or_cancel_order_api(user_id: str, order: ModifyOrder, db: AsyncSession):
+    """주문 정정/취소"""
+    user_data, access_data = await _get_user_auth(user_id, db)
+    if access_data.get("simulation_yn") == "Y":
+        url = settings.DEV_API_URL
+    else:
+        url = settings.REAL_API_URL
+    path = "uapi/overseas-stock/v1/trading/order-rvsecncl"
+    api_url = f"{url}/{path}"
+
+    if access_data.get("simulation_yn") == "Y":
+        tr_id = "VTTC0803U"  # 모의투자
+    else:
+        tr_id = "TTTC0013U"  # 실전투자
+
+    # 잔량전부인 경우 수량 0 처리
+    ord_qty = 0 if order.qty_all_ord_yn == 'Y' else order.ord_qty
+
+    headers = kis_headers(
+        access_data,
+        tr_id=tr_id,
+    )
+    query = {
+        "CANO": user_data.get("ACCOUNT_NO")[:8],
+        "ACNT_PRDT_CD": user_data.get("ACCOUNT_NO")[-2:],
+        "OVRS_EXCG_CD": "NASD",
+        "PDNO": order.pdno,
+        "ORGN_ODNO": order.orgn_odno,
+        "RVSE_CNCL_DVSN_CD": order.rvse_cncl_dvsn_cd,
+        "ORD_QTY": str(ord_qty),
+        "OVRS_ORD_UNPR": str(order.ord_unpr) if order.rvse_cncl_dvsn_cd == '01' else "0",
+    }
+    response = await fetch("POST", api_url, "KIS", json=query, headers=headers)
+    body = response["body"]
+    return body
+
+async def get_inquire_daily_ccld_obj(user_id: str, db: AsyncSession, fk100="", nk100=""):
+    """미체결내역"""
+    user_data, access_data = await _get_user_auth(user_id, db)
+    url = settings.REAL_API_URL
+    tr_id = "TTTS3018R"
+
+    path = 'uapi/overseas-stock/v1/trading/inquire-nccs'
+    api_url = f"{url}/{path}"
+
+    headers = kis_headers(
+        access_data,
+        tr_id=tr_id,
+    )
+    query = {
+        "CANO": user_data.get("ACCOUNT_NO")[:8],
+        "ACNT_PRDT_CD": user_data.get("ACCOUNT_NO")[-2:],
+        "OVRS_EXCG_CD": "NASD",
+        "SORT_SQN": "DS",
+        "CTX_AREA_FK100": fk100,
+        "CTX_AREA_NK100": nk100
+    }
+    response = await fetch("POST", api_url, "KIS", json=query, headers=headers)
+    body = response["body"]
+    return body
+
+
+async def check_order_execution(user_id: str, order_no: str, db: AsyncSession, max_retry: int = 3, delay: float = 1.0) -> Optional[dict]:
+    """
+    주문 체결 확인 (폴링)
+
+    Args:
+        user_id: 사용자 ID
+        order_no: 주문번호 (ODNO)
+        db: AsyncSession (DB 세션)
+        max_retry: 최대 재시도 횟수
+        delay: 재시도 간격 (초)
+
+    Returns:
+        체결 정보 또는 None
+        {
+            "order_no": 주문번호,
+            "st_code": 종목코드,
+            "avg_price": 평균체결가,
+            "executed_qty": 체결수량,
+            "executed_amt": 체결금액,
+            "trade_type": 매매구분 (01:매도, 02:매수)
+        }
+    """
+    import asyncio
+
+    for attempt in range(max_retry):
+        try:
+            result = await get_inquire_daily_ccld_obj(user_id, db)
+
+            if not result or "output1" not in result:
+                logger.warning(f"[체결확인] 응답 없음, 재시도 {attempt + 1}/{max_retry}")
+                await asyncio.sleep(delay)
+                continue
+
+            # 주문번호로 체결 내역 찾기
+            for order in result.get("output1", []):
+                if order.get("odno") == order_no:
+                    executed_qty = int(order.get("tot_ccld_qty", 0))
+
+                    if executed_qty > 0:
+                        # 체결 완료
+                        return {
+                            "order_no": order_no,
+                            "st_code": order.get("pdno"),
+                            "avg_price": int(order.get("avg_prvs", 0)),
+                            "executed_qty": executed_qty,
+                            "executed_amt": int(order.get("tot_ccld_amt", 0)),
+                            "trade_type": order.get("sll_buy_dvsn_cd")  # 01:매도, 02:매수
+                        }
+                    else:
+                        # 미체결 상태
+                        logger.info(f"[체결확인] 주문 {order_no} 미체결, 재시도 {attempt + 1}/{max_retry}")
+                        break
+
+            await asyncio.sleep(delay)
+
+        except Exception as e:
+            logger.error(f"[체결확인] 오류: {e}, 재시도 {attempt + 1}/{max_retry}")
+            await asyncio.sleep(delay)
+
+    logger.warning(f"[체결확인] 주문 {order_no} 체결 확인 실패 (max_retry 초과)")
+    return None
+
+
+async def get_target_price(code: str):
+    """종목 일별 시세 조회"""
+    redis = await get_redis()
+    access_data = await redis.hgetall("mgnt_access_token")
+
+    if not access_data:
+        access_data = await oauth_token("mgnt", "Y", settings.API_KEY, settings.SECRET_KEY)
+    url = settings.REAL_API_URL
+    path = 'uapi/domestic-stock/v1/quotations/inquire-daily-price'
+    api_url = f"{url}/{path}"
+
+    headers = kis_headers(
+        access_data,
+        tr_id="HHDFS76200100",
+    )
+
+    query = {
+        "AUTH": "",
+        "EXCD": "NAS",
+        "SYMB": code,
+    }
+    response = await fetch("POST", api_url, "KIS", json=query, headers=headers)
+    body = response["body"]
+    return body['output'][0]
+
+
+async def get_stock_data(user_id: str, code: str, start_date: str, end_date: str, db: AsyncSession):
+    """기간별 주식 데이터 조회"""
+    user_data, access_data = await _get_user_auth(user_id, db)
+    if access_data.get("simulation_yn") == "Y":
+        url = settings.DEV_API_URL
+    else:
+        url = settings.REAL_API_URL
+    path = "uapi/overseas-price/v1/quotations/dailyprice"
+    api_url = f"{url}/{path}"
+
+    headers = kis_headers(
+        access_data,
+        tr_id="FHKST03010100",
+    )
+
+    params = {
+        "FID_COND_MRKT_DIV_CODE": "UN",
+        "FID_INPUT_ISCD": code,
+        "FID_INPUT_DATE_1": start_date,
+        "FID_INPUT_DATE_2": end_date,
+        "FID_PERIOD_DIV_CODE": "D",
+        "FID_ORG_ADJ_PRC": "0"
+    }
+
+    response = await fetch("GET", api_url, "KIS", params=params, headers=headers)
+    body = response["body"]
+    # API 응답 데이터의 키를 대문자로 변경하고 st_code 추가
+    if body and "output2" in body:
+        for item in body["output2"]:
+            converted_item = {}
+
+            column_mapping = {
+                'stck_oprc': 'STCK_OPRC',
+                'stck_hgpr': 'STCK_HGPR',
+                'stck_lwpr': 'STCK_LWPR',
+                'stck_clpr': 'STCK_CLPR',
+                'acml_vol': 'ACML_VOL',
+                'stck_bsop_date': 'STCK_BSOP_DATE'
+            }
+
+            for api_key, db_key in column_mapping.items():
+                if api_key in item:
+                    converted_item[db_key] = item[api_key]
+
+            converted_item["ST_CODE"] = code
+
+            item.clear()
+            item.update(converted_item)
+
+    return body
+
+
+async def get_inquire_asking_price(user_id: str, code: str, db: AsyncSession):
+    """주식 호가 조회"""
+    user_data, access_data = await _get_user_auth(user_id, db)
+    path = "uapi/domestic-stock/v1/quotations/inquire-asking-price-exp-ccn"
+    if access_data.get("simulation_yn") == "Y":
+        url = settings.DEV_API_URL
+    else:
+        url = settings.REAL_API_URL
+    api_url = f"{url}/{path}"
+
+    headers = kis_headers(
+        access_data,
+        tr_id="FHKST01010200",
+    )
+
+    query = {
+        "FID_COND_MRKT_DIV_CODE": "UN",
+        "FID_INPUT_ISCD": code,
+    }
+    response = await fetch("GET", api_url, "KIS", params=query, headers=headers)
+    body = response["body"]
+    return body
+
+
+async def get_inquire_price(user_id: str, code: str, db: AsyncSession):
+    """주식현재가 시세"""
+    user_data, access_data = await _get_user_auth(user_id, db)
+    path = "uapi/domestic-stock/v1/quotations/inquire-price"
+    if access_data.get("simulation_yn") == "Y":
+        url = settings.DEV_API_URL
+    else:
+        url = settings.REAL_API_URL
+    api_url = f"{url}/{path}"
+
+    headers = kis_headers(
+        access_data,
+        tr_id="FHKST01010100",
+    )
+
+    query = {
+        "FID_COND_MRKT_DIV_CODE": "UN",
+        "FID_INPUT_ISCD": code,
+    }
+    response = await fetch("GET", api_url, "KIS", params=query, headers=headers)
+    body = response["body"]
+    return body
+
+async def get_fluctuation_rank(user_id: str, db: AsyncSession, rank_sort_cls_code: str = "0"):
+    """해외주식 등락률 순위"""
+    user_data, access_data = await _get_user_auth(user_id, db)
+    path = "uapi/overseas-stock/v1/ranking/price-fluct"
+    url = settings.REAL_API_URL
+    api_url = f"{url}/{path}"
+
+
+    headers = kis_headers(
+        access_data,
+        tr_id="HHDFS76260000",
+    )
+
+    query = {
+        "KEYB": "",
+        "AUTH": "",
+        "EXCD": "NAS",
+        "GUBN": rank_sort_cls_code,
+        "MINX": "4",
+        "VOL_RANG": "4",
+    }
+    response = await fetch("GET", api_url, "KIS", params=query, headers=headers)
+    body = response["body"]
+    return body.get("output")
+
+async def get_volume_rank(user_id: str, db: AsyncSession):
+    """해외주식 거래량 순위"""
+    user_data, access_data = await _get_user_auth(user_id, db)
+    path = "uapi/overseas-stock/v1/ranking/volume-surge"
+    url = settings.REAL_API_URL
+    api_url = f"{url}/{path}"
+
+
+    headers = kis_headers(
+        access_data,
+        tr_id="HHDFS76270000",
+    )
+
+    query = {
+        "KEYB": "",
+        "AUTH": "",
+        "EXCD": "NAS",
+        "MINX": "4",
+        "VOL_RANG": "4",
+    }
+    response = await fetch("GET", api_url, "KIS", params=query, headers=headers)
+    body = response["body"]
+    return body.get("output")
+
+async def get_volume_power_rank(user_id: str, db: AsyncSession):
+    """해외주식 체결강도 순위"""
+    user_data, access_data = await _get_user_auth(user_id, db)
+    path = "uapi/overseas-stock/v1/ranking/volume-power"
+    url = settings.REAL_API_URL
+    api_url = f"{url}/{path}"
+
+
+    headers = kis_headers(
+        access_data,
+        tr_id="HHDFS76280000",
+    )
+
+    query = {
+        "KEYB": "",
+        "AUTH": "",
+        "EXCD": "NAS",
+        "MINX": "4",
+        "VOL_RANG": "4",
+    }
+    response = await fetch("GET", api_url, "KIS", params=query, headers=headers)
+    body = response["body"]
+    return body.get("output")
