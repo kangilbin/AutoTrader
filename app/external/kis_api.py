@@ -135,7 +135,7 @@ async def issue_token(simulation_yn: str, api_key: str, secret_key: str) -> dict
 
 async def verify_account_balance(access_data: dict, account_no: str):
     """계좌번호 검증 - KIS 잔고 조회 API로 유효성 확인"""
-    path = "/uapi/domestic-stock/v1/trading/inquire-balance"
+    path = "uapi/domestic-stock/v1/trading/inquire-balance"
     if access_data.get("simulation_yn") == "Y":
         url = settings.DEV_API_URL
     else:
@@ -178,7 +178,7 @@ async def get_stock_balance(user_id: str, db: AsyncSession, fk100="", nk100="", 
     """보유 주식 조회 (output1: 종목 리스트, output2: 계좌 요약)"""
     user_data, access_data = await _get_user_auth(user_id, db)
 
-    path = "/uapi/domestic-stock/v1/trading/inquire-balance"
+    path = "uapi/domestic-stock/v1/trading/inquire-balance"
     if access_data.get("simulation_yn") == "Y":
         url = settings.DEV_API_URL
     else:
@@ -242,7 +242,7 @@ async def place_order_api(user_id: str, order: Order, db: AsyncSession):
         url = settings.DEV_API_URL
     else:
         url = settings.REAL_API_URL
-    path = "/uapi/domestic-stock/v1/trading/order-cash"
+    path = "uapi/domestic-stock/v1/trading/order-cash"
     api_url = f"{url}/{path}"
 
     if order.ord_dv == "buy":
@@ -280,7 +280,7 @@ async def get_cancelable_orders_api(user_id: str, db: AsyncSession, fk100="", nk
     """주식 정정/취소 가능 주문 내역"""
     user_data, access_data = await _get_user_auth(user_id, db)
 
-    path = "/uapi/domestic-stock/v1/trading/inquire-psbl-rvsecncl"
+    path = "uapi/domestic-stock/v1/trading/inquire-psbl-rvsecncl"
     api_url = f"{settings.REAL_API_URL}/{path}"
     
     tr_id = "TTTC0084R"
@@ -309,7 +309,7 @@ async def modify_or_cancel_order_api(user_id: str, order: ModifyOrder, db: Async
         url = settings.DEV_API_URL
     else:
         url = settings.REAL_API_URL
-    path = "/uapi/domestic-stock/v1/trading/order-rvsecncl"
+    path = "uapi/domestic-stock/v1/trading/order-rvsecncl"
     api_url = f"{url}/{path}"
 
     if access_data.get("simulation_yn") == "Y":
@@ -349,7 +349,7 @@ async def get_inquire_daily_ccld_obj(user_id: str, db: AsyncSession, inqr_strt_d
         url = settings.REAL_API_URL
         tr_id = "CTSC9215R"
 
-    path = '/uapi/domestic-stock/v1/trading/inquire-daily-ccld'
+    path = 'uapi/domestic-stock/v1/trading/inquire-daily-ccld'
     api_url = f"{url}/{path}"
 
     if inqr_strt_dt is None:
@@ -468,7 +468,7 @@ async def get_target_price(code: str):
     )
 
     query = {
-        "FID_COND_MRKT_DIV_CODE": "J",
+        "FID_COND_mrkt_code_CODE": "J",
         "FID_INPUT_ISCD": code,
         "FID_ORG_ADJ_PRC": "0",
         "FID_PERIOD_DIV_CODE": "D"
@@ -485,7 +485,7 @@ async def get_stock_data(user_id: str, code: str, start_date: str, end_date: str
         url = settings.DEV_API_URL
     else:
         url = settings.REAL_API_URL
-    path = "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice"
+    path = "uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice"
     api_url = f"{url}/{path}"
 
     headers = kis_headers(
@@ -494,7 +494,7 @@ async def get_stock_data(user_id: str, code: str, start_date: str, end_date: str
     )
 
     params = {
-        "FID_COND_MRKT_DIV_CODE": "J",
+        "FID_COND_mrkt_code_CODE": "J",
         "FID_INPUT_ISCD": code,
         "FID_INPUT_DATE_1": start_date,
         "FID_INPUT_DATE_2": end_date,
@@ -533,7 +533,7 @@ async def get_stock_data(user_id: str, code: str, start_date: str, end_date: str
 async def get_inquire_asking_price(user_id: str, code: str, db: AsyncSession):
     """주식 호가 조회"""
     user_data, access_data = await _get_user_auth(user_id, db)
-    path = "/uapi/domestic-stock/v1/quotations/inquire-asking-price-exp-ccn"
+    path = "uapi/domestic-stock/v1/quotations/inquire-asking-price-exp-ccn"
     if access_data.get("simulation_yn") == "Y":
         url = settings.DEV_API_URL
     else:
@@ -546,7 +546,7 @@ async def get_inquire_asking_price(user_id: str, code: str, db: AsyncSession):
     )
 
     query = {
-        "FID_COND_MRKT_DIV_CODE": "J",
+        "FID_COND_mrkt_code_CODE": "J",
         "FID_INPUT_ISCD": code,
     }
     response = await fetch("GET", api_url, "KIS", params=query, headers=headers)
@@ -557,7 +557,7 @@ async def get_inquire_asking_price(user_id: str, code: str, db: AsyncSession):
 async def get_inquire_price(user_id: str, code: str, db: AsyncSession):
     """주식현재가 시세"""
     user_data, access_data = await _get_user_auth(user_id, db)
-    path = "/uapi/domestic-stock/v1/quotations/inquire-price"
+    path = "uapi/domestic-stock/v1/quotations/inquire-price"
     if access_data.get("simulation_yn") == "Y":
         url = settings.DEV_API_URL
     else:
@@ -570,7 +570,7 @@ async def get_inquire_price(user_id: str, code: str, db: AsyncSession):
     )
 
     query = {
-        "FID_COND_MRKT_DIV_CODE": "J",
+        "FID_COND_mrkt_code_CODE": "J",
         "FID_INPUT_ISCD": code,
     }
     response = await fetch("GET", api_url, "KIS", params=query, headers=headers)
@@ -580,7 +580,7 @@ async def get_inquire_price(user_id: str, code: str, db: AsyncSession):
 async def get_fluctuation_rank(user_id: str, db: AsyncSession, rank_sort_cls_code: str = "0", prc_cls_code: str = "1"):
     """국내주식 등락률 순위"""
     user_data, access_data = await _get_user_auth(user_id, db)
-    path = "/uapi/domestic-stock/v1/ranking/fluctuation"
+    path = "uapi/domestic-stock/v1/ranking/fluctuation"
     url = settings.REAL_API_URL
     api_url = f"{url}/{path}"
 
@@ -592,7 +592,7 @@ async def get_fluctuation_rank(user_id: str, db: AsyncSession, rank_sort_cls_cod
 
     query = {
         "fid_rsfl_rate2": "",
-        "fid_cond_mrkt_div_code": "J",
+        "fid_cond_mrkt_code_code": "J",
         "fid_cond_scr_div_code": "20170",
         "fid_input_iscd": "0000",
         "fid_rank_sort_cls_code": rank_sort_cls_code,
@@ -613,7 +613,7 @@ async def get_fluctuation_rank(user_id: str, db: AsyncSession, rank_sort_cls_cod
 async def get_volume_rank(user_id: str, db: AsyncSession, blng_cls_code: str = "3"):
     """국내주식 거래량 순위"""
     user_data, access_data = await _get_user_auth(user_id, db)
-    path = "/uapi/domestic-stock/v1/quotations/volume-rank"
+    path = "uapi/domestic-stock/v1/quotations/volume-rank"
     url = settings.REAL_API_URL
     api_url = f"{url}/{path}"
 
@@ -624,7 +624,7 @@ async def get_volume_rank(user_id: str, db: AsyncSession, blng_cls_code: str = "
     )
 
     query = {
-        "FID_COND_MRKT_DIV_CODE": "J",
+        "FID_COND_mrkt_code_CODE": "J",
         "FID_COND_SCR_DIV_CODE": "20170",
         "FID_INPUT_ISCD": "0000",
         "FID_DIV_CLS_CODE": "1",
@@ -655,7 +655,7 @@ async def get_volume_power_rank(user_id: str, db: AsyncSession, input_iscd: str 
 
     query = {
         "fid_trgt_exls_cls_code": "1",
-        "fid_cond_mrkt_div_code": "J",
+        "fid_cond_mrkt_code_code": "J",
         "fid_cond_scr_div_code": "20168",
         "fid_input_iscd": input_iscd,
         "fid_div_cls_code": "0",

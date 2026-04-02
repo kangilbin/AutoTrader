@@ -8,6 +8,8 @@ from decimal import Decimal
 from app.common.database import Base
 from app.exceptions import ValidationError
 
+VALID_MRKT_CODES = ('J', 'NX', 'UN', 'NASD')
+
 
 class SwingTrade(Base):
     """스윙 매매 엔티티"""
@@ -42,6 +44,8 @@ class SwingTrade(Base):
             raise ValidationError("계좌번호는 필수입니다")
         if not self.MRKT_CODE:
             raise ValidationError("시장코드는 필수입니다")
+        if self.MRKT_CODE not in VALID_MRKT_CODES:
+            raise ValidationError(f"시장코드는 {VALID_MRKT_CODES} 중 하나여야 합니다")
         if not self.ST_CODE:
             raise ValidationError("종목코드는 필수입니다")
         if self.SWING_TYPE not in ('S', 'A', 'B'):

@@ -9,7 +9,7 @@ from decimal import Decimal
 from typing import Dict, Any
 
 from app.domain.order.entity import Order
-from app.external.kis_api import place_order_api, check_order_execution
+from app.external import kis_api, foreign_api
 
 logger = logging.getLogger(__name__)
 
@@ -72,7 +72,8 @@ class SwingOrderExecutor:
         target_amount: Decimal,
         avg_daily_amount: float,
         signal_on_complete: int,
-        db=None
+        db=None,
+        mrkt_code: str = "",
     ) -> Dict[str, Any]:
         """
         분할 매수 시작 (첫 사이클)
@@ -93,8 +94,16 @@ class SwingOrderExecutor:
         if qty <= 0:
             return {"success": False, "reason": "매수 수량 부족"}
 
-        order = Order.create(ord_dv="buy", itm_no=st_code, qty=qty)
-        result = await place_order_api(user_id, order, db)
+        _overseas = mrkt_code == "NASD"
+        # 해외 주식: 지정가 주문 (시장가 제한) — 현재가 + 0.5% 슬리피지
+        order_unpr = int(float(current_price) * 1.005 * 100) / 100 if _overseas else 0
+        order = Order.create(ord_dv="buy", itm_no=st_code, qty=qty,
+                             unpr=order_unpr, excg_cd=mrkt_code if _overseas else "")
+
+        if _overseas:
+            result = await foreign_api.place_order_api(user_id, order, db)
+        else:
+            result = await kis_api.place_order_api(user_id, order, db)
 
         if not (result and result.get("rt_cd") == "0"):
             error_msg = result.get("msg1", "주문 실패") if result else "응답 없음"
@@ -102,7 +111,7 @@ class SwingOrderExecutor:
             return {"success": False, "reason": error_msg}
 
         order_no = result.get("output", {}).get("ODNO")
-        execution = await _check_execution_with_retry(user_id, order_no, db)
+        execution = await _check_execution_with_retry(user_id, order_no, db, overseas=_overseas, mrkt_code=mrkt_code)
         if not execution:
             logger.warning(f"[{st_code}] 체결 확인 불가 (주문번호: {order_no}), 다음 사이클에서 재확인")
             return {"success": True, "completed": False, "qty": 0, "avg_price": 0,
@@ -158,7 +167,8 @@ class SwingOrderExecutor:
         target_qty: int,
         avg_daily_amount: float,
         signal_on_complete: int,
-        db=None
+        db=None,
+        mrkt_code: str = "",
     ) -> Dict[str, Any]:
         """
         분할 매도 시작 (첫 사이클)
@@ -176,8 +186,16 @@ class SwingOrderExecutor:
         # 단일 주문 조건: 목표수량이 사이클 한도 이하
         order_qty = target_qty if target_qty <= per_cycle_qty else per_cycle_qty
 
-        order = Order.create(ord_dv="sell", itm_no=st_code, qty=order_qty)
-        result = await place_order_api(user_id, order, db)
+        _overseas = mrkt_code == "NASD"
+        # 해외 주식: 지정가 주문 — 현재가 - 0.5% 슬리피지
+        order_unpr = int(float(current_price) * 0.995 * 100) / 100 if _overseas else 0
+        order = Order.create(ord_dv="sell", itm_no=st_code, qty=order_qty,
+                             unpr=order_unpr, excg_cd=mrkt_code if _overseas else "")
+
+        if _overseas:
+            result = await foreign_api.place_order_api(user_id, order, db)
+        else:
+            result = await kis_api.place_order_api(user_id, order, db)
 
         if not (result and result.get("rt_cd") == "0"):
             error_msg = result.get("msg1", "주문 실패") if result else "응답 없음"
@@ -185,7 +203,7 @@ class SwingOrderExecutor:
             return {"success": False, "reason": error_msg}
 
         order_no = result.get("output", {}).get("ODNO")
-        execution = await _check_execution_with_retry(user_id, order_no, db)
+        execution = await _check_execution_with_retry(user_id, order_no, db, overseas=_overseas, mrkt_code=mrkt_code)
         if not execution:
             logger.warning(f"[{st_code}] 체결 확인 불가 (주문번호: {order_no}), 다음 사이클에서 재확인")
             return {"success": True, "completed": False, "qty": 0, "avg_price": 0,
@@ -239,7 +257,8 @@ class SwingOrderExecutor:
         cached_indicators: Dict,
         current_entry_price: int,
         current_hold_qty: int,
-        db
+        db,
+        mrkt_code: str = "",
     ) -> Dict[str, Any]:
         """
         부분 실행 사이클 처리 (5분 간격 배치에서 호출)
@@ -294,8 +313,14 @@ class SwingOrderExecutor:
                         "entry_price": current_entry_price, "hold_qty": current_hold_qty,
                         "clear_partial": True}
 
-            order = Order.create(ord_dv="buy", itm_no=st_code, qty=order_qty)
-            result = await place_order_api(user_id, order, db)
+            _overseas = mrkt_code == "NASD"
+            order_unpr = int(float(current_price) * 1.005 * 100) / 100 if _overseas else 0
+            order = Order.create(ord_dv="buy", itm_no=st_code, qty=order_qty,
+                                 unpr=order_unpr, excg_cd=mrkt_code if _overseas else "")
+            if _overseas:
+                result = await foreign_api.place_order_api(user_id, order, db)
+            else:
+                result = await kis_api.place_order_api(user_id, order, db)
 
             if not (result and result.get("rt_cd") == "0"):
                 logger.error(f"[{st_code}] 분할 매수 chunk 주문 실패")
@@ -303,7 +328,7 @@ class SwingOrderExecutor:
                         "entry_price": current_entry_price, "hold_qty": current_hold_qty}
 
             order_no = result.get("output", {}).get("ODNO")
-            execution = await _check_execution_with_retry(user_id, order_no, db)
+            execution = await _check_execution_with_retry(user_id, order_no, db, overseas=_overseas, mrkt_code=mrkt_code)
             if not execution:
                 logger.warning(f"[{st_code}] 체결 확인 불가 (주문번호: {order_no}), 다음 사이클에서 재확인")
                 return {"success": True, "completed": False, "qty": 0, "avg_price": 0,
@@ -361,8 +386,14 @@ class SwingOrderExecutor:
             per_cycle_qty = max(1, int(per_cycle_amount / curr_price))
             order_qty = min(remaining_qty, per_cycle_qty)
 
-            order = Order.create(ord_dv="sell", itm_no=st_code, qty=order_qty)
-            result = await place_order_api(user_id, order, db)
+            _overseas = mrkt_code == "NASD"
+            order_unpr = int(float(current_price) * 0.995 * 100) / 100 if _overseas else 0
+            order = Order.create(ord_dv="sell", itm_no=st_code, qty=order_qty,
+                                 unpr=order_unpr, excg_cd=mrkt_code if _overseas else "")
+            if _overseas:
+                result = await foreign_api.place_order_api(user_id, order, db)
+            else:
+                result = await kis_api.place_order_api(user_id, order, db)
 
             if not (result and result.get("rt_cd") == "0"):
                 logger.error(f"[{st_code}] 분할 매도 chunk 주문 실패")
@@ -370,7 +401,7 @@ class SwingOrderExecutor:
                         "entry_price": current_entry_price, "hold_qty": current_hold_qty}
 
             order_no = result.get("output", {}).get("ODNO")
-            execution = await _check_execution_with_retry(user_id, order_no, db)
+            execution = await _check_execution_with_retry(user_id, order_no, db, overseas=_overseas, mrkt_code=mrkt_code)
             if not execution:
                 logger.warning(f"[{st_code}] 체결 확인 불가 (주문번호: {order_no}), 다음 사이클에서 재확인")
                 return {"success": True, "completed": False, "qty": 0, "avg_price": 0,
@@ -410,13 +441,21 @@ class SwingOrderExecutor:
 
 
 async def _check_execution_with_retry(
-    user_id: str, order_no: str, db, max_retries: int = 2, delay: float = 1.0
+    user_id: str, order_no: str, db,
+    max_retries: int = 2, delay: float = 1.0,
+    overseas: bool = False, mrkt_code: str = "",
 ):
-    """체결 확인 재시도 (최대 2회, 1초 간격)"""
+    """체결 확인 재시도 (국내: 1초 간격, 해외: 2초 간격)"""
+    _delay = 2.0 if overseas else delay
     for attempt in range(max_retries):
-        execution = await check_order_execution(user_id, order_no, db)
+        if overseas:
+            execution = await foreign_api.check_order_execution(
+                user_id, order_no, db, excg_cd=mrkt_code
+            )
+        else:
+            execution = await kis_api.check_order_execution(user_id, order_no, db)
         if execution and execution.get("executed_qty", 0) > 0:
             return execution
         if attempt < max_retries - 1:
-            await asyncio.sleep(delay)
+            await asyncio.sleep(_delay)
     return None

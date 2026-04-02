@@ -55,6 +55,30 @@ class SwingRepository:
         result = await self.db.execute(query)
         return result.all()
 
+    async def find_active_domestic_swings(self) -> List:
+        """활성화된 국내 스윙 목록 조회"""
+        query = text(
+            "SELECT ST.*, A.USER_ID, U.API_KEY, U.SECRET_KEY "
+            "FROM SWING_TRADE ST "
+            "LEFT JOIN ACCOUNT A ON ST.ACCOUNT_NO = A.ACCOUNT_NO "
+            "LEFT JOIN AUTH_KEY U ON A.USER_ID = U.USER_ID AND A.AUTH_ID = U.AUTH_ID "
+            "WHERE ST.USE_YN = 'Y' AND ST.MRKT_CODE IN ('J', 'NX', 'UN')"
+        )
+        result = await self.db.execute(query)
+        return result.all()
+
+    async def find_active_overseas_swings(self) -> List:
+        """활성화된 해외 스윙 목록 조회"""
+        query = text(
+            "SELECT ST.*, A.USER_ID, U.API_KEY, U.SECRET_KEY "
+            "FROM SWING_TRADE ST "
+            "LEFT JOIN ACCOUNT A ON ST.ACCOUNT_NO = A.ACCOUNT_NO "
+            "LEFT JOIN AUTH_KEY U ON A.USER_ID = U.USER_ID AND A.AUTH_ID = U.AUTH_ID "
+            "WHERE ST.USE_YN = 'Y' AND ST.MRKT_CODE = 'NASD'"
+        )
+        result = await self.db.execute(query)
+        return result.all()
+
     async def save(self, swing: SwingTrade) -> SwingTrade:
         """스윙 저장 (flush만 수행)"""
         self.db.add(swing)

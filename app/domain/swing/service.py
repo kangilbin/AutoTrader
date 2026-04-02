@@ -17,6 +17,7 @@ from app.domain.stock.service import StockService
 from app.domain.stock.stock_data_batch import fetch_and_store_3_years_data
 from app.exceptions import DatabaseError, NotFoundError, DuplicateError
 from app.external.kis_api import get_stock_balance
+from app.external import foreign_api
 from app.common.database import Database
 from app.common.redis import Redis
 import logging
@@ -140,11 +141,14 @@ class SwingService:
             logger.error(f"스윙 삭제 실패: {e}", exc_info=True)
             raise DatabaseError("스윙 삭제에 실패했습니다")
 
-    async def mapping_swing(self, user_id: str, account_no: str) -> dict:
+    async def mapping_swing(self, user_id: str, account_no: str, mrkt_code: str = "J") -> dict:
         """스윙 목록과 보유 주식 매핑"""
         try:
             swing_list = await self.repo.find_all_by_account_no(account_no)
-            balance_data = await get_stock_balance(user_id, self.db)
+            if mrkt_code == "NASD":
+                balance_data = await foreign_api.get_stock_balance(user_id, self.db)
+            else:
+                balance_data = await get_stock_balance(user_id, self.db)
             buy_list = balance_data["output1"]
             output2 = balance_data["output2"]
 
@@ -160,7 +164,7 @@ class SwingService:
 
                 if st_code not in swing_dict:
                     # 새 스윙 등록
-                    mrkt_code = buy_item.get("mrkt_code", "J")
+                    mrkt_code = mrkt_code if mrkt_code == "NASD" else buy_item.get("mrkt_code", "J")
                     swing = SwingTrade.create(
                         account_no=account_no,
                         mrkt_code=mrkt_code,
@@ -245,6 +249,14 @@ class SwingService:
     async def get_active_swings(self) -> List:
         """활성화된 스윙 목록 조회 (배치용)"""
         return await self.repo.find_active_swings()
+
+    async def get_active_domestic_swings(self) -> List:
+        """활성화된 국내 스윙 목록 조회"""
+        return await self.repo.find_active_domestic_swings()
+
+    async def get_active_overseas_swings(self) -> List:
+        """활성화된 해외 스윙 목록 조회"""
+        return await self.repo.find_active_overseas_swings()
 
     async def cache_single_indicators(self, mrkt_code: str, st_code: str) -> bool:
         """
@@ -348,7 +360,7 @@ class SwingService:
             logger.error(f"[{st_code}] 지표 캐싱 실패: {e}")
             return False
 
-    async def warmup_ema_cache(self, redis_client) -> Dict[str, Any]:
+    async def warmup_ema_cache(self, redis_client, overseas_only: bool = False) -> Dict[str, Any]:
         """
         지표 캐시 워밍업 (애플리케이션 시작 시 또는 스케줄 배치)
 
@@ -372,6 +384,8 @@ class SwingService:
         try:
             # 1. 활성 종목 코드 조회
             active_codes = await self.repo.find_active_stock_codes()
+            if overseas_only:
+                active_codes = [(m, s) for m, s in active_codes if m == "NASD"]
             logger.info(f"활성 종목 수: {len(active_codes)}개")
 
             if not active_codes:

@@ -26,6 +26,7 @@ from datetime import datetime
 from decimal import Decimal
 from app.domain.swing.indicators import TechnicalIndicators
 from app.external.kis_api import get_target_price, get_inquire_price
+from app.external import foreign_api
 from app.common.database import Database
 from app.domain.swing.service import SwingService
 from app.domain.stock.service import StockService
@@ -42,13 +43,13 @@ _SEMAPHORE = asyncio.Semaphore(5)  # 동시에 최대 5개 종목 처리
 
 
 async def trade_job():
-    """매매 신호 확인 및 실행 (5분 단위)"""
+    """국내 매매 신호 확인 및 실행 (5분 단위) — 국내 종목만"""
     db = await Database.get_session()
     try:
         swing_service = SwingService(db)
         redis_client = await Redis.get_connection()
-        swing_list = await swing_service.get_active_swings()
-        logger.info(f"[BATCH START] 활성 스윙 수: {len(swing_list)}")
+        swing_list = await swing_service.get_active_domestic_swings()
+        logger.info(f"[BATCH START] 활성 국내 스윙 수: {len(swing_list)}")
     except Exception as e:
         logger.error(f"trade_job 스윙 목록 조회 실패: {e}", exc_info=True)
         return
@@ -101,23 +102,39 @@ async def process_single_swing(
             strategy = TradingStrategyFactory.get_strategy(swing_type)
 
             # === 1. 데이터 수집 ===
+            mrkt_code = swing.MRKT_CODE
+            _overseas = mrkt_code == "NASD"
+
             cached_indicators = await strategy.get_cached_indicators(redis_client, st_code)
             if not cached_indicators:
                 logger.warning(f"[{st_code}] 등록된 캐시 정보가 없습니다.")
                 return
 
-            current_price_data = await get_inquire_price("mgnt", st_code, swing_service.db)
+            if _overseas:
+                excd = "NAS"
+                current_price_data = await foreign_api.get_inquire_price("mgnt", st_code, swing_service.db, excd)
+            else:
+                current_price_data = await get_inquire_price("mgnt", st_code, swing_service.db)
             if not current_price_data:
                 logger.warning(f"[{st_code}] 현재가 조회 실패")
                 return
 
-            current_price = Decimal(str(current_price_data.get("stck_prpr", 0)))
-            current_high = Decimal(str(current_price_data.get("stck_hgpr", current_price)))
-            current_low = Decimal(str(current_price_data.get("stck_lwpr", current_price)))
-            acml_vol = int(current_price_data.get("acml_vol", 0))
-            frgn_ntby_qty = int(current_price_data.get("frgn_ntby_qty", 0))
-            prdy_vrss_vol_rate = float(current_price_data.get("prdy_vrss_vol_rate", 100))
-            prdy_ctrt = float(current_price_data.get("prdy_ctrt", 0))
+            if _overseas:
+                current_price = Decimal(str(current_price_data.get("last", 0)))
+                current_high = Decimal(str(current_price_data.get("high", current_price)))
+                current_low = Decimal(str(current_price_data.get("low", current_price)))
+                acml_vol = int(current_price_data.get("tvol", 0))
+                frgn_ntby_qty = 0  # 해외 시 외국인 순매수 미제공
+                prdy_vrss_vol_rate = 100.0  # 해외 시 미제공, 기본값
+                prdy_ctrt = float(current_price_data.get("rate", 0))
+            else:
+                current_price = Decimal(str(current_price_data.get("stck_prpr", 0)))
+                current_high = Decimal(str(current_price_data.get("stck_hgpr", current_price)))
+                current_low = Decimal(str(current_price_data.get("stck_lwpr", current_price)))
+                acml_vol = int(current_price_data.get("acml_vol", 0))
+                frgn_ntby_qty = int(current_price_data.get("frgn_ntby_qty", 0))
+                prdy_vrss_vol_rate = float(current_price_data.get("prdy_vrss_vol_rate", 100))
+                prdy_ctrt = float(current_price_data.get("prdy_ctrt", 0))
 
             # 실시간 지표 증분 계산
             cached_indicators = TechnicalIndicators.enrich_cached_indicators_with_realtime(
@@ -151,7 +168,8 @@ async def process_single_swing(
                     cached_indicators=cached_indicators,
                     current_entry_price=entry_price,
                     current_hold_qty=hold_qty,
-                    db=db
+                    db=db,
+                    mrkt_code=mrkt_code,
                 )
 
                 if partial_result.get("completed") or partial_result.get("aborted"):
@@ -200,7 +218,7 @@ async def process_single_swing(
                     swing, strategy, redis_client, db, user_id, st_code,
                     current_price, frgn_ntby_qty, acml_vol,
                     prdy_vrss_vol_rate, prdy_ctrt,
-                    cached_indicators, avg_daily_amount
+                    cached_indicators, avg_daily_amount, mrkt_code
                 )
 
             elif swing.is_first_buy_done():
@@ -208,14 +226,14 @@ async def process_single_swing(
                     swing, strategy, redis_client, db, user_id, st_code,
                     current_price, frgn_ntby_qty, acml_vol,
                     prdy_vrss_vol_rate,
-                    cached_indicators, avg_daily_amount
+                    cached_indicators, avg_daily_amount, mrkt_code
                 )
 
             elif swing.is_second_buy_done():
                 await _handle_signal_2(
                     swing, strategy, redis_client, db, user_id, st_code,
                     current_price, frgn_ntby_qty, acml_vol,
-                    cached_indicators, avg_daily_amount
+                    cached_indicators, avg_daily_amount, mrkt_code
                 )
 
             elif swing.is_primary_sold():
@@ -223,7 +241,7 @@ async def process_single_swing(
                     swing, strategy, redis_client, db, user_id, st_code,
                     current_price, frgn_ntby_qty, acml_vol,
                     prdy_vrss_vol_rate, prdy_ctrt,
-                    cached_indicators, avg_daily_amount
+                    cached_indicators, avg_daily_amount, mrkt_code
                 )
 
             # === 5. 변경사항 저장 ===
@@ -260,7 +278,7 @@ async def _handle_signal_0(
     swing, strategy, redis_client, db, user_id, st_code,
     current_price, frgn_ntby_qty, acml_vol,
     prdy_vrss_vol_rate, prdy_ctrt,
-    cached_indicators, avg_daily_amount
+    cached_indicators, avg_daily_amount, mrkt_code=""
 ):
     """SIGNAL 0: 대기 상태 → 1차 매수 신호 확인"""
     entry_result = await strategy.check_entry_signal(
@@ -292,7 +310,8 @@ async def _handle_signal_0(
         target_amount=target_amount,
         avg_daily_amount=avg_daily_amount,
         signal_on_complete=1,
-        db=db
+        db=db,
+        mrkt_code=mrkt_code,
     )
 
     if not order_result.get("success"):
@@ -334,7 +353,7 @@ async def _handle_signal_1(
     swing, strategy, redis_client, db, user_id, st_code,
     current_price, frgn_ntby_qty, acml_vol,
     prdy_vrss_vol_rate,
-    cached_indicators, avg_daily_amount
+    cached_indicators, avg_daily_amount, mrkt_code=""
 ):
     """SIGNAL 1: 1차 매수 완료 → 손절/trailing stop/2차 매수 확인"""
     entry_price = int(swing.ENTRY_PRICE) if swing.ENTRY_PRICE else 0
@@ -360,7 +379,8 @@ async def _handle_signal_1(
             swing, redis_client, db, user_id, st_code,
             current_price, hold_qty, avg_daily_amount,
             exit_result.get("reasons", ["손절"]),
-            f"[{user_id} - 주식: {st_code}] 손절 전량 매도 완료, 사이클 종료"
+            f"[{user_id} - 주식: {st_code}] 손절 전량 매도 완료, 사이클 종료",
+            mrkt_code=mrkt_code
         )
         return
 
@@ -377,7 +397,8 @@ async def _handle_signal_1(
         await _execute_primary_sell(
             swing, redis_client, db, user_id, st_code,
             current_price, hold_qty, avg_daily_amount,
-            ts_result.get("reasons", ["1차 분할 매도"])
+            ts_result.get("reasons", ["1차 분할 매도"]),
+            mrkt_code=mrkt_code
         )
         return
 
@@ -386,7 +407,8 @@ async def _handle_signal_1(
             swing, redis_client, db, user_id, st_code,
             current_price, hold_qty, avg_daily_amount,
             ts_result.get("reasons", ["전량 매도"]),
-            f"[{user_id} - 주식: {st_code}] 전량 매도 완료, 사이클 종료"
+            f"[{user_id} - 주식: {st_code}] 전량 매도 완료, 사이클 종료",
+            mrkt_code=mrkt_code
         )
         return
 
@@ -421,7 +443,8 @@ async def _handle_signal_1(
         target_amount=second_target_amount,
         avg_daily_amount=avg_daily_amount,
         signal_on_complete=2,
-        db=db
+        db=db,
+        mrkt_code=mrkt_code,
     )
 
     if not order_result.get("success"):
@@ -462,7 +485,7 @@ async def _handle_signal_1(
 async def _handle_signal_2(
     swing, strategy, redis_client, db, user_id, st_code,
     current_price, frgn_ntby_qty, acml_vol,
-    cached_indicators, avg_daily_amount
+    cached_indicators, avg_daily_amount, mrkt_code=""
 ):
     """SIGNAL 2: 2차 매수 완료 → 손절/trailing stop 확인"""
     entry_price = int(swing.ENTRY_PRICE) if swing.ENTRY_PRICE else 0
@@ -488,7 +511,8 @@ async def _handle_signal_2(
             swing, redis_client, db, user_id, st_code,
             current_price, hold_qty, avg_daily_amount,
             exit_result.get("reasons", ["손절"]),
-            f"[{user_id} - 주식: {st_code}] 손절 매도 완료, 사이클 종료"
+            f"[{user_id} - 주식: {st_code}] 손절 매도 완료, 사이클 종료",
+            mrkt_code=mrkt_code
         )
         return
 
@@ -505,7 +529,8 @@ async def _handle_signal_2(
         await _execute_primary_sell(
             swing, redis_client, db, user_id, st_code,
             current_price, hold_qty, avg_daily_amount,
-            ts_result.get("reasons", ["1차 분할 매도"])
+            ts_result.get("reasons", ["1차 분할 매도"]),
+            mrkt_code=mrkt_code
         )
 
     elif ts_result and ts_result.get("action") == "SELL_ALL":
@@ -513,7 +538,8 @@ async def _handle_signal_2(
             swing, redis_client, db, user_id, st_code,
             current_price, hold_qty, avg_daily_amount,
             ts_result.get("reasons", ["전량 매도"]),
-            f"[{user_id} - 주식: {st_code}] 전량 매도 완료, 사이클 종료"
+            f"[{user_id} - 주식: {st_code}] 전량 매도 완료, 사이클 종료",
+            mrkt_code=mrkt_code
         )
 
 
@@ -521,7 +547,7 @@ async def _handle_signal_3(
     swing, strategy, redis_client, db, user_id, st_code,
     current_price, frgn_ntby_qty, acml_vol,
     prdy_vrss_vol_rate, prdy_ctrt,
-    cached_indicators, avg_daily_amount
+    cached_indicators, avg_daily_amount, mrkt_code=""
 ):
     """SIGNAL 3: 1차 매도 완료 → 손절/재진입/2차 전량 매도 확인"""
     entry_price = int(swing.ENTRY_PRICE) if swing.ENTRY_PRICE else 0
@@ -545,7 +571,8 @@ async def _handle_signal_3(
                 swing, redis_client, db, user_id, st_code,
                 current_price, hold_qty, avg_daily_amount,
                 exit_result.get("reasons", ["손절"]),
-                f"[{user_id} - 주식: {st_code}] SIGNAL 3 손절 전량 매도 완료, 사이클 종료"
+                f"[{user_id} - 주식: {st_code}] SIGNAL 3 손절 전량 매도 완료, 사이클 종료",
+                mrkt_code=mrkt_code
             )
             return
 
@@ -577,7 +604,8 @@ async def _handle_signal_3(
             target_amount=reentry_target,
             avg_daily_amount=avg_daily_amount,
             signal_on_complete=1,
-            db=db
+            db=db,
+            mrkt_code=mrkt_code,
         )
 
         if not order_result.get("success"):
@@ -631,7 +659,8 @@ async def _handle_signal_3(
             swing, redis_client, db, user_id, st_code,
             current_price, hold_qty, avg_daily_amount,
             ts_result.get("reasons", ["2차 전량 매도"]),
-            f"[{user_id} - 주식: {st_code}] 2차 매도 완료, 사이클 종료"
+            f"[{user_id} - 주식: {st_code}] 2차 매도 완료, 사이클 종료",
+            mrkt_code=mrkt_code
         )
 
 
@@ -641,7 +670,7 @@ async def _handle_signal_3(
 async def _execute_full_sell(
     swing, redis_client, db, user_id, st_code,
     current_price, hold_qty, avg_daily_amount,
-    reasons, success_log_msg
+    reasons, success_log_msg, mrkt_code=""
 ):
     """전량 매도 실행 → Entity reset_cycle()"""
     if not user_id:
@@ -657,7 +686,8 @@ async def _execute_full_sell(
         target_qty=hold_qty,
         avg_daily_amount=avg_daily_amount,
         signal_on_complete=0,
-        db=db
+        db=db,
+        mrkt_code=mrkt_code,
     )
 
     if not order_result.get("success"):
@@ -688,7 +718,7 @@ async def _execute_full_sell(
 async def _execute_primary_sell(
     swing, redis_client, db, user_id, st_code,
     current_price, hold_qty, avg_daily_amount,
-    reasons
+    reasons, mrkt_code=""
 ):
     """1차 분할 매도 실행 → Entity transition_to_primary_sell()"""
     if not user_id:
@@ -705,7 +735,8 @@ async def _execute_primary_sell(
         target_qty=sell_qty,
         avg_daily_amount=avg_daily_amount,
         signal_on_complete=3,
-        db=db
+        db=db,
+        mrkt_code=mrkt_code,
     )
 
     if not order_result.get("success"):
@@ -789,23 +820,42 @@ async def collect_single_stock(stock, stock_service: StockService):
     async with _SEMAPHORE:
         code = stock.ST_CODE
         mrkt_code = stock.MRKT_CODE
+        _overseas = mrkt_code == "NASD"
 
         try:
-            response = await get_target_price(code)
+            if _overseas:
+                excd = "NAS"
+                response = await foreign_api.get_target_price(code, excd)
+            else:
+                response = await get_target_price(code)
 
             if response:
-                history_data = [{
-                    "MRKT_CODE": mrkt_code,
-                    "ST_CODE": code,
-                    "STCK_BSOP_DATE": datetime.now().strftime('%Y%m%d'),
-                    "STCK_OPRC": response.get('stck_oprc'),
-                    "STCK_HGPR": response.get('stck_hgpr'),
-                    "STCK_LWPR": response.get('stck_lwpr'),
-                    "STCK_CLPR": response.get('stck_clpr'),
-                    "ACML_VOL": response.get('acml_vol'),
-                    "FRGN_NTBY_QTY": response.get('frgn_ntby_qty'),
-                    "REG_DT": datetime.now()
-                }]
+                if _overseas:
+                    history_data = [{
+                        "MRKT_CODE": mrkt_code,
+                        "ST_CODE": code,
+                        "STCK_BSOP_DATE": datetime.now().strftime('%Y%m%d'),
+                        "STCK_OPRC": response.get('open'),
+                        "STCK_HGPR": response.get('high'),
+                        "STCK_LWPR": response.get('low'),
+                        "STCK_CLPR": response.get('clos'),
+                        "ACML_VOL": response.get('tvol'),
+                        "FRGN_NTBY_QTY": 0,
+                        "REG_DT": datetime.now()
+                    }]
+                else:
+                    history_data = [{
+                        "MRKT_CODE": mrkt_code,
+                        "ST_CODE": code,
+                        "STCK_BSOP_DATE": datetime.now().strftime('%Y%m%d'),
+                        "STCK_OPRC": response.get('stck_oprc'),
+                        "STCK_HGPR": response.get('stck_hgpr'),
+                        "STCK_LWPR": response.get('stck_lwpr'),
+                        "STCK_CLPR": response.get('stck_clpr'),
+                        "ACML_VOL": response.get('acml_vol'),
+                        "FRGN_NTBY_QTY": response.get('frgn_ntby_qty'),
+                        "REG_DT": datetime.now()
+                    }]
                 await stock_service.save_history_bulk(history_data)
                 logger.debug(f"[DAY COLLECT] 데이터 저장 완료: {code}")
 
@@ -873,6 +923,45 @@ def _on_notification_done(task: asyncio.Task):
     exc = task.exception()
     if exc:
         logger.warning(f"푸쉬 알림 전송 실패: {exc}")
+
+
+async def us_trade_job():
+    """미국 장 매매 신호 확인 및 실행 (5분 단위) — 해외 종목만"""
+    db = await Database.get_session()
+    try:
+        swing_service = SwingService(db)
+        redis_client = await Redis.get_connection()
+        swing_list = await swing_service.get_active_overseas_swings()
+        logger.info(f"[US BATCH START] 활성 해외 스윙 수: {len(swing_list)}")
+    except Exception as e:
+        logger.error(f"us_trade_job 스윙 목록 조회 실패: {e}", exc_info=True)
+        return
+    finally:
+        await db.close()
+
+    tasks = [process_single_swing(swing_row, redis_client) for swing_row in swing_list]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    success_count = sum(1 for r in results if not isinstance(r, Exception))
+    error_count = len(results) - success_count
+    logger.info(
+        f"[US BATCH END] 배치 작업 완료 - "
+        f"성공: {success_count}, 실패: {error_count}, 총: {len(results)}"
+    )
+
+
+async def us_ema_cache_warmup_job():
+    """해외 종목 지표 캐시 워밍업 (미국 장 시작 전)"""
+    db = await Database.get_session()
+    try:
+        redis_client = await Redis.get_connection()
+        swing_service = SwingService(db)
+        result = await swing_service.warmup_ema_cache(redis_client, overseas_only=True)
+        logger.info(f"해외 지표 캐시 워밍업 결과: {result}")
+    except Exception as e:
+        logger.error(f"해외 지표 캐시 워밍업 실패: {e}", exc_info=True)
+    finally:
+        await db.close()
 
 
 async def ema_cache_warmup_job():

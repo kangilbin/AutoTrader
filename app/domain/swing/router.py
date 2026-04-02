@@ -33,11 +33,12 @@ async def register_swing(
 @router.get("/list")
 async def list_swing_mapping(
     account_no: str = Query(..., description="계좌번호"),
+    mrkt_code: str = Query("J", description="J:국내, NASD:나스닥"),
     service: Annotated[SwingService, Depends(get_swing_service)] = None,
     user_id: Annotated[str, Depends(get_current_user)] = None
 ):
     """스윙 목록 매핑 조회"""
-    result = await service.mapping_swing(user_id, account_no)
+    result = await service.mapping_swing(user_id, account_no, mrkt_code)
     return success_response("스윙 매핑 완료", result)
 
 

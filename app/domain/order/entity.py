@@ -16,6 +16,7 @@ class Order:
     itm_no: str  # 종목번호
     qty: int  # 주문수량
     unpr: int = 0  # 주문단가 (시장가일 경우 0)
+    excg_cd: str = ""  # 해외 거래소 코드 (NASD) — 국내 시 빈문자열
 
     def validate(self) -> None:
         """주문 유효성 검증"""
@@ -35,9 +36,9 @@ class Order:
         return self.ord_dv == 'sell'
 
     @classmethod
-    def create(cls, ord_dv: str, itm_no: str, qty: int, unpr: int = 0) -> "Order":
+    def create(cls, ord_dv: str, itm_no: str, qty: int, unpr: int = 0, excg_cd: str = "") -> "Order":
         """주문 생성"""
-        order = cls(ord_dv=ord_dv, itm_no=itm_no, qty=qty, unpr=unpr)
+        order = cls(ord_dv=ord_dv, itm_no=itm_no, qty=qty, unpr=unpr, excg_cd=excg_cd)
         order.validate()
         return order
 
@@ -52,6 +53,7 @@ class ModifyOrder:
     ord_qty: int  # 주문수량
     ord_unpr: int  # 주문단가
     qty_all_ord_yn: str  # 잔량전부주문여부 (Y:전부, N:일부)
+    pdno: str # 상품번호
 
     def validate(self) -> None:
         """정정/취소 유효성 검증"""
