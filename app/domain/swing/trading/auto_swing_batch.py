@@ -92,6 +92,10 @@ async def process_single_swing(
             user_id = swing_row.USER_ID if hasattr(swing_row, 'USER_ID') else None
             swing_type = swing_row.SWING_TYPE if hasattr(swing_row, 'SWING_TYPE') else 'S'
 
+            if not user_id:
+                logger.warning(f"[SWING_ID={swing_id}] USER_ID가 없습니다. 계좌-인증키 연결을 확인하세요.")
+                return
+
             # ORM 엔티티 로드 (Entity 비즈니스 로직 메서드 사용)
             swing = await swing_service.repo.find_by_id(swing_id)
             if not swing:
@@ -111,10 +115,10 @@ async def process_single_swing(
                 return
 
             if _overseas:
-                excd = "NAS"
-                current_price_data = await foreign_api.get_inquire_price("mgnt", st_code, swing_service.db, excd)
+                current_price_data = await foreign_api.get_inquire_price(user_id, st_code, swing_service.db)
             else:
-                current_price_data = await get_inquire_price("mgnt", st_code, swing_service.db)
+                response = await get_inquire_price(user_id, st_code, swing_service.db)
+                current_price_data = response.get("output", {}) if isinstance(response, dict) else response
             if not current_price_data:
                 logger.warning(f"[{st_code}] 현재가 조회 실패")
                 return

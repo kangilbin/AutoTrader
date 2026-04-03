@@ -60,7 +60,7 @@ async def update_swing_settings(
 ):
     """스윙 전략 설정 수정"""
     data = request.model_dump(exclude_none=True)
-    result = await service.update_swing(swing_id, data)
+    result = await service.update_swing(swing_id, data, user_id)
     return success_response("스윙 설정 수정 완료", result)
 
 

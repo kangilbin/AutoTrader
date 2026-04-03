@@ -219,7 +219,7 @@ async def check_order_execution(
 # 시세 조회
 # ============================================================
 
-async def get_inquire_price(user_id: str, code: str, db: AsyncSession, excd: str = "NAS"):
+async def get_inquire_price(user_id: str, code: str, db: AsyncSession):
     """해외 주식 현재가 조회"""
     user_data, access_data = await _get_user_auth(user_id, db)
     url = settings.DEV_API_URL if access_data.get("simulation_yn") == "Y" else settings.REAL_API_URL
@@ -229,7 +229,7 @@ async def get_inquire_price(user_id: str, code: str, db: AsyncSession, excd: str
     headers = kis_headers(access_data, tr_id="HHDFS00000300")
     query = {
         "AUTH": "",
-        "EXCD": excd,
+        "EXCD": "NAS",
         "SYMB": code,
     }
     response = await fetch("GET", api_url, "KIS", params=query, headers=headers)
@@ -368,7 +368,7 @@ async def get_volume_rank(user_id: str, db: AsyncSession, excd: str = "NAS"):
     }
     response = await fetch("GET", api_url, "KIS", params=query, headers=headers)
     body = response["body"]
-    return body.get("output")
+    return body.get("output2")
 
 
 async def get_volume_power_rank(user_id: str, db: AsyncSession, excd: str = "NAS"):
@@ -388,4 +388,4 @@ async def get_volume_power_rank(user_id: str, db: AsyncSession, excd: str = "NAS
     }
     response = await fetch("GET", api_url, "KIS", params=query, headers=headers)
     body = response["body"]
-    return body.get("output")
+    return body.get("output2")

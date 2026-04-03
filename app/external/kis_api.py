@@ -468,7 +468,7 @@ async def get_target_price(code: str):
     )
 
     query = {
-        "FID_COND_mrkt_code_CODE": "J",
+        "fid_cond_mrkt_div_code": "J",
         "FID_INPUT_ISCD": code,
         "FID_ORG_ADJ_PRC": "0",
         "FID_PERIOD_DIV_CODE": "D"
@@ -481,10 +481,7 @@ async def get_target_price(code: str):
 async def get_stock_data(user_id: str, code: str, start_date: str, end_date: str, db: AsyncSession):
     """기간별 주식 데이터 조회"""
     user_data, access_data = await _get_user_auth(user_id, db)
-    if access_data.get("simulation_yn") == "Y":
-        url = settings.DEV_API_URL
-    else:
-        url = settings.REAL_API_URL
+    url = settings.REAL_API_URL
     path = "uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice"
     api_url = f"{url}/{path}"
 
@@ -494,7 +491,7 @@ async def get_stock_data(user_id: str, code: str, start_date: str, end_date: str
     )
 
     params = {
-        "FID_COND_mrkt_code_CODE": "J",
+        "fid_cond_mrkt_div_code": "J",
         "FID_INPUT_ISCD": code,
         "FID_INPUT_DATE_1": start_date,
         "FID_INPUT_DATE_2": end_date,
@@ -546,7 +543,7 @@ async def get_inquire_asking_price(user_id: str, code: str, db: AsyncSession):
     )
 
     query = {
-        "FID_COND_mrkt_code_CODE": "J",
+        "fid_cond_mrkt_div_code": "J",
         "FID_INPUT_ISCD": code,
     }
     response = await fetch("GET", api_url, "KIS", params=query, headers=headers)
@@ -570,7 +567,7 @@ async def get_inquire_price(user_id: str, code: str, db: AsyncSession):
     )
 
     query = {
-        "FID_COND_mrkt_code_CODE": "J",
+        "FID_COND_MRKT_DIV_CODE": "J",
         "FID_INPUT_ISCD": code,
     }
     response = await fetch("GET", api_url, "KIS", params=query, headers=headers)
@@ -591,20 +588,20 @@ async def get_fluctuation_rank(user_id: str, db: AsyncSession, rank_sort_cls_cod
     )
 
     query = {
-        "fid_rsfl_rate2": "",
-        "fid_cond_mrkt_code_code": "J",
-        "fid_cond_scr_div_code": "20170",
-        "fid_input_iscd": "0000",
-        "fid_rank_sort_cls_code": rank_sort_cls_code,
-        "fid_input_cnt_1": "0",
-        "fid_prc_cls_code": prc_cls_code,
-        "fid_input_price_1": "",
-        "fid_input_price_2": "",
-        "fid_vol_cnt": "",
-        "fid_trgt_cls_code": "0",
-        "fid_trgt_exls_cls_code": "0",
-        "fid_div_cls_code": "1",
-        "fid_rsfl_rate1": "",
+        "FID_RSFL_RATE2": "",
+        "FID_COND_MRKT_DIV_CODE": "J",
+        "FID_COND_SCR_DIV_CODE": "20170",
+        "FID_INPUT_ISCD": "0000",
+        "FID_RANK_SORT_CLS_CODE": rank_sort_cls_code,
+        "FID_INPUT_CNT_1": "0",
+        "FID_PRC_CLS_CODE": prc_cls_code,
+        "FID_INPUT_PRICE_1": "",
+        "FID_INPUT_PRICE_2": "",
+        "FID_VOL_CNT": "",
+        "FID_TRGT_CLS_CODE": "0",
+        "FID_TRGT_EXLS_CLS_CODE": "0",
+        "FID_DIV_CLS_CODE": "1",
+        "FID_RSFL_RATE1": "",
     }
     response = await fetch("GET", api_url, "KIS", params=query, headers=headers)
     body = response["body"]
@@ -624,7 +621,7 @@ async def get_volume_rank(user_id: str, db: AsyncSession, blng_cls_code: str = "
     )
 
     query = {
-        "FID_COND_mrkt_code_CODE": "J",
+        "FID_COND_MRKT_DIV_CODE": "J",
         "FID_COND_SCR_DIV_CODE": "20170",
         "FID_INPUT_ISCD": "0000",
         "FID_DIV_CLS_CODE": "1",
@@ -654,15 +651,15 @@ async def get_volume_power_rank(user_id: str, db: AsyncSession, input_iscd: str 
     )
 
     query = {
-        "fid_trgt_exls_cls_code": "1",
-        "fid_cond_mrkt_code_code": "J",
-        "fid_cond_scr_div_code": "20168",
-        "fid_input_iscd": input_iscd,
-        "fid_div_cls_code": "0",
-        "fid_trgt_cls_code": "0",
-        "fid_input_price_1": "",
-        "fid_input_price_2": "",
-        "fid_vol_cnt": "",
+        "FID_TRGT_EXLS_CLS_CODE": "1",
+        "FID_COND_MRKT_DIV_CODE": "J",
+        "FID_COND_SCR_DIV_CODE": "20168",
+        "FID_INPUT_ISCD": input_iscd,
+        "FID_DIV_CLS_CODE": "0",
+        "FID_TRGT_CLS_CODE": "0",
+        "FID_INPUT_PRICE_1": "",
+        "FID_INPUT_PRICE_2": "",
+        "FID_VOL_CNT": "",
     }
     response = await fetch("GET", api_url, "KIS", params=query, headers=headers)
     body = response["body"]

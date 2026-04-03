@@ -1,6 +1,6 @@
 {
   "version": "2.0",
-  "lastUpdated": "2026-04-02T12:39:08.824Z",
+  "lastUpdated": "2026-04-03T11:37:58.993Z",
   "activeFeatures": [
     "foreign-stock",
     "strategies",
@@ -24,19 +24,20 @@
   "primaryFeature": "foreign-stock",
   "features": {
     "foreign-stock": {
-      "phase": "check",
-      "phaseNumber": 4,
+      "phase": "completed",
+      "phaseNumber": 5,
       "matchRate": 99,
       "iterationCount": 0,
       "requirements": [],
       "documents": {
         "plan": "docs/01-plan/features/foreign-stock.plan.md",
         "design": "docs/02-design/features/foreign-stock.design.md",
-        "analysis": "docs/03-analysis/foreign-stock.analysis.md"
+        "analysis": "docs/03-analysis/foreign-stock.analysis.md",
+        "report": "docs/04-report/features/foreign-stock.report.md"
       },
       "timestamps": {
         "started": "2026-04-01T10:00:00.000Z",
-        "lastUpdated": "2026-04-01T13:00:00.000Z"
+        "lastUpdated": "2026-04-02T13:00:00.000Z"
       }
     },
     "strategies": {
@@ -64,9 +65,9 @@
       "documents": {},
       "timestamps": {
         "started": "2026-02-28T03:36:02.099Z",
-        "lastUpdated": "2026-04-02T12:38:44.449Z"
+        "lastUpdated": "2026-04-03T11:37:58.993Z"
       },
-      "lastFile": "/Users/apple/IdeaProjects/AutoTrader/app/domain/swing/router.py"
+      "lastFile": "/Users/apple/IdeaProjects/AutoTrader/app/domain/swing/service.py"
     },
     "core": {
       "phase": "do",
@@ -116,7 +117,7 @@
       "documents": {},
       "timestamps": {
         "started": "2026-03-13T05:32:59.682Z",
-        "lastUpdated": "2026-04-02T12:24:04.307Z"
+        "lastUpdated": "2026-04-03T05:37:17.122Z"
       },
       "lastFile": "/Users/apple/IdeaProjects/AutoTrader/app/domain/swing/trading/auto_swing_batch.py"
     },
@@ -274,7 +275,7 @@
   "session": {
     "startedAt": "2026-02-28T03:08:34.644Z",
     "onboardingCompleted": false,
-    "lastActivity": "2026-04-02T12:39:08.824Z"
+    "lastActivity": "2026-04-03T11:37:58.993Z"
   },
   "history": [
     {
@@ -2692,6 +2693,72 @@
     {
       "timestamp": "2026-04-02T12:39:08.824Z",
       "feature": "stock",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-04-03T05:12:03.099Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-04-03T05:13:33.993Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-04-03T05:29:00.320Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-04-03T05:32:53.713Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-04-03T05:33:10.303Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-04-03T05:33:32.973Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-04-03T05:37:17.122Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-04-03T05:45:27.677Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-04-03T05:46:47.555Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-04-03T11:36:50.304Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-04-03T11:37:58.993Z",
+      "feature": "swing",
       "phase": "do",
       "action": "updated"
     }

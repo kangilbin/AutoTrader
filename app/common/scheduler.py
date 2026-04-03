@@ -26,7 +26,7 @@ async def schedule_start():
         trade_job,
         CronTrigger(
             minute='*/5',
-            hour='10-14',
+            hour='10-22',
             day_of_week='mon-fri'
         )
     )

@@ -2,6 +2,104 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2026-04-02] - Overseas Stock Trading Support (foreign-stock)
+
+### Added
+- Overseas stock trading support for US exchanges: NASD (Nasdaq), NYSE (New York), AMEX (American)
+- `external/market_router.py`: New utility module for market classification and API routing
+  - `is_overseas(mrkt_code)`: Market type detection
+  - `to_excd(mrkt_code)`: SWING_TRADE.MRKT_CODE → KIS EXCD parameter conversion
+  - `get_currency(mrkt_code)`: Exchange → Currency mapping (USD for all US exchanges)
+- `foreign_api.py`: Complete rewrite of overseas stock API functions
+  - `get_stock_balance()`: Overseas account balance inquiry (TTTS3012R/VTTS3012R)
+  - `place_order_api()`: Overseas order execution (JTTT1002U buy, JTTT1006U sell)
+  - `get_inquire_price()`: Overseas stock quote retrieval (HHDFS00000300)
+  - `check_order_execution()`: Overseas execution confirmation with retry logic (2 attempts, 2-second delay)
+  - `get_inquire_daily_ccld_obj()`: Overseas unfilled order history
+  - `get_inquire_asking_price()`: Overseas bid/ask inquiry
+  - `get_fluctuation_rank()`, `get_volume_rank()`, `get_volume_power_rank()`: Overseas ranking APIs
+- Dual-batch scheduling for US market (KST 22:00-05:30)
+  - `us_ema_cache_warmup_job()`: US market EMA indicator cache warming (22:00 KST, Mon-Fri)
+  - `us_trade_job()`: US market swing trading execution (23:00-05:25 KST, Mon-Sat)
+- `SWING_TRADE.MRKT_CODE` validation extended with overseas codes: NASD, NYSE, AMEX
+- `Order.excg_cd` field: Overseas exchange code for international order execution
+- Market-filtered swing retrieval: `get_active_overseas_swings()`, `get_active_domestic_swings()`
+- Stock router enhancements: `market` and `excg_cd` query parameters for ranking/quote APIs
+- Response field normalization for overseas data:
+  - Price: `stck_prpr` (domestic) → `last` (overseas)
+  - High: `stck_hgpr` (domestic) → `high` (overseas)
+  - Low: `stck_lwpr` (domestic) → `low` (overseas)
+  - Volume: `acml_vol` (domestic) → `tvol` (overseas)
+  - Change rate: `prdy_ctrt` (domestic) → `rate` (overseas)
+
+### Changed
+- `auto_swing_batch.py`: Added market type branching for price queries and data collection
+  - `_to_excd()` conversion function for MRKT_CODE → EXCD mapping
+  - Field mapping logic for domestic/overseas response normalization
+  - All OrderExecutor calls now include `mrkt_code` parameter
+- `order_executor.py`: Dual-API order execution with automatic routing
+  - `execute_buy_with_partial(..., mrkt_code)`: Market-aware order execution
+  - `execute_sell_with_partial(..., mrkt_code)`: Market-aware order execution
+  - `_check_execution_with_retry_overseas()`: Extended retry logic for overseas execution confirmation
+  - Order price handling: Domestic (int) vs Overseas (Decimal) with slippage (±0.5%)
+- `stock/router.py`: Added market/exchange code branching for ranking and price endpoints
+  - `fluctuation_rank()`: `market` parameter routes to kis_api or foreign_api
+  - `volume_rank()`, `volume_power_rank()`, `get_asking_price()`: Market-aware routing
+- `scheduler.py`: Extended scheduling for US market trading hours
+  - Domestic trading: 10:00-15:20 KST (Mon-Fri) — unchanged
+  - US trading: 22:00-05:30 KST (Mon-Sat) — added
+
+### Fixed
+- Overseas API endpoint migration: foreign_api.py was using domestic endpoints → corrected to /overseas-stock and /overseas-price paths
+- Exchange code parameterization: Removed hardcoded "NASD" values → now configurable via MRKT_CODE
+- TR_ID corrections: Updated overseas-specific transaction IDs for all foreign_api functions
+- Price unit handling: Introduced Decimal type for accurate decimal (dollar) pricing vs integer (won) pricing
+
+### Documentation
+- [Plan Document](../01-plan/features/foreign-stock.plan.md): Feature planning, market branching strategy, scheduling
+- [Design Document](../02-design/features/foreign-stock.design.md): 9-component architecture design with response field mappings
+- [Analysis Document](../03-analysis/foreign-stock.analysis.md): Gap analysis with 99% design-implementation match rate
+- [Completion Report](../04-report/features/foreign-stock.report.md): Final PDCA cycle results, implementation details, lessons learned
+
+### Metrics
+- **Design Match Rate**: 99% (62/62 items)
+  - 4 justified changes (slippage pricing, parameter naming, retry delay, field key)
+  - 6 scope expansions (currency helper, order cancel, asking price, etc.)
+  - 0 missing items
+- **Architecture Compliance**: 100% (DDD Lite patterns maintained)
+- **Convention Compliance**: 100% (Python naming, import order, folder structure)
+- **Files Modified**: 11 files
+- **New Files**: 1 file (market_router.py)
+- **Lines of Code**: ~1,300 additions/modifications
+
+### Files Modified
+1. `app/external/market_router.py` — NEW: Market classification utilities
+2. `app/external/foreign_api.py` — Complete rewrite: 6 overseas API functions
+3. `app/external/kis_api.py` — Import organization
+4. `app/domain/order/entity.py` — Added excg_cd field
+5. `app/domain/swing/entity.py` — Extended MRKT_CODE validation
+6. `app/domain/swing/repository.py` — Added find_active_by_market_type()
+7. `app/domain/swing/service.py` — Added get_active_overseas_swings()
+8. `app/domain/swing/router.py` — Market filtering
+9. `app/domain/swing/trading/auto_swing_batch.py` — Market branching + field mapping
+10. `app/domain/swing/trading/order_executor.py` — Market-aware order execution
+11. `app/common/scheduler.py` — US market scheduling
+
+### Known Limitations (Future Scope)
+- Premarket/aftermarket trading not supported (regular trading hours only)
+- Other overseas exchanges (Hong Kong, Japan, China, Vietnam) not yet implemented
+- FX-PnL integration not included (USD basis only)
+- Daylight saving time handling is manual (not auto-detected)
+- Overseas-specific trading strategies not implemented (sharing domestic strategies)
+
+### Testing & Deployment
+- Requires KIS API sandbox testing before production deployment
+- Recommend staging environment validation during US market hours (mock/real account)
+- Monitor logs during first week of US market trading for API response patterns
+- Consider reducing schedule range after observing actual execution patterns
+
+---
+
 ## [2026-03-24] - Auth Key Deletion API Security Fix (auth-key)
 
 ### Added

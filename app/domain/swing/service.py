@@ -104,21 +104,32 @@ class SwingService:
             raise NotFoundError("스윙 전략", swing_id)
         return SwingResponse.model_validate(swing).model_dump()
 
-    async def update_swing(self, swing_id: int, data: dict) -> dict:
+    async def update_swing(self, swing_id: int, data: dict, user_id: str = None) -> dict:
         """스윙 수정"""
         try:
+            swing = await self.repo.find_by_id(swing_id)
+            if not swing:
+                raise NotFoundError("스윙 전략", swing_id)
+
             # INIT_AMOUNT 변경 시 차액을 CUR_AMOUNT에도 반영
             if "INIT_AMOUNT" in data:
-                swing = await self.repo.find_by_id(swing_id)
-                if not swing:
-                    raise NotFoundError("스윙 전략", swing_id)
-
                 diff = Decimal(data["INIT_AMOUNT"]) - swing.INIT_AMOUNT
                 data["CUR_AMOUNT"] = swing.CUR_AMOUNT + diff
 
             data["MOD_DT"] = datetime.now()
             result = await self.repo.update(swing_id, data)
             await self.db.commit()
+
+            # USE_YN 활성화 시 데이터 적재 여부 확인
+            if data.get("USE_YN") == "Y" and user_id:
+                stock_service = StockService(self.db)
+                stock_info = await stock_service.get_stock_info(swing.MRKT_CODE, swing.ST_CODE)
+                if stock_info.get("DATA_YN") != "Y":
+                    asyncio.create_task(
+                        self._fetch_and_cache(user_id, swing.MRKT_CODE, swing.ST_CODE, stock_info)
+                    )
+                    logger.info(f"[{swing.MRKT_CODE}/{swing.ST_CODE}] 활성화 - 데이터 적재 + 캐싱 백그라운드 태스크 시작")
+
             return SwingResponse.model_validate(result).model_dump()
         except SQLAlchemyError as e:
             await self.db.rollback()
@@ -312,7 +323,7 @@ class SwingService:
 
             # OBV diff 최근 6일 추출 (NaN 필터링) - 어제 diff 포함하여 연속 윈도우 구성
             obv_diffs = indicators['obv'].diff()
-            recent_6_diffs = [x for x in obv_diffs.iloc[-6:].tolist() if not pd.isna(x)]
+            recent_6_diffs = [float(x) for x in obv_diffs.iloc[-6:].tolist() if not pd.isna(x)]
 
             # DM14 역산 (+DM14 = +DI × ATR / 100)
             atr = float(yesterday['atr'])
@@ -329,10 +340,10 @@ class SwingService:
                 "obv": float(yesterday['obv']),
                 "obv_z": float(yesterday['obv_z']),
                 "obv_recent_diffs": recent_6_diffs,
-                "close": yesterday['STCK_CLPR'],
-                "open": yesterday['STCK_OPRC'],   # 어제 시가
-                "high": yesterday['STCK_HGPR'],  # 어제 고가
-                "low": yesterday['STCK_LWPR'],   # 어제 저가
+                "close": float(yesterday['STCK_CLPR']),
+                "open": float(yesterday['STCK_OPRC']),   # 어제 시가
+                "high": float(yesterday['STCK_HGPR']),  # 어제 고가
+                "low": float(yesterday['STCK_LWPR']),   # 어제 저가
                 "date": yesterday['STCK_BSOP_DATE'],
                 "avg_daily_amount": avg_daily_amount,  # 일평균 거래대금 (체결 분할용)
             }

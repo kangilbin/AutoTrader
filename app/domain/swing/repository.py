@@ -60,9 +60,9 @@ class SwingRepository:
         query = text(
             "SELECT ST.*, A.USER_ID, U.API_KEY, U.SECRET_KEY "
             "FROM SWING_TRADE ST "
-            "LEFT JOIN ACCOUNT A ON ST.ACCOUNT_NO = A.ACCOUNT_NO "
-            "LEFT JOIN AUTH_KEY U ON A.USER_ID = U.USER_ID AND A.AUTH_ID = U.AUTH_ID "
-            "WHERE ST.USE_YN = 'Y' AND ST.MRKT_CODE IN ('J', 'NX', 'UN')"
+            "JOIN ACCOUNT A ON ST.ACCOUNT_NO = A.ACCOUNT_NO "
+            "JOIN AUTH_KEY U ON A.USER_ID = U.USER_ID AND A.AUTH_ID = U.AUTH_ID "
+            "WHERE ST.USE_YN = 'Y' AND ST.MRKT_CODE IN ('J', 'NAS')"
         )
         result = await self.db.execute(query)
         return result.all()
@@ -72,8 +72,8 @@ class SwingRepository:
         query = text(
             "SELECT ST.*, A.USER_ID, U.API_KEY, U.SECRET_KEY "
             "FROM SWING_TRADE ST "
-            "LEFT JOIN ACCOUNT A ON ST.ACCOUNT_NO = A.ACCOUNT_NO "
-            "LEFT JOIN AUTH_KEY U ON A.USER_ID = U.USER_ID AND A.AUTH_ID = U.AUTH_ID "
+            "JOIN ACCOUNT A ON ST.ACCOUNT_NO = A.ACCOUNT_NO "
+            "JOIN AUTH_KEY U ON A.USER_ID = U.USER_ID AND A.AUTH_ID = U.AUTH_ID "
             "WHERE ST.USE_YN = 'Y' AND ST.MRKT_CODE = 'NASD'"
         )
         result = await self.db.execute(query)
