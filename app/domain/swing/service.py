@@ -155,7 +155,7 @@ class SwingService:
     async def mapping_swing(self, user_id: str, account_no: str, mrkt_code: str = "J") -> dict:
         """스윙 목록과 보유 주식 매핑"""
         try:
-            swing_list = await self.repo.find_all_by_account_no(account_no)
+            swing_list = await self.repo.find_all_by_account_no(account_no, mrkt_code)
             if mrkt_code == "NASD":
                 balance_data = await foreign_api.get_stock_balance(user_id, self.db)
             else:

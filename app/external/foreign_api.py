@@ -308,7 +308,7 @@ async def get_stock_data(user_id: str, code: str, start_date: str, end_date: str
     return body
 
 
-async def get_inquire_asking_price(user_id: str, code: str, db: AsyncSession, excd: str = "NAS"):
+async def get_inquire_asking_price(user_id: str, code: str, db: AsyncSession):
     """해외 주식 호가 조회"""
     user_data, access_data = await _get_user_auth(user_id, db)
     url = settings.DEV_API_URL if access_data.get("simulation_yn") == "Y" else settings.REAL_API_URL
@@ -318,7 +318,7 @@ async def get_inquire_asking_price(user_id: str, code: str, db: AsyncSession, ex
     headers = kis_headers(access_data, tr_id="HHDFS76200100")
     query = {
         "AUTH": "",
-        "EXCD": excd,
+        "EXCD": 'NAS',
         "SYMB": code,
     }
     response = await fetch("GET", api_url, "KIS", params=query, headers=headers)
@@ -348,7 +348,7 @@ async def get_fluctuation_rank(user_id: str, db: AsyncSession, rank_sort_cls_cod
     }
     response = await fetch("GET", api_url, "KIS", params=query, headers=headers)
     body = response["body"]
-    return body.get("output")
+    return body.get("output2")
 
 
 async def get_volume_rank(user_id: str, db: AsyncSession, excd: str = "NAS"):

@@ -24,9 +24,9 @@ class StockService:
         """DATA_YN = 'Y'인 종목 목록 조회"""
         return await self.repo.find_data_target_stocks()
 
-    async def search_stock(self, query: str) -> List[dict]:
+    async def search_stock(self, query: str, mrkt_code: str = None) -> List[dict]:
         """종목 검색 (초성)"""
-        return await self.repo.search_by_initial(query)
+        return await self.repo.search_by_initial(query, mrkt_code)
 
     async def get_stock_info(self, mrkt_code: str, st_code: str) -> dict:
         """종목 정보 조회"""

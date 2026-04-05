@@ -40,14 +40,14 @@ async def fetch(method: str, url: str, service_name: str = "External API", **kwa
     except httpx.HTTPStatusError as e:
         raise ExternalServiceError(
             service=service_name,
-            message="외부 API가 오류 응답을 반환했습니다",
+            message=e.response.json().get('msg1'),
             status_code=502,
             original_error=e,
             detail={
                 "url": str(e.request.url),
                 "method": method,
                 "status_code": e.response.status_code,
-                "response_text": e.response.json().get('error_description'),
+                "response_text": e.response.text,
             },
         )
     except httpx.RequestError as e:

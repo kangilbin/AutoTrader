@@ -41,12 +41,14 @@ class StockRepository:
             return None
         return StockResponse.model_validate(db_stock).model_dump()
 
-    async def search_by_initial(self, initial: str) -> List[dict]:
+    async def search_by_initial(self, initial: str, mrkt_code: str = None) -> List[dict]:
         """초성 검색"""
-        query = text("""
+        mrkt_filter = "AND MRKT_CODE = :mrkt_code" if mrkt_code else ""
+        query = text(f"""
             SELECT *
             FROM STOCK_INFO
             WHERE ST_NM RLIKE make_search_pattern(:initial)
+            {mrkt_filter}
             ORDER BY
                 CASE
                     WHEN REGEXP_INSTR(ST_NM, make_search_pattern(:initial)) = 1 THEN 1
@@ -57,7 +59,10 @@ class StockRepository:
                 ST_NM
             LIMIT 20
         """)
-        rows = await self.db.execute(query, {"initial": initial})
+        params = {"initial": initial}
+        if mrkt_code:
+            params["mrkt_code"] = mrkt_code
+        rows = await self.db.execute(query, params)
         return [StockResponse.model_validate(row).model_dump() for row in rows]
 
     async def update(self, mrkt_code: str, st_code: str, data: dict) -> dict:

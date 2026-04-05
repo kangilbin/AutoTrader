@@ -22,10 +22,11 @@ def get_stock_service(db: AsyncSession = Depends(get_db)) -> StockService:
 @router.get("")
 async def search_stock(
     query: str,
-    service: Annotated[StockService, Depends(get_stock_service)]
+    service: Annotated[StockService, Depends(get_stock_service)],
+    mrkt_code: str = Query(None, description="시장 구분코드 (J:국내, NASD:나스닥)")
 ):
     """종목 검색"""
-    stock_info = await service.search_stock(query)
+    stock_info = await service.search_stock(query, mrkt_code)
     return success_response("종목 코드 조회", stock_info)
 
 

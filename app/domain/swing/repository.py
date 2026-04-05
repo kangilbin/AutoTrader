@@ -25,7 +25,7 @@ class SwingRepository:
         result = await self.db.execute(query)
         return result.scalars().first()
 
-    async def find_all_by_account_no(self, account_no: str) -> List[dict]:
+    async def find_all_by_account_no(self, account_no: str, mrkt_code: str = None) -> List[dict]:
         """계좌번호로 스윙 목록 조회"""
         query = (
             select(*SwingTrade.__table__.columns, Stock.ST_NM)
@@ -39,6 +39,11 @@ class SwingRepository:
             )
             .filter(SwingTrade.ACCOUNT_NO == account_no)
         )
+        if mrkt_code:
+            if mrkt_code == "NASD":
+                query = query.filter(SwingTrade.MRKT_CODE == "NASD")
+            else:
+                query = query.filter(SwingTrade.MRKT_CODE != "NASD")
         result = await self.db.execute(query)
         return [SwingResponse(**row).model_dump() for row in result.mappings().all()]
 
