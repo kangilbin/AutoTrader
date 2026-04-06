@@ -351,10 +351,10 @@ async def get_fluctuation_rank(user_id: str, db: AsyncSession, rank_sort_cls_cod
     return body.get("output2")
 
 
-async def get_volume_rank(user_id: str, db: AsyncSession, excd: str = "NAS"):
+async def get_volume_rank(user_id: str, db: AsyncSession):
     """해외주식 거래량 순위"""
     user_data, access_data = await _get_user_auth(user_id, db)
-    path = "uapi/overseas-stock/v1/ranking/volume-surge"
+    path = "uapi/overseas-stock/v1/ranking/trade-vol"
     url = settings.REAL_API_URL
     api_url = f"{url}/{path}"
 
@@ -362,7 +362,8 @@ async def get_volume_rank(user_id: str, db: AsyncSession, excd: str = "NAS"):
     query = {
         "KEYB": "",
         "AUTH": "",
-        "EXCD": excd,
+        "EXCD": "NAS",
+        "NDAY": "0",
         "MINX": "4",
         "VOL_RANG": "4",
     }
@@ -383,7 +384,7 @@ async def get_volume_power_rank(user_id: str, db: AsyncSession, excd: str = "NAS
         "KEYB": "",
         "AUTH": "",
         "EXCD": excd,
-        "MINX": "4",
+        "NDAY": "8",
         "VOL_RANG": "4",
     }
     response = await fetch("GET", api_url, "KIS", params=query, headers=headers)
