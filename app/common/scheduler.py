@@ -48,40 +48,32 @@ async def schedule_start():
     scheduler.add_job(day_collect_job, CronTrigger(minute='35', hour='15', day_of_week='0-4'))
 
     # === 미국 장 스케줄 ===
-    # 서머타임 KST 22:30-05:00 / 겨울 KST 23:30-06:00
-    # 두 시간대를 모두 커버하는 범위: 23:00-05:30
+    # 미국 동부시간(ET) 기준 설정 → 서머타임/겨울시간 자동 반영
+    # 정규장: 09:30-16:00 ET
+    # 개장 후 1.5시간 버퍼 적용 → 11:00 ET부터 매매 시작
+    us_tz = 'America/New_York'
 
-    # 해외 지표 캐시 워밍업: 22:00 KST (미국 장 시작 전)
+    # 해외 지표 캐시 워밍업: 09:00 ET (미국 장 시작 30분 전)
     scheduler.add_job(
         us_ema_cache_warmup_job,
-        CronTrigger(minute='0', hour='22', day_of_week='mon-fri')
+        CronTrigger(minute='0', hour='9', day_of_week='mon-fri', timezone=us_tz)
     )
 
-    # 해외 매매 배치: 23:00-23:55 (월~금)
+    # 해외 스윙 매매 배치: 11:00-15:55 ET (월~금), 5분마다
     scheduler.add_job(
         us_trade_job,
         CronTrigger(
             minute='*/5',
-            hour='23',
-            day_of_week='mon-fri'
+            hour='11-15',
+            day_of_week='mon-fri',
+            timezone=us_tz
         )
     )
 
-    # 해외 매매 배치: 00:00-05:25 (화~토, 한국 기준 다음날)
-    scheduler.add_job(
-        us_trade_job,
-        CronTrigger(
-            minute='*/5',
-            hour='0-5',
-            day_of_week='tue-sat'
-        )
-    )
-
-    # 미국 일일 데이터 수집 (미국장 마감 후, KST 06:35)
-    # 서머타임 05:00 / 겨울 06:00 마감 → 06:35에 수집
+    # 미국 일일 데이터 수집 (미국장 마감 후, 16:35 ET)
     scheduler.add_job(
         us_day_collect_job,
-        CronTrigger(minute='35', hour='6', day_of_week='tue-sat')
+        CronTrigger(minute='35', hour='16', day_of_week='mon-fri', timezone=us_tz)
     )
 
     scheduler.start()
