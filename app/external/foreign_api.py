@@ -92,7 +92,7 @@ async def place_order_api(user_id: str, order: Order, db: AsyncSession):
     query = {
         "CANO": user_data.get("ACCOUNT_NO")[:8],
         "ACNT_PRDT_CD": user_data.get("ACCOUNT_NO")[-2:],
-        "OVRS_EXCG_CD": order.excg_cd,
+        "OVRS_EXCG_CD": order.excg_cd, # NASD
         "PDNO": order.itm_no,
         "ORD_QTY": str(order.qty),
         "OVRS_ORD_UNPR": str(order.unpr),

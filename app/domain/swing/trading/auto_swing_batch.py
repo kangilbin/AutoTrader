@@ -775,20 +775,19 @@ async def _execute_primary_sell(
 
 async def day_collect_job():
     """
-    일별 데이터 수집 (장 마감 후 15:35)
+    국내 일별 데이터 수집 (장 마감 후 15:35)
 
-    작업: 활성 스윙의 당일 OHLCV 데이터 수집
+    작업: 국내 활성 스윙의 당일 OHLCV 데이터 수집
     병렬 처리: 최대 5개 종목 동시 실행
     """
-    logger.info("[DAY COLLECT] 데이터 수집 시작")
+    logger.info("[DAY COLLECT KR] 국내 데이터 수집 시작")
     db = await Database.get_session()
 
     try:
         stock_service = StockService(db)
 
-        # 데이터 수집 (DATA_YN='Y'인 종목 대상)
-        data_target_stocks = await stock_service.get_data_target_stocks()
-        logger.info(f"[DAY COLLECT] 데이터 수집 대상 종목 수: {len(data_target_stocks)}")
+        data_target_stocks = await stock_service.get_data_target_stocks(overseas=False)
+        logger.info(f"[DAY COLLECT KR] 데이터 수집 대상 종목 수: {len(data_target_stocks)}")
 
         # 병렬 처리: asyncio.gather로 모든 종목 동시 실행
         tasks = [
@@ -803,12 +802,49 @@ async def day_collect_job():
         error_count = len(results) - success_count
 
         logger.info(
-            f"[DAY COLLECT] 데이터 수집 완료 - "
+            f"[DAY COLLECT KR] 데이터 수집 완료 - "
             f"성공: {success_count}, 실패: {error_count}, 총: {len(results)}"
         )
 
     except Exception as e:
-        logger.error(f"[DAY COLLECT] day_collect_job 실패: {e}", exc_info=True)
+        logger.error(f"[DAY COLLECT KR] day_collect_job 실패: {e}", exc_info=True)
+    finally:
+        await db.close()
+
+
+async def us_day_collect_job():
+    """
+    미국 일별 데이터 수집 (미국장 마감 후 KST 06:35)
+
+    작업: 해외 활성 스윙의 당일 OHLCV 데이터 수집
+    병렬 처리: 최대 5개 종목 동시 실행
+    """
+    logger.info("[DAY COLLECT US] 미국 데이터 수집 시작")
+    db = await Database.get_session()
+
+    try:
+        stock_service = StockService(db)
+
+        data_target_stocks = await stock_service.get_data_target_stocks(overseas=True)
+        logger.info(f"[DAY COLLECT US] 데이터 수집 대상 종목 수: {len(data_target_stocks)}")
+
+        tasks = [
+            collect_single_stock(stock, stock_service)
+            for stock in data_target_stocks
+        ]
+
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        success_count = sum(1 for r in results if not isinstance(r, Exception))
+        error_count = len(results) - success_count
+
+        logger.info(
+            f"[DAY COLLECT US] 데이터 수집 완료 - "
+            f"성공: {success_count}, 실패: {error_count}, 총: {len(results)}"
+        )
+
+    except Exception as e:
+        logger.error(f"[DAY COLLECT US] us_day_collect_job 실패: {e}", exc_info=True)
     finally:
         await db.close()
 

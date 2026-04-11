@@ -8,6 +8,7 @@ import logging
 import time
 
 from app.external.kis_api import get_stock_data
+from app.external import foreign_api
 from app.common.database import Database
 from app.domain.stock.service import StockService
 
@@ -56,12 +57,20 @@ async def fetch_and_store_3_years_data(user_id: str, mrkt_code: str, st_code: st
             task_start_time = time.time()
             async with semaphore:
                 try:
-                    response = await get_stock_data(
-                        user_id, st_code,
-                        range_start.strftime('%Y%m%d'),
-                        range_end.strftime('%Y%m%d'),
-                        db
-                    )
+                    if mrkt_code == "NASD":
+                        response = await foreign_api.get_stock_data(
+                            user_id, st_code,
+                            range_start.strftime('%Y%m%d'),
+                            range_end.strftime('%Y%m%d'),
+                            db
+                        )
+                    else:
+                        response = await get_stock_data(
+                            user_id, st_code,
+                            range_start.strftime('%Y%m%d'),
+                            range_end.strftime('%Y%m%d'),
+                            db
+                        )
                     if response and "output2" in response:
                         api_data_count = len(response["output2"])
                         task_time = time.time() - task_start_time

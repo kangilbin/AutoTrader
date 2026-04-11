@@ -20,12 +20,16 @@ class StockRepository:
     def __init__(self, db: AsyncSession):
         self.db = db
 
-    async def find_data_target_stocks(self) -> List[Stock]:
-        """DATA_YN = 'Y'인 종목 목록 조회"""
+    async def find_data_target_stocks(self, overseas: bool = None) -> List[Stock]:
+        """DATA_YN = 'Y'인 종목 목록 조회 (시장 구분 필터링)"""
         query = select(Stock).filter(
             Stock.DATA_YN == 'Y',
             Stock.DEL_YN == 'N'
         )
+        if overseas is True:
+            query = query.filter(Stock.MRKT_CODE == 'NASD')
+        elif overseas is False:
+            query = query.filter(Stock.MRKT_CODE != 'NASD')
         result = await self.db.execute(query)
         return result.scalars().all()
 

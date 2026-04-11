@@ -5,6 +5,7 @@ from app.domain.swing.trading.auto_swing_batch import (
     trade_job,
     us_trade_job,
     day_collect_job,
+    us_day_collect_job,
     ema_cache_warmup_job,
     us_ema_cache_warmup_job,
 )
@@ -26,7 +27,7 @@ async def schedule_start():
         trade_job,
         CronTrigger(
             minute='*/5',
-            hour='10-22',
+            hour='10-14',
             day_of_week='mon-fri'
         )
     )
@@ -74,6 +75,13 @@ async def schedule_start():
             hour='0-5',
             day_of_week='tue-sat'
         )
+    )
+
+    # 미국 일일 데이터 수집 (미국장 마감 후, KST 06:35)
+    # 서머타임 05:00 / 겨울 06:00 마감 → 06:35에 수집
+    scheduler.add_job(
+        us_day_collect_job,
+        CronTrigger(minute='35', hour='6', day_of_week='tue-sat')
     )
 
     scheduler.start()
