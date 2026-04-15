@@ -1,6 +1,7 @@
 """
 KIS (한국투자증권) API 통합 모듈
 """
+import asyncio
 from datetime import datetime
 import logging
 
@@ -226,6 +227,7 @@ async def get_stock_balance(user_id: str, db: AsyncSession, fk100="", nk100="", 
     output2_data = output2[0] if output2 else {}
 
     if tr_cont == "F" or tr_cont == "M":  # 다음 페이지 존재하는 경우 자기 호출 처리
+        await asyncio.sleep(0.3)  # KIS API 초당 거래건수 제한 방지
         return await get_stock_balance(user_id, db, ctx_area_fk100, ctx_area_nk100, result)
 
     return {"output1": result, "output2": output2_data}

@@ -59,6 +59,7 @@ async def get_stock_balance(
     output2 = body.get("output2", {})
 
     if tr_cont in ("F", "M"):
+        await asyncio.sleep(0.3)  # KIS API 초당 거래건수 제한 방지
         return await get_stock_balance(
             user_id, db, excg_cd, crcy_cd,
             body.get("ctx_area_fk200", ""),
@@ -344,7 +345,7 @@ async def get_fluctuation_rank(user_id: str, db: AsyncSession, rank_sort_cls_cod
         "EXCD": excd,
         "GUBN": rank_sort_cls_code,
         "MINX": "4",
-        "VOL_RANG": "4",
+        "VOL_RANG": "5",
     }
     response = await fetch("GET", api_url, "KIS", params=query, headers=headers)
     body = response["body"]
