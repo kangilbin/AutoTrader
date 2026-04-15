@@ -1,8 +1,9 @@
 """
 주식 데이터 배치 작업 - 3년치 데이터 적재
 """
-from datetime import datetime
+from datetime import datetime, timedelta
 from dateutil.relativedelta import relativedelta
+from zoneinfo import ZoneInfo
 import asyncio
 import logging
 import time
@@ -15,6 +16,45 @@ from app.domain.stock.service import StockService
 logger = logging.getLogger(__name__)
 
 MAX_ITEMS_PER_REQUEST = 100
+
+
+def is_market_open(mrkt_code: str) -> bool:
+    """
+    해당 시장이 현재 장 운영 중인지 판별한다.
+
+    장중이면 True, 장 마감 후이면 False를 반환한다.
+    day_collect_job 실행 시점까지를 장중으로 간주하여
+    미확정 데이터 적재를 방지한다.
+
+    Args:
+        mrkt_code: 시장 코드 ("J"=국내, "NASD"=미국)
+
+    Returns:
+        True: 장 운영 중 (금일 데이터 적재 불가)
+        False: 장 마감 후 (금일 데이터 적재 가능)
+    """
+    if mrkt_code == "NASD":
+        us_tz = ZoneInfo("America/New_York")
+        now_et = datetime.now(us_tz)
+
+        if now_et.weekday() >= 5:
+            return False
+
+        market_open = now_et.replace(hour=9, minute=0, second=0, microsecond=0)
+        market_close = now_et.replace(hour=16, minute=35, second=0, microsecond=0)
+
+        return market_open <= now_et <= market_close
+    else:
+        kr_tz = ZoneInfo("Asia/Seoul")
+        now_kst = datetime.now(kr_tz)
+
+        if now_kst.weekday() >= 5:
+            return False
+
+        market_open = now_kst.replace(hour=8, minute=0, second=0, microsecond=0)
+        market_close = now_kst.replace(hour=15, minute=35, second=0, microsecond=0)
+
+        return market_open <= now_kst <= market_close
 
 
 async def fetch_and_store_3_years_data(user_id: str, mrkt_code: str, st_code: str, stock_data: dict):
@@ -35,7 +75,14 @@ async def fetch_and_store_3_years_data(user_id: str, mrkt_code: str, st_code: st
         await stock_service.update_stock(mrkt_code, st_code, {"DATA_YN": 'P'})
         logger.info(f"Started background data fetch for {mrkt_code}/{st_code}")
 
-        end_date = datetime.now().date()
+        today = datetime.now().date()
+        if is_market_open(mrkt_code):
+            end_date = today - timedelta(days=1)
+            logger.info(f"[{mrkt_code}/{st_code}] 장 운영 중 - 전일({end_date})까지 적재")
+        else:
+            end_date = today
+            logger.info(f"[{mrkt_code}/{st_code}] 장 마감 - 금일({end_date})까지 적재")
+
         start_date = end_date - relativedelta(years=3)
         current_date = start_date
 
