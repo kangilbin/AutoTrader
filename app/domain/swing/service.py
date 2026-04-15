@@ -479,7 +479,8 @@ class SwingService:
                         "low": float(yesterday['STCK_LWPR']),   # 어제 저가
                         "date": yesterday['STCK_BSOP_DATE'],
                         "avg_daily_amount": avg_daily_amount,   # 일평균 거래대금 (체결 분할용)
-                        # 전전일 DI (2차 방어선 게이트: DI 격차 2일 연속 감소 판단)
+                        # 전전일 데이터 (공통 필터 + 2차 방어선 게이트)
+                        "prev_ema20": float(prev_prev['ema_20']) if not pd.isna(prev_prev['ema_20']) else None,
                         "prev_plus_di": float(prev_prev['plus_di']) if not pd.isna(prev_prev['plus_di']) else None,
                         "prev_minus_di": float(prev_prev['minus_di']) if not pd.isna(prev_prev['minus_di']) else None,
                         "prev_obv_z": float(prev_prev['obv_z']) if not pd.isna(prev_prev['obv_z']) else None,

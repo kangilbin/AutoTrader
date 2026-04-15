@@ -64,7 +64,6 @@ class SwingOrderExecutor:
     @classmethod
     async def execute_buy_with_partial(
         cls,
-        redis_client,
         swing_id: int,
         user_id: str,
         st_code: str,
@@ -159,7 +158,6 @@ class SwingOrderExecutor:
     @classmethod
     async def execute_sell_with_partial(
         cls,
-        redis_client,
         swing_id: int,
         user_id: str,
         st_code: str,

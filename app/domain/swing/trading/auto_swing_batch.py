@@ -306,7 +306,6 @@ async def _handle_signal_0(
 
     target_amount = Decimal(str(swing.INIT_AMOUNT)) * Decimal(swing.BUY_RATIO) / Decimal(100)
     order_result = await SwingOrderExecutor.execute_buy_with_partial(
-        redis_client=redis_client,
         swing_id=swing.SWING_ID,
         user_id=user_id,
         st_code=st_code,
@@ -439,7 +438,6 @@ async def _handle_signal_1(
 
     second_target_amount = Decimal(str(swing.INIT_AMOUNT)) * Decimal(100 - swing.BUY_RATIO) / Decimal(100)
     order_result = await SwingOrderExecutor.execute_buy_with_partial(
-        redis_client=redis_client,
         swing_id=swing.SWING_ID,
         user_id=user_id,
         st_code=st_code,
@@ -600,7 +598,6 @@ async def _handle_signal_3(
 
         reentry_target = Decimal(str(swing.INIT_AMOUNT)) * Decimal(swing.BUY_RATIO) / Decimal(100)
         order_result = await SwingOrderExecutor.execute_buy_with_partial(
-            redis_client=redis_client,
             swing_id=swing.SWING_ID,
             user_id=user_id,
             st_code=st_code,
@@ -682,7 +679,6 @@ async def _execute_full_sell(
         return
 
     order_result = await SwingOrderExecutor.execute_sell_with_partial(
-        redis_client=redis_client,
         swing_id=swing.SWING_ID,
         user_id=user_id,
         st_code=st_code,
@@ -731,7 +727,6 @@ async def _execute_primary_sell(
 
     sell_qty = int(hold_qty * swing.SELL_RATIO / 100)
     order_result = await SwingOrderExecutor.execute_sell_with_partial(
-        redis_client=redis_client,
         swing_id=swing.SWING_ID,
         user_id=user_id,
         st_code=st_code,

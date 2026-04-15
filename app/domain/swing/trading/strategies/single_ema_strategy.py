@@ -78,6 +78,7 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
                 'date': data['date'],
                 'avg_daily_amount': data['avg_daily_amount'],
                 # 전전일 DI (2차 방어선 게이트용)
+                'prev_ema20': data.get('prev_ema20'),
                 'prev_plus_di': data.get('prev_plus_di'),
                 'prev_minus_di': data.get('prev_minus_di'),
                 'prev_obv_z': data.get('prev_obv_z'),
@@ -271,16 +272,15 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
             return None
 
         # 캐시에서 전일 데이터 추출
-        yesterday_open = cached_indicators.get('open')         # 전일 시가
-        yesterday_close = cached_indicators.get('close')       # 전일 종가
         yesterday_ema20 = cached_indicators.get('ema20')       # 전일 EMA20 (종가 기준)
+        prev_ema20 = cached_indicators.get('prev_ema20')       # 전전일 EMA20
         yesterday_obv_z = cached_indicators.get('obv_z')       # 전일 OBV z-score
 
         # === 공통 필터 ===
         surge_filtered = abs(prdy_ctrt) / 100 <= cls.MAX_SURGE_RATIO
-        prev_day_bullish = (yesterday_open is not None and yesterday_close >= yesterday_open)
+        ema20_rising = (yesterday_ema20 is not None and prev_ema20 is not None and yesterday_ema20 > prev_ema20)
 
-        if not (surge_filtered and prev_day_bullish):
+        if not (surge_filtered and ema20_rising):
             # 공통 필터 미충족 → 연속성 리셋
             new_state = {'curr_signal': False, 'consecutive_count': 0, 'last_update': datetime.now().isoformat()}
             await redis_client.setex(f"entry:{swing_id}", cls.ENTRY_STATE_TTL, json.dumps(new_state))
@@ -385,10 +385,10 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
             if await redis_client.exists(time_key):
                 return None
 
-            # 전일 양봉 필터
-            yesterday_open = cached_indicators.get('open')
-            yesterday_close = cached_indicators.get('close')
-            if not (yesterday_open is not None and yesterday_close >= yesterday_open):
+            # 전일 EMA20 상승 필터
+            yesterday_ema20 = cached_indicators.get('ema20')
+            prev_ema20 = cached_indicators.get('prev_ema20')
+            if not (yesterday_ema20 is not None and prev_ema20 is not None and yesterday_ema20 > prev_ema20):
                 return None
 
             # 지표 사용 (모두 실시간 증분 계산 완료 상태)

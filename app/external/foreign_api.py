@@ -100,7 +100,7 @@ async def place_order_api(user_id: str, order: Order, db: AsyncSession):
         "ORD_SVR_DVSN_CD": "0",
         "ORD_DVSN": "00",  # 지정가 (미국 시장가 제한)
     }
-    response = await fetch("POST", api_url, "KIS", body=query, headers=headers)
+    response = await fetch("POST", api_url, "KIS", json=query, headers=headers)
     body = response["body"]
     return body
 

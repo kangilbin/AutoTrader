@@ -96,7 +96,7 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
 
                 elif position_status == 'SELL_PRIMARY':
                     # 매도 신호 없음: 재진입 조건 체크 (실전 SIGNAL 3 재진입과 동일)
-                    matched, signal_reasons = self._check_entry_conditions(row, prev_row)
+                    matched, signal_reasons = self._check_entry_conditions(row, prev_row, prev_prev_row)
                     if matched and current_capital > 0:
                         buy_price = row["STCK_CLPR"]
                         buy_amount = current_capital * buy_ratio
@@ -117,12 +117,12 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
                 signal_reasons = []
 
                 if position_status is None:
-                    matched, signal_reasons = self._check_entry_conditions(row, prev_row)
+                    matched, signal_reasons = self._check_entry_conditions(row, prev_row, prev_prev_row)
                     if matched:
                        is_entry = True
                        buy_amount = current_capital * buy_ratio
                 else: # 2차 매수
-                    matched, signal_reasons = self._check_second_buy_conditions(row, prev_row)
+                    matched, signal_reasons = self._check_second_buy_conditions(row, prev_row, prev_prev_row)
                     if matched:
                         is_entry = True
                         buy_amount = current_capital
@@ -237,7 +237,7 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
             obv_lookback=self.OBV_LOOKBACK
         )
 
-    def _check_entry_conditions(self, row: pd.Series, prev_row: pd.Series = None) -> Tuple[bool, List[str]]:
+    def _check_entry_conditions(self, row: pd.Series, prev_row: pd.Series = None, i_minus_2: pd.Series = None) -> Tuple[bool, List[str]]:
         """1차 매수 진입: 시나리오 A(눌림목 매집) + 시나리오 B(추세 추종 돌파)"""
         required_cols = ["ema_20", "obv_z", "plus_di", "minus_di", "daily_return", "adx", "atr"]
         if any(pd.isna(row[col]) for col in required_cols):
@@ -253,8 +253,11 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
         if not surge_filtered:
             return False, []
 
-        prev_day_bullish = prev_row["STCK_CLPR"] >= prev_row["STCK_OPRC"]
-        if not prev_day_bullish:
+        # 전일 EMA20 상승 필터 (prev_row = 어제, 어제 ema_20 vs 전전일 ema_20 비교)
+        if i_minus_2 is not None and not pd.isna(i_minus_2.get("ema_20")):
+            if not (prev_row["ema_20"] > i_minus_2["ema_20"]):
+                return False, []
+        else:
             return False, []
 
         # === 시나리오 A: 눌림목 매집 진입 ===
@@ -286,7 +289,7 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
 
         return False, []
 
-    def _check_second_buy_conditions(self, row: pd.Series, prev_row: pd.Series = None) -> Tuple[bool, List[str]]:
+    def _check_second_buy_conditions(self, row: pd.Series, prev_row: pd.Series = None, i_minus_2: pd.Series = None) -> Tuple[bool, List[str]]:
         """2차 매수: 추세 안정화 확인 후 추가 매수 (단일 조건)"""
         if any(pd.isna(row[col]) for col in ["ema_20", "obv_z", "atr", "adx", "plus_di", "minus_di"]):
             return False, []
@@ -294,8 +297,11 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
         if prev_row is None:
             return False, []
 
-        # 전일 양봉 필터
-        if not (prev_row["STCK_CLPR"] >= prev_row["STCK_OPRC"]):
+        # 전일 EMA20 상승 필터
+        if i_minus_2 is not None and not pd.isna(i_minus_2.get("ema_20")):
+            if not (prev_row["ema_20"] > i_minus_2["ema_20"]):
+                return False, []
+        else:
             return False, []
 
         current_price = row["STCK_CLPR"]

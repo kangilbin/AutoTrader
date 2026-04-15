@@ -227,7 +227,6 @@ async def get_stock_balance(user_id: str, db: AsyncSession, fk100="", nk100="", 
     output2_data = output2[0] if output2 else {}
 
     if tr_cont == "F" or tr_cont == "M":  # 다음 페이지 존재하는 경우 자기 호출 처리
-        await asyncio.sleep(0.3)  # KIS API 초당 거래건수 제한 방지
         return await get_stock_balance(user_id, db, ctx_area_fk100, ctx_area_nk100, result)
 
     return {"output1": result, "output2": output2_data}
@@ -273,7 +272,7 @@ async def place_order_api(user_id: str, order: Order, db: AsyncSession):
         "ORD_QTY": str(order.qty),
         "ORD_UNPR": "0"
     }
-    response = await fetch("POST", api_url, "KIS", body=query, headers=headers)
+    response = await fetch("POST", api_url, "KIS", json=query, headers=headers)
     body = response["body"]
     return body
 
@@ -380,7 +379,7 @@ async def get_inquire_daily_ccld_obj(user_id: str, db: AsyncSession, inqr_strt_d
         "CTX_AREA_FK100": fk100,
         "CTX_AREA_NK100": nk100
     }
-    response = await fetch("POST", api_url, "KIS", json=query, headers=headers)
+    response = await fetch("GET", api_url, "KIS", params=query, headers=headers)
     body = response["body"]
     return body
 
