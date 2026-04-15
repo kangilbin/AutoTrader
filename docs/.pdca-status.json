@@ -1,6 +1,6 @@
 {
   "version": "2.0",
-  "lastUpdated": "2026-04-11T14:23:25.544Z",
+  "lastUpdated": "2026-04-15T10:35:32.196Z",
   "activeFeatures": [
     "foreign-swing",
     "foreign-stock",
@@ -21,10 +21,30 @@
     "notification",
     "trading-fix Gap 분석 완료",
     "balance-api Gap 분석",
-    "foreign-swing Gap 분석 결과 저장"
+    "foreign-swing Gap 분석 결과 저장",
+    "stock-data Gap 분석 완료",
+    "swing-reg Gap 분석 완료"
   ],
-  "primaryFeature": "foreign-swing",
+  "primaryFeature": "swing-trade",
   "features": {
+    "swing-trade": {
+      "phase": "archived",
+      "phaseNumber": 6,
+      "matchRate": 100,
+      "iterationCount": 0,
+      "startedAt": "2026-04-15T00:00:00.000Z",
+      "archivedAt": "2026-04-15T00:00:00.000Z",
+      "archivedTo": "docs/archive/2026-04/swing-trade/"
+    },
+    "stock-data": {
+      "phase": "archived",
+      "phaseNumber": 6,
+      "matchRate": 100,
+      "iterationCount": 0,
+      "startedAt": "2026-04-15T00:00:00.000Z",
+      "archivedAt": "2026-04-15T00:00:00.000Z",
+      "archivedTo": "docs/archive/2026-04/stock-data/"
+    },
     "foreign-swing": {
       "phase": "check",
       "phaseNumber": 4,
@@ -88,9 +108,9 @@
       },
       "timestamps": {
         "started": "2026-02-28T03:35:36.461Z",
-        "lastUpdated": "2026-03-22T13:11:03.761Z"
+        "lastUpdated": "2026-04-15T02:27:41.060Z"
       },
-      "lastFile": "/Users/apple/IdeaProjects/AutoTrader/app/domain/swing/trading/strategies/single_ema_strategy.py"
+      "lastFile": "/Users/apple/IdeaProjects/AutoTrader/app/domain/swing/backtest/strategies/single_ema_backtest_strategy.py"
     },
     "swing": {
       "phase": "do",
@@ -101,7 +121,7 @@
       "documents": {},
       "timestamps": {
         "started": "2026-02-28T03:36:02.099Z",
-        "lastUpdated": "2026-04-05T01:55:42.674Z"
+        "lastUpdated": "2026-04-15T10:35:32.196Z"
       },
       "lastFile": "/Users/apple/IdeaProjects/AutoTrader/app/domain/swing/service.py"
     },
@@ -153,7 +173,7 @@
       "documents": {},
       "timestamps": {
         "started": "2026-03-13T05:32:59.682Z",
-        "lastUpdated": "2026-04-06T12:26:25.057Z"
+        "lastUpdated": "2026-04-15T03:25:56.788Z"
       },
       "lastFile": "/Users/apple/IdeaProjects/AutoTrader/app/domain/swing/trading/auto_swing_batch.py"
     },
@@ -192,7 +212,7 @@
       "documents": {},
       "timestamps": {
         "started": "2026-03-13T06:07:32.554Z",
-        "lastUpdated": "2026-04-06T12:28:51.553Z"
+        "lastUpdated": "2026-04-11T14:50:13.142Z"
       },
       "lastFile": "/Users/apple/IdeaProjects/AutoTrader/app/common/scheduler.py"
     },
@@ -231,7 +251,7 @@
       "documents": {},
       "timestamps": {
         "started": "2026-03-13T15:38:00.494Z",
-        "lastUpdated": "2026-04-11T14:18:35.225Z"
+        "lastUpdated": "2026-04-14T23:49:00.153Z"
       },
       "lastFile": "/Users/apple/IdeaProjects/AutoTrader/app/domain/stock/stock_data_batch.py"
     },
@@ -257,9 +277,9 @@
       "documents": {},
       "timestamps": {
         "started": "2026-03-13T16:07:44.994Z",
-        "lastUpdated": "2026-04-05T01:29:55.135Z"
+        "lastUpdated": "2026-04-15T03:20:49.770Z"
       },
-      "lastFile": "/Users/apple/IdeaProjects/AutoTrader/app/external/http_client.py"
+      "lastFile": "/Users/apple/IdeaProjects/AutoTrader/app/external/kis_api.py"
     },
     "notification": {
       "phase": "do",
@@ -315,6 +335,34 @@
       },
       "previousPhase": "check",
       "autoAdvanced": true
+    },
+    "stock-data Gap 분석 완료": {
+      "phase": "act",
+      "phaseNumber": 5,
+      "matchRate": null,
+      "iterationCount": 0,
+      "requirements": [],
+      "documents": {},
+      "timestamps": {
+        "started": "2026-04-14T23:51:36.058Z",
+        "lastUpdated": "2026-04-14T23:51:36.058Z"
+      },
+      "previousPhase": "check",
+      "autoAdvanced": true
+    },
+    "swing-reg Gap 분석 완료": {
+      "phase": "act",
+      "phaseNumber": 5,
+      "matchRate": null,
+      "iterationCount": 0,
+      "requirements": [],
+      "documents": {},
+      "timestamps": {
+        "started": "2026-04-15T08:46:56.850Z",
+        "lastUpdated": "2026-04-15T08:46:56.851Z"
+      },
+      "previousPhase": "check",
+      "autoAdvanced": true
     }
   },
   "pipeline": {
@@ -325,7 +373,7 @@
   "session": {
     "startedAt": "2026-02-28T03:08:34.644Z",
     "onboardingCompleted": false,
-    "lastActivity": "2026-04-11T14:23:25.544Z"
+    "lastActivity": "2026-04-15T10:35:32.196Z"
   },
   "history": [
     {
@@ -2912,6 +2960,282 @@
       "timestamp": "2026-04-11T14:23:25.544Z",
       "feature": "foreign-swing Gap 분석 결과 저장",
       "phase": "act",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-04-11T14:49:34.683Z",
+      "feature": "AutoTrader",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-04-11T14:50:02.627Z",
+      "feature": "AutoTrader",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-04-11T14:50:13.142Z",
+      "feature": "AutoTrader",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-04-14T23:15:55.052Z",
+      "feature": "external",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-04-14T23:16:14.873Z",
+      "feature": "external",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-04-14T23:48:32.352Z",
+      "feature": "stock",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-04-14T23:48:48.940Z",
+      "feature": "stock",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-04-14T23:49:00.153Z",
+      "feature": "stock",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-04-14T23:51:36.058Z",
+      "feature": "stock-data Gap 분석 완료",
+      "phase": "act",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-04-15T00:03:24.185Z",
+      "feature": "external",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-04-15T00:03:31.818Z",
+      "feature": "external",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-04-15T00:15:01.378Z",
+      "feature": "external",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-04-15T01:35:39.181Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-04-15T01:35:58.352Z",
+      "feature": "strategies",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-04-15T01:36:09.074Z",
+      "feature": "strategies",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-04-15T01:36:18.298Z",
+      "feature": "strategies",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-04-15T01:43:16.378Z",
+      "feature": "strategies",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-04-15T02:26:31.587Z",
+      "feature": "strategies",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-04-15T02:26:49.299Z",
+      "feature": "strategies",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-04-15T02:27:00.624Z",
+      "feature": "strategies",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-04-15T02:27:13.783Z",
+      "feature": "strategies",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-04-15T02:27:24.934Z",
+      "feature": "strategies",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-04-15T02:27:41.060Z",
+      "feature": "strategies",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-04-15T02:42:11.289Z",
+      "feature": "external",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-04-15T02:42:39.656Z",
+      "feature": "external",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-04-15T03:20:49.770Z",
+      "feature": "external",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-04-15T03:24:56.726Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-04-15T03:24:58.635Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-04-15T03:25:19.153Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-04-15T03:25:26.855Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-04-15T03:25:33.742Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-04-15T03:25:49.680Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-04-15T03:25:56.788Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-04-15T08:43:02.747Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-04-15T08:43:13.925Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-04-15T08:43:36.449Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-04-15T08:43:45.612Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-04-15T08:44:05.645Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-04-15T08:44:18.350Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-04-15T08:44:42.791Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-04-15T08:46:56.851Z",
+      "feature": "swing-reg Gap 분석 완료",
+      "phase": "act",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-04-15T10:30:39.001Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-04-15T10:32:15.996Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-04-15T10:34:52.273Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-04-15T10:35:09.554Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-04-15T10:35:32.196Z",
+      "feature": "swing",
+      "phase": "do",
       "action": "updated"
     }
   ]

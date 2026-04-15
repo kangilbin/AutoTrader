@@ -42,6 +42,18 @@ async def list_swing_mapping(
     return success_response("스윙 매핑 완료", result)
 
 
+@router.get("/available-capital")
+async def get_available_capital(
+    account_no: str = Query(..., description="계좌번호"),
+    mrkt_code: str = Query("J", description="시장코드 (J:국내, NASD:해외)"),
+    service: Annotated[SwingService, Depends(get_swing_service)] = None,
+    user_id: Annotated[str, Depends(get_current_user)] = None
+):
+    """가용 자본 조회 (프론트엔드 UX용)"""
+    result = await service.get_available_capital(user_id, account_no, mrkt_code)
+    return success_response("가용 자본 조회 완료", result)
+
+
 @router.get("/{swing_id}")
 async def get_swing(
     swing_id: int,

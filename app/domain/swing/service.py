@@ -15,7 +15,7 @@ from app.domain.swing.entity import SwingTrade, EmaOption
 from app.domain.swing.schemas import SwingCreateRequest, SwingResponse
 from app.domain.stock.service import StockService
 from app.domain.stock.stock_data_batch import fetch_and_store_3_years_data
-from app.exceptions import DatabaseError, NotFoundError, DuplicateError
+from app.exceptions import DatabaseError, NotFoundError, DuplicateError, BusinessRuleError
 from app.external.kis_api import get_stock_balance
 from app.external import foreign_api
 from app.common.database import Database
@@ -34,10 +34,33 @@ class SwingService:
         self.db = db
         self.repo = SwingRepository(db)
 
+    async def get_available_capital(
+        self, user_id: str, account_no: str, mrkt_code: str, exclude_swing_id: int = None
+    ) -> dict:
+        """가용 자본 조회"""
+        overseas = mrkt_code == "NASD"
+
+        if overseas:
+            balance_data = await foreign_api.get_stock_balance(user_id, self.db)
+        else:
+            balance_data = await get_stock_balance(user_id, self.db)
+
+        output2 = balance_data["output2"]
+        total_capital = int(output2.get("tot_evlu_amt", 0))
+
+        allocated = int(await self.repo.get_total_init_amount(account_no, overseas, exclude_swing_id))
+        available_capital = total_capital - allocated
+
+        return {
+            "total_capital": total_capital,
+            "allocated": allocated,
+            "available_capital": available_capital,
+        }
+
     async def create_swing(self, user_id: str, request: SwingCreateRequest) -> dict:
         """스윙 전략 등록"""
         try:
-            # 도메인 엔티티 생성 (비즈니스 검증)
+            # 도메인 엔티티 생성 (비즈니스 검증) — 등록 시 USE_YN='N'이므로 자본 검증 불필요 (활성화 시 검증)
             swing = SwingTrade.create(
                 account_no=request.ACCOUNT_NO,
                 mrkt_code=request.MRKT_CODE,
@@ -110,6 +133,35 @@ class SwingService:
             swing = await self.repo.find_by_id(swing_id)
             if not swing:
                 raise NotFoundError("스윙 전략", swing_id)
+
+            # 자본 한도 검증 (활성 스윙만 합산)
+            # - INIT_AMOUNT 변경 시: 변경 후 금액이 가용 자본 초과 여부
+            # - USE_YN 활성화 시: 해당 스윙 INIT_AMOUNT가 가용 자본 초과 여부
+            need_capital_check = user_id and (
+                "INIT_AMOUNT" in data
+                or (data.get("USE_YN") == "Y" and swing.USE_YN == "N")
+            )
+            if need_capital_check:
+                # 활성 스윙이면 자기 자신 제외, 비활성→활성 전환이면 제외 불필요(이미 합산에서 빠져있음)
+                exclude_id = swing_id if swing.USE_YN == "Y" else None
+                capital_info = await self.get_available_capital(
+                    user_id, swing.ACCOUNT_NO, swing.MRKT_CODE,
+                    exclude_swing_id=exclude_id
+                )
+                check_amount = data.get("INIT_AMOUNT", int(swing.INIT_AMOUNT))
+                if check_amount > capital_info["available_capital"]:
+                    raise BusinessRuleError(
+                        f"투자 가능 금액을 초과했습니다. "
+                        f"가용 자본: {capital_info['available_capital']:,}원, "
+                        f"요청 금액: {check_amount:,}원",
+                        rule="CAPITAL_LIMIT_EXCEEDED",
+                        detail={
+                            "available_capital": capital_info["available_capital"],
+                            "requested_amount": check_amount,
+                            "total_capital": capital_info["total_capital"],
+                            "allocated": capital_info["allocated"],
+                        }
+                    )
 
             # INIT_AMOUNT 변경 시 차액을 CUR_AMOUNT에도 반영
             if "INIT_AMOUNT" in data:

@@ -2,8 +2,9 @@
 Swing Repository - 데이터 접근 계층
 """
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update, delete, text, and_
+from sqlalchemy import select, update, delete, text, and_, func
 from typing import Optional, List
+from decimal import Decimal
 from app.domain.swing.entity import SwingTrade, EmaOption
 from app.domain.stock.entity import Stock
 from app.domain.swing.schemas import SwingResponse
@@ -124,6 +125,25 @@ class SwingRepository:
         result = await self.db.execute(query)
         await self.db.flush()
         return result.rowcount > 0
+
+    async def get_total_init_amount(
+        self, account_no: str, overseas: bool = False, exclude_swing_id: int = None
+    ) -> Decimal:
+        """계좌별 INIT_AMOUNT 합계 조회"""
+        query = select(func.coalesce(func.sum(SwingTrade.INIT_AMOUNT), 0)).filter(
+            SwingTrade.ACCOUNT_NO == account_no,
+            SwingTrade.USE_YN == 'Y'
+        )
+        if overseas:
+            query = query.filter(SwingTrade.MRKT_CODE == "NASD")
+        else:
+            query = query.filter(SwingTrade.MRKT_CODE != "NASD")
+
+        if exclude_swing_id is not None:
+            query = query.filter(SwingTrade.SWING_ID != exclude_swing_id)
+
+        result = await self.db.execute(query)
+        return Decimal(result.scalar_one())
 
     async def find_active_stock_codes(self) -> List[tuple]:
         """
