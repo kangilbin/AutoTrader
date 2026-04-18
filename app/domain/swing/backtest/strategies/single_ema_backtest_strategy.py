@@ -12,12 +12,11 @@ Entry Conditions (1차 매수):
 5. 급등 필터: 당일 상승률 <= 7%
 6. 연속 확인: 1회 (일봉 기준)
 
-Entry Conditions (2차 매수, 실전 매매와 동일):
+Entry Conditions (2차 매수):
 1. 가격 범위: 1차 매수가 대비 +2% ~ +7%
-2. EMA 위치: 현재가 > EMA20, 괴리율 <= 3%
-3. 수급 강도: OBV z-score >= 1.3 (1차보다 엄격)
-4. 거래량: 전일 대비 150% (실전 매매와 동일)
-5. 리스크: 예상 평균 단가가 손절가 위 1% 이상
+2. EMA 위치: 현재가 > EMA20 (추세 확인)
+3. 수급 강도: OBV z-score >= 1.3 (1차보다 엄격, 거래량 강도 포함)
+4. 리스크: 예상 평균 단가가 손절가 위 1% 이상
 
 Exit Conditions:
 1. 고정 손절: -3%
@@ -55,12 +54,10 @@ class SingleEMABacktestStrategy(BacktestStrategy):
     OBV_Z_WEAK_THRESHOLD = 0.3  # 수급 약화 판단 기준
     OBV_LOOKBACK = 7  # OBV z-score 계산 기간
 
-    # === 2차 매수 조건 (실전 매매와 동일) ===
+    # === 2차 매수 조건 ===
     SECOND_BUY_PRICE_GAIN_MIN = 0.02  # 최소 2% 상승
     SECOND_BUY_PRICE_GAIN_MAX = 0.07  # 최대 7% 상승
-    SECOND_BUY_EMA_GAP_RATIO = 0.03  # EMA 괴리율 3% 이내
-    SECOND_BUY_OBV_THRESHOLD = 1.3  # OBV z-score 1.3 이상 (1차보다 엄격)
-    SECOND_BUY_VOLUME_RATIO = 1.5  # 거래량 전일 대비 150% 이상
+    SECOND_BUY_OBV_THRESHOLD = 1.3  # OBV z-score 1.3 이상 (1차보다 엄격, 거래량 강도 포함)
 
     def __init__(self):
         super().__init__("단일 20EMA 전략")
@@ -163,8 +160,8 @@ class SingleEMABacktestStrategy(BacktestStrategy):
                             "price": float(current_price),
                             "amount": float(sell_amount),
                             "current_capital": float(current_capital),
-                            "realized_pnl": float(realized_pnl),
-                            "realized_pnl_pct": round(realized_pnl_pct, 2),
+                            "realized_pnl": float(realized_pnl), # 실형 손익
+                            "realized_pnl_pct": round(realized_pnl_pct, 2), # 실현 수익률
                             "reason": f"{exit_reason} ({sell_count + 1}차 매도)",
                         })
 
@@ -421,14 +418,13 @@ class SingleEMABacktestStrategy(BacktestStrategy):
         hold_qty: int
     ) -> bool:
         """
-        2차 매수 조건 체크 (실전 매매와 동일, 일봉 버전)
+        2차 매수 조건 체크 (일봉 버전)
 
         Conditions (all must pass):
         1. 가격 범위: 1차 매수가 대비 +2% ~ +7%
-        2. EMA 위치: 현재가 > EMA20, 괴리율 ≤ 3%
-        3. 수급 강도: OBV z-score >= 1.3 (1차보다 엄격)
-        4. 거래량: 전일 대비 150% (실전 매매와 동일)
-        5. 리스크: 예상 평균 단가가 손절가 위 1% 이상
+        2. EMA 위치: 현재가 > EMA20 (추세 확인)
+        3. 수급 강도: OBV z-score >= 1.3 (1차보다 엄격, 거래량 강도 포함)
+        4. 리스크: 예상 평균 단가가 손절가 위 1% 이상
 
         Args:
             row: 현재 데이터
@@ -439,36 +435,27 @@ class SingleEMABacktestStrategy(BacktestStrategy):
             조건 충족 여부
         """
         # NaN 체크
-        if pd.isna(row["ema_20"]) or pd.isna(row["obv_z"]) or pd.isna(row["prdy_vol_ratio"]):
+        if pd.isna(row["ema_20"]) or pd.isna(row["obv_z"]):
             return False
 
         current_price = row["STCK_CLPR"]
         ema_20 = row["ema_20"]
-        gap_ratio = row["gap_ratio"]
         obv_z = row["obv_z"]
-        prdy_vol_ratio = row["prdy_vol_ratio"]
 
         # 1. 가격 범위 체크 (1차 매수가 대비 +2% ~ +7%)
         price_gain = (current_price - entry_price) / entry_price
         if price_gain < self.SECOND_BUY_PRICE_GAIN_MIN or price_gain > self.SECOND_BUY_PRICE_GAIN_MAX:
             return False
 
-        # 2. EMA 위치 체크
+        # 2. EMA 위치 체크 (추세 확인)
         if current_price <= ema_20:
-            return False
-
-        if gap_ratio > self.SECOND_BUY_EMA_GAP_RATIO:
             return False
 
         # 3. 수급 강도 체크 (OBV z-score, 1차보다 엄격)
         if obv_z < self.SECOND_BUY_OBV_THRESHOLD:
             return False
 
-        # 4. 거래량 체크 (전일 대비, 실전 매매와 동일)
-        if prdy_vol_ratio < self.SECOND_BUY_VOLUME_RATIO:
-            return False
-
-        # 5. 리스크 체크 (평균 단가가 손절가 위 1%)
+        # 4. 리스크 체크 (평균 단가가 손절가 위 1%)
         # 2차 매수 후 예상 평균 단가 계산 (50% 추가 매수 가정)
         additional_qty = hold_qty * 0.5
         expected_avg_price = (entry_price * hold_qty + current_price * additional_qty) / (hold_qty + additional_qty)
