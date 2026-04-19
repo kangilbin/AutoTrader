@@ -13,10 +13,11 @@ Entry Conditions (1차 매수):
 6. 연속 확인: 1회 (일봉 기준)
 
 Entry Conditions (2차 매수):
-1. 가격 범위: 1차 매수가 대비 +2% ~ +7%
+1. 가격 범위: 1차 매수가 대비 +1% ~ +4%
 2. EMA 위치: 현재가 > EMA20 (추세 확인)
 3. 수급 강도: OBV z-score >= 1.3 (1차보다 엄격, 거래량 강도 포함)
-4. 리스크: 예상 평균 단가가 손절가 위 1% 이상
+4. 손절 안전거리: 현재가 >= 손절가 × 1.04 (4% 안전 마진)
+5. 시간 간격: 같은 날이면 연속 체크로 자연스럽게 간격 확보
 
 Exit Conditions:
 1. 고정 손절: -3%
@@ -55,9 +56,10 @@ class SingleEMABacktestStrategy(BacktestStrategy):
     OBV_LOOKBACK = 7  # OBV z-score 계산 기간
 
     # === 2차 매수 조건 ===
-    SECOND_BUY_PRICE_GAIN_MIN = 0.02  # 최소 2% 상승
-    SECOND_BUY_PRICE_GAIN_MAX = 0.07  # 최대 7% 상승
+    SECOND_BUY_PRICE_GAIN_MIN = 0.01  # 최소 1% 상승
+    SECOND_BUY_PRICE_GAIN_MAX = 0.04  # 최대 4% 상승
     SECOND_BUY_OBV_THRESHOLD = 1.3  # OBV z-score 1.3 이상 (1차보다 엄격, 거래량 강도 포함)
+    SECOND_BUY_SAFETY_MARGIN = 0.04  # 손절가 위 4% 안전 마진
 
     def __init__(self):
         super().__init__("단일 20EMA 전략")
@@ -421,15 +423,15 @@ class SingleEMABacktestStrategy(BacktestStrategy):
         2차 매수 조건 체크 (일봉 버전)
 
         Conditions (all must pass):
-        1. 가격 범위: 1차 매수가 대비 +2% ~ +7%
+        1. 가격 범위: 1차 매수가 대비 +1% ~ +4%
         2. EMA 위치: 현재가 > EMA20 (추세 확인)
         3. 수급 강도: OBV z-score >= 1.3 (1차보다 엄격, 거래량 강도 포함)
-        4. 리스크: 예상 평균 단가가 손절가 위 1% 이상
+        4. 손절 안전거리: 현재가 >= 손절가 × 1.04 (4% 안전 마진)
 
         Args:
             row: 현재 데이터
             entry_price: 1차 매수가
-            hold_qty: 보유 수량
+            hold_qty: 보유 수량 (사용 안함)
 
         Returns:
             조건 충족 여부
@@ -442,7 +444,7 @@ class SingleEMABacktestStrategy(BacktestStrategy):
         ema_20 = row["ema_20"]
         obv_z = row["obv_z"]
 
-        # 1. 가격 범위 체크 (1차 매수가 대비 +2% ~ +7%)
+        # 1. 가격 범위 체크 (1차 매수가 대비 +1% ~ +4%)
         price_gain = (current_price - entry_price) / entry_price
         if price_gain < self.SECOND_BUY_PRICE_GAIN_MIN or price_gain > self.SECOND_BUY_PRICE_GAIN_MAX:
             return False
@@ -455,14 +457,11 @@ class SingleEMABacktestStrategy(BacktestStrategy):
         if obv_z < self.SECOND_BUY_OBV_THRESHOLD:
             return False
 
-        # 4. 리스크 체크 (평균 단가가 손절가 위 1%)
-        # 2차 매수 후 예상 평균 단가 계산 (50% 추가 매수 가정)
-        additional_qty = hold_qty * 0.5
-        expected_avg_price = (entry_price * hold_qty + current_price * additional_qty) / (hold_qty + additional_qty)
+        # 4. 손절 안전거리 체크 (현재가 >= 손절가 × 1.04)
         stop_loss_price = entry_price * (1 + self.STOP_LOSS_FIXED)  # -3% 손절가
-        risk_threshold = stop_loss_price * 1.01  # 손절가 위 1%
+        safety_threshold = stop_loss_price * (1 + self.SECOND_BUY_SAFETY_MARGIN)  # 손절가 위 4%
 
-        if expected_avg_price < risk_threshold:
+        if current_price < safety_threshold:
             return False
 
         return True
