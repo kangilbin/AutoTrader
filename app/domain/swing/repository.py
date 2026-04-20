@@ -4,7 +4,7 @@ Swing Repository - 데이터 접근 계층
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, delete, text, and_
 from typing import Optional, List
-from app.common.database import SwingModel, EmaOptModel, StockModel
+from app.common.database import SwingModel, EmaOptModel, StockModel, TradeHistoryModel
 from app.domain.swing.entity import SwingTrade, EmaOption
 from app.domain.swing.schemas import SwingResponse
 from datetime import datetime
@@ -191,3 +191,25 @@ class SwingRepository:
             SIGNAL이 4 또는 5인 활성 스윙 목록
         """
         return await self.find_swings_by_signals([4, 5])
+
+    async def get_latest_buy_trade(self, swing_id: int) -> Optional[TradeHistoryModel]:
+        """
+        가장 최근 매수 내역 조회
+
+        Args:
+            swing_id: 스윙 ID
+
+        Returns:
+            가장 최근 매수(B) 거래 내역 또는 None
+        """
+        query = (
+            select(TradeHistoryModel)
+            .where(
+                TradeHistoryModel.SWING_ID == swing_id,
+                TradeHistoryModel.TRADE_TYPE == 'B'
+            )
+            .order_by(TradeHistoryModel.TRADE_DATE.desc())
+            .limit(1)
+        )
+        result = await self.db.execute(query)
+        return result.scalar_one_or_none()

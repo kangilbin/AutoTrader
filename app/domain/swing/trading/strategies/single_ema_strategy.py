@@ -1,13 +1,11 @@
 """
 단일 20EMA 매매 전략 (Single EMA Strategy)
 
-Entry Conditions (all 5 must be met + 2회 연속 확인):
-1. 가격 위치: 현재가 > 실시간 EMA20, 괴리율 <= 2%
-2. 수급 강도: 외국인 >= 3%
-3. 수급 유지: 이전 대비 20% 이상 감소하지 않음
-4. 거래량: 전일 대비 120% 이상
-5. 급등 필터: 당일 상승률 <= 7%
-6. 2회 연속 확인 (Redis 상태 관리)
+Entry Conditions (1차 매수):
+1. EMA 추세: 현재가 > 실시간 EMA20 (추세 확인)
+2. 수급 강도: 외국인 >= 1.5% (거래량 강도 포함)
+3. 급등 필터: 당일 상승률 <= 5%
+4. 연속 확인: 2회 (Redis 상태 관리)
 
 Exit Conditions (종가 기준, 다음날 시초 매도):
 1. 절대 손절: -3% (장중 실시간, 즉시 전량 매도)
@@ -38,11 +36,8 @@ class SingleEMAStrategy(TradingStrategy):
     EMA_PERIOD = 20
 
     # 1차 매수 진입 조건
-    MAX_GAP_RATIO = 0.02  # 괴리율 2% 이내
-    FRGN_STRONG_THRESHOLD = 3.0  # 외국인 3% 이상
-    MAINTAIN_RATIO = 0.8  # 수급 유지 기준 (80%)
-    VOLUME_RATIO_THRESHOLD = 1.2  # 거래량 120% 이상
-    MAX_SURGE_RATIO = 0.07  # 급등 필터 7%
+    FRGN_STRONG_THRESHOLD = 1.5  # 외국인 1.5% 이상 (거래량 강도 포함)
+    MAX_SURGE_RATIO = 0.05  # 급등 필터 5%
     CONSECUTIVE_REQUIRED = 2  # 2회 연속 확인
 
     # 2차 매수 진입 조건
@@ -220,39 +215,26 @@ class SingleEMAStrategy(TradingStrategy):
             logger.warning(f"[{symbol}] EMA 계산 불가")
             return None
 
-        # === 조건 A: 가격 위치 ===
+        # === 조건 1: EMA 추세 ===
         price_condition = curr_price > realtime_ema20
-        gap_ratio = (curr_price - realtime_ema20) / realtime_ema20
-        gap_condition = gap_ratio <= cls.MAX_GAP_RATIO
 
-        # === 조건 B: 수급 강도 (외국인만) ===
+        # === 조건 2: 수급 강도 (외국인) ===
         frgn_ratio = (frgn_ntby_qty / acml_vol * 100) if acml_vol > 0 else 0
-
         supply_condition = frgn_ratio >= cls.FRGN_STRONG_THRESHOLD
 
-        # === 조건 C: 수급 유지 (외국인만) ===
-        supply_maintained = True
-        prev_state_key = f"entry:{symbol}"
-        prev_state_str = await redis_client.get(prev_state_key)
-
-        if prev_state_str:
-            prev_state = json.loads(prev_state_str)
-            prev_frgn_ratio = prev_state.get('curr_frgn_ratio', 0)
-
-            supply_maintained = frgn_ratio >= prev_frgn_ratio * cls.MAINTAIN_RATIO
-
-        # === 조건 D: 거래량 ===
-        volume_condition = prdy_vrss_vol_rate >= (cls.VOLUME_RATIO_THRESHOLD * 100)
-
-        # === 조건 E: 급등 필터 ===
+        # === 조건 3: 급등 필터 ===
         surge_filtered = prdy_ctrt <= (cls.MAX_SURGE_RATIO * 100)
 
         # === 전체 조건 ===
         current_signal = (
-            price_condition and gap_condition and
-            supply_condition and supply_maintained and
-            volume_condition and surge_filtered
+            price_condition and
+            supply_condition and
+            surge_filtered
         )
+
+        # Redis 상태 관리
+        prev_state_key = f"entry:{symbol}"
+        prev_state_str = await redis_client.get(prev_state_key)
 
         # === 연속 카운트 ===
         consecutive = 0
@@ -289,7 +271,6 @@ class SingleEMAStrategy(TradingStrategy):
                 'price': curr_price,
                 'ema20': realtime_ema20,
                 'frgn_ratio': frgn_ratio,
-                'gap_ratio': gap_ratio,
                 'consecutive': consecutive
             }
 
@@ -488,7 +469,8 @@ class SingleEMAStrategy(TradingStrategy):
     @classmethod
     async def check_second_buy_signal(
         cls,
-        db,
+        swing_repository,
+        stock_repository,
         redis_client,
         swing_id: int,
         symbol: str,
@@ -511,10 +493,10 @@ class SingleEMAStrategy(TradingStrategy):
         3. 수급 강도: 1차 매수 시점 이후 외국인 누적 ≥ 1.2% (거래량 강도 포함)
         4. 손절 안전거리: 현재가 >= 손절가 × 1.04 (4% 안전 마진)
         5. 시간 간격: 같은 날이면 10분 이상 경과
-
         Args:
-            db: 데이터베이스 세션
-            redis_client: Redis 클라이언트   
+            swing_repository: SwingRepository 인스턴스
+            stock_repository: StockRepository 인스턴스
+            redis_client: Redis 클라이언트
             swing_id: 스윙 ID
             symbol: 종목 코드
             df: 주가 데이터
@@ -528,8 +510,6 @@ class SingleEMAStrategy(TradingStrategy):
         Returns:
             2차 매수 신호 정보 또는 None
         """
-        from sqlalchemy import select, func
-        from app.common.database import TradeHistoryModel, StockHistoryModel
         from datetime import datetime
 
         curr_price = float(current_price)
@@ -539,17 +519,7 @@ class SingleEMAStrategy(TradingStrategy):
         # 1. 1차 매수 데이터 조회 (TRADE_HISTORY)
         # ========================================
         try:
-            # 가장 최근 매수(B) 내역 조회
-            result = await db.execute(
-                select(TradeHistoryModel)
-                .where(
-                    TradeHistoryModel.SWING_ID == swing_id,
-                    TradeHistoryModel.TRADE_TYPE == 'B'
-                )
-                .order_by(TradeHistoryModel.TRADE_DATE.desc())
-                .limit(1)
-            )
-            first_buy = result.scalar_one_or_none()
+            first_buy = await swing_repository.get_latest_buy_trade(swing_id)
 
             if not first_buy:
                 logger.warning(f"[{symbol}] 1차 매수 내역 없음 (SWING_ID={swing_id})")
@@ -604,25 +574,13 @@ class SingleEMAStrategy(TradingStrategy):
         # 4. 수급 강도 체크 (1차 매수 이후 누적)
         # ========================================
         try:
-            # 6-1. STOCK_DAY_HISTORY에서 1차 매수일 ~ 어제까지 누적
             yesterday_str = (datetime.now() - pd.Timedelta(days=1)).strftime('%Y%m%d')
 
             # 1차 매수가 어제 이전인 경우에만 DB 조회
             if first_buy_date_str < today_str:
-                result = await db.execute(
-                    select(
-                        func.sum(StockHistoryModel.FRGN_NTBY_QTY).label('total_frgn'),
-                        func.sum(StockHistoryModel.ACML_VOL).label('total_vol')
-                    )
-                    .where(
-                        StockHistoryModel.ST_CODE == symbol,
-                        StockHistoryModel.STCK_BSOP_DATE >= first_buy_date_str,
-                        StockHistoryModel.STCK_BSOP_DATE <= yesterday_str
-                    )
+                past_frgn, past_vol = await stock_repository.get_stock_volume_sum(
+                    symbol, first_buy_date_str, yesterday_str
                 )
-                past_data = result.one()
-                past_frgn = past_data.total_frgn or 0
-                past_vol = past_data.total_vol or 0
 
                 logger.debug(
                     f"[{symbol}] 과거 수급 ({first_buy_date_str}~{yesterday_str}): "
@@ -634,7 +592,7 @@ class SingleEMAStrategy(TradingStrategy):
                 past_vol = 0
                 logger.debug(f"[{symbol}] 1차 매수가 당일, 과거 데이터 없음")
 
-            # 6-2. 당일 실시간 데이터 추가
+            # 당일 실시간 데이터 추가
             total_frgn = past_frgn + frgn_ntby_qty
             total_vol = past_vol + acml_vol
 
@@ -687,7 +645,7 @@ class SingleEMAStrategy(TradingStrategy):
                 return None
 
         # ========================================
-        # ✅ 모든 조건 충족
+        # 모든 조건 충족
         # ========================================
         logger.info(
             f"[{symbol}] 2차 매수 신호 발생: "
@@ -702,141 +660,6 @@ class SingleEMAStrategy(TradingStrategy):
             'price_gain': price_gain,
             'frgn_ratio': cumulative_frgn_ratio,
             'first_buy_date': first_buy_dt.strftime('%Y-%m-%d %H:%M:%S')
-        }
-
-    @classmethod
-    def analyze(
-        cls,
-        df: pd.DataFrame,
-        current_price: Decimal,
-        frgn_ntby_qty: int,
-        pgtr_ntby_qty: int,
-        acml_vol: int,
-        prdy_vrss_vol_rate: float,
-        prdy_ctrt: float,
-        entry_price: Optional[Decimal] = None,
-        current_signal: int = 0
-    ) -> Dict:
-        """
-        전략 분석 (Redis 없이 동기 분석만, 실제 신호는 async 메서드 사용)
-
-        기존 코드와의 호환성을 위한 wrapper 메서드
-        실제 Redis 기반 신호 생성은 check_entry_signal/check_exit_signal 사용
-
-        Returns:
-            간단한 분석 결과
-        """
-        curr_price = float(current_price)
-        realtime_ema20 = cls.get_realtime_ema20(df, curr_price)
-
-        if realtime_ema20 is None:
-            return {
-                "signal": "hold",
-                "strength": None,
-                "score": 0,
-                "conditions": {},
-                "indicators": {},
-                "reason": "EMA 계산 불가"
-            }
-
-        # 기본 조건 체크
-        price_condition = curr_price > realtime_ema20
-        gap_ratio = (curr_price - realtime_ema20) / realtime_ema20
-        gap_condition = gap_ratio <= cls.MAX_GAP_RATIO
-
-        frgn_ratio = (frgn_ntby_qty / acml_vol * 100) if acml_vol > 0 else 0
-        pgm_ratio = (pgtr_ntby_qty / acml_vol * 100) if acml_vol > 0 else 0
-
-        supply_condition = frgn_ratio >= cls.FRGN_STRONG_THRESHOLD
-
-        volume_condition = prdy_vrss_vol_rate >= (cls.VOLUME_RATIO_THRESHOLD * 100)
-        surge_filtered = prdy_ctrt <= (cls.MAX_SURGE_RATIO * 100)
-
-        score = sum([price_condition, gap_condition, supply_condition, volume_condition, surge_filtered])
-
-        conditions = {
-            "price_above_ema": price_condition,
-            "gap_ok": gap_condition,
-            "supply_strong": supply_condition,
-            "volume_sufficient": volume_condition,
-            "surge_filtered": surge_filtered
-        }
-
-        indicators = {
-            "ema_20": realtime_ema20,
-            "gap_ratio": gap_ratio,
-            "frgn_ratio": frgn_ratio,
-            "pgm_ratio": pgm_ratio,
-        }
-
-        # 포지션이 있는 경우 손익 계산
-        if entry_price:
-            profit_rate = (curr_price - float(entry_price)) / float(entry_price)
-            indicators["profit_rate"] = profit_rate
-
-            # 간단한 매도 조건 체크
-            # 1. 고정 손절
-            if profit_rate <= cls.STOP_LOSS_FIXED:
-                return {
-                    "signal": "sell",
-                    "strength": "strong",
-                    "score": score,
-                    "conditions": conditions,
-                    "indicators": indicators,
-                    "reason": f"손절: 고정 -3% (현재 {profit_rate*100:.2f}%)"
-                }
-
-            # 2. 수급 반전
-            if frgn_ratio <= cls.SUPPLY_REVERSAL_THRESHOLD:
-                return {
-                    "signal": "sell",
-                    "strength": "strong",
-                    "score": score,
-                    "conditions": conditions,
-                    "indicators": indicators,
-                    "reason": f"수급 반전 (외국인={frgn_ratio:.1f}%)"
-                }
-
-            # 3. EMA 이탈 (Redis 없이는 연속 확인 불가)
-            if curr_price < realtime_ema20:
-                return {
-                    "signal": "sell",
-                    "strength": "weak",  # Redis 확인 필요
-                    "score": score,
-                    "conditions": conditions,
-                    "indicators": indicators,
-                    "reason": f"EMA 이탈 가능성 (Redis 확인 필요)"
-                }
-
-            # 4. 수급 약화
-            if frgn_ratio < cls.SUPPLY_WEAK_THRESHOLD:
-                return {
-                    "signal": "sell",
-                    "strength": "medium",
-                    "score": score,
-                    "conditions": conditions,
-                    "indicators": indicators,
-                    "reason": f"수급 약화 (외국인={frgn_ratio:.1f}%)"
-                }
-
-        # 진입 신호 (단, Redis 없이는 연속 확인 불가)
-        if current_signal == 0 and score == 5:
-            return {
-                "signal": "buy",
-                "strength": "weak",  # Redis 확인 필요
-                "score": score,
-                "conditions": conditions,
-                "indicators": indicators,
-                "reason": "조건 충족 (Redis 연속 확인 필요)"
-            }
-
-        return {
-            "signal": "hold",
-            "strength": None,
-            "score": score,
-            "conditions": conditions,
-            "indicators": indicators,
-            "reason": f"조건 미충족 (점수: {score}/5)"
         }
 
     # ========================================
@@ -865,38 +688,25 @@ class SingleEMAStrategy(TradingStrategy):
     @classmethod
     async def check_foreign_exit_signal(
         cls,
-        db,
+        stock_repository,
         symbol: str
     ) -> bool:
         """
         외국인 이탈 신호 체크 (최근 2일 합산 순매도)
 
         Args:
-            db: 데이터베이스 세션
+            stock_repository: StockRepository 인스턴스
             symbol: 종목 코드
 
         Returns:
             외국인 이탈 신호 여부
         """
-        from sqlalchemy import select, func
-        from app.common.database import StockHistoryModel
         from datetime import datetime, timedelta
 
         try:
             # 최근 2일 데이터 조회
-            today = datetime.now()
-            two_days_ago = today - timedelta(days=2)
-            two_days_ago_str = two_days_ago.strftime('%Y%m%d')
-
-            result = await db.execute(
-                select(func.sum(StockHistoryModel.FRGN_NTBY_QTY).label('total_frgn'))
-                .where(
-                    StockHistoryModel.ST_CODE == symbol,
-                    StockHistoryModel.STCK_BSOP_DATE >= two_days_ago_str
-                )
-            )
-            data = result.one()
-            total_frgn = data.total_frgn or 0
+            two_days_ago_str = (datetime.now() - timedelta(days=2)).strftime('%Y%m%d')
+            total_frgn = await stock_repository.get_foreign_net_buy_sum(symbol, two_days_ago_str)
 
             # 2일 합산이 순매도면 이탈 신호
             is_exit = total_frgn < 0
@@ -998,7 +808,7 @@ class SingleEMAStrategy(TradingStrategy):
     @classmethod
     async def check_first_sell_signal_eod(
         cls,
-        db,
+        stock_repository,
         redis_client,
         position_id: int,
         symbol: str,
@@ -1011,7 +821,7 @@ class SingleEMAStrategy(TradingStrategy):
         조건: (EMA 이탈, 외국인 이탈, 추세 약화) 중 2개 충족
 
         Args:
-            db: 데이터베이스 세션
+            stock_repository: StockRepository 인스턴스
             redis_client: Redis 클라이언트
             position_id: 포지션 ID
             symbol: 종목 코드
@@ -1071,7 +881,7 @@ class SingleEMAStrategy(TradingStrategy):
             signals['ema_breach'] = False
 
         # 2. 외국인 이탈
-        signals['foreign_exit'] = await cls.check_foreign_exit_signal(db, symbol)
+        signals['foreign_exit'] = await cls.check_foreign_exit_signal(stock_repository, symbol)
 
         # 3. 추세 약화
         signals['trend_weakness'] = await cls.check_trend_weakness_signal(
@@ -1109,7 +919,7 @@ class SingleEMAStrategy(TradingStrategy):
     @classmethod
     async def check_second_sell_signal_eod(
         cls,
-        db,
+        stock_repository,
         redis_client,
         position_id: int,
         symbol: str,
@@ -1122,7 +932,7 @@ class SingleEMAStrategy(TradingStrategy):
         조건: (EMA 이탈 유지, 외국인 이탈 유지/확대, 추세 약화 확정) 모두 충족
 
         Args:
-            db: 데이터베이스 세션
+            stock_repository: StockRepository 인스턴스
             redis_client: Redis 클라이언트
             position_id: 포지션 ID
             symbol: 종목 코드
@@ -1171,7 +981,7 @@ class SingleEMAStrategy(TradingStrategy):
             signals['ema_breach'] = False
 
         # 2. 외국인 이탈 유지/확대
-        signals['foreign_exit'] = await cls.check_foreign_exit_signal(db, symbol)
+        signals['foreign_exit'] = await cls.check_foreign_exit_signal(stock_repository, symbol)
 
         # 3. 추세 약화 확정
         signals['trend_weakness'] = await cls.check_trend_weakness_signal(
