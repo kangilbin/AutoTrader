@@ -247,7 +247,7 @@ class SingleEMABacktestStrategy(BacktestStrategy):
         result = self._format_result(prices_df, params, trades, current_capital)
         result["parameters"].update({
             "EMA_PERIOD": self.EMA_PERIOD,
-            "MAX_GAP_RATIO": self.MAX_GAP_RATIO,
+            "MAX_SURGE_RATIO": self.MAX_SURGE_RATIO,
             "STOP_LOSS": self.STOP_LOSS_FIXED,
         })
 
