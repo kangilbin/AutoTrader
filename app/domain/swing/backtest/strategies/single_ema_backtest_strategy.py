@@ -70,6 +70,10 @@ class SingleEMABacktestStrategy(BacktestStrategy):
     SECOND_SELL_DROP_THRESHOLD = -0.02  # 1차 매도가 대비 -2% 추가 하락
     SECOND_SELL_OBV_THRESHOLD = -1.5  # 수급 급락 기준
 
+    # === 거래 비용 ===
+    COMMISSION_RATE = 0.00147  # 한국 투자증권 코스피/코스닥 매매 수수료 0.147%
+    TAX_RATE = 0.0020  # 매도 시 세금 0.20% (코스피/코스닥)
+
     def __init__(self):
         super().__init__("단일 20EMA 전략")
 
@@ -163,21 +167,28 @@ class SingleEMABacktestStrategy(BacktestStrategy):
 
                     # 매도 수량이 0보다 클 때만 실행
                     if sell_quantity > 0:
-                        sell_amount = sell_quantity * current_price
-                        realized_pnl = (current_price - curr_avg_cost) * sell_quantity
-                        realized_pnl_pct = ((current_price / curr_avg_cost) - 1) * 100 if curr_avg_cost > 0 else 0.0
+                        gross_sell_amount = sell_quantity * current_price
+                        sell_commission = gross_sell_amount * self.COMMISSION_RATE  # 매도 수수료 적용
+                        sell_tax = gross_sell_amount * self.TAX_RATE  # 매도 세금 적용
+                        total_sell_fees = sell_commission + sell_tax
+                        net_sell_amount = gross_sell_amount - total_sell_fees
 
-                        current_capital += sell_amount
+                        realized_pnl_before_fees = (current_price - curr_avg_cost) * sell_quantity
+                        realized_pnl = realized_pnl_before_fees - total_sell_fees
+                        realized_pnl_pct = (realized_pnl / (curr_avg_cost * sell_quantity)) * 100 if curr_avg_cost * sell_quantity > 0 else 0.0
+
+                        current_capital += net_sell_amount  # 순 매도 금액 합산
 
                         trades.append({
                             "date": current_date,
                             "action": "SELL",
                             "quantity": sell_quantity,
                             "price": float(current_price),
-                            "amount": float(sell_amount),
+                            "amount": float(net_sell_amount),  # 순 매도 금액
+                            "fee": float(total_sell_fees),  # 총 매도 비용
                             "current_capital": float(current_capital),
-                            "realized_pnl": float(realized_pnl), # 실현 손익
-                            "realized_pnl_pct": round(realized_pnl_pct, 2), # 실현 수익률
+                            "realized_pnl": float(realized_pnl),  # 실현 손익 (비용 반영)
+                            "realized_pnl_pct": round(realized_pnl_pct, 2),  # 실현 수익률 (비용 반영)
                             "reason": f"{exit_reason} ({sell_count + 1}차 매도)",
                         })
 
@@ -239,7 +250,8 @@ class SingleEMABacktestStrategy(BacktestStrategy):
                     executed_amount = buy_quantity * current_price
 
                     if buy_quantity > 0:
-                        current_capital -= executed_amount
+                        buy_cost = executed_amount * self.COMMISSION_RATE  # 매수 수수료 적용
+                        current_capital -= (executed_amount + buy_cost)  # 총 매수 금액 + 수수료 차감
 
                         # 1차/2차 매수 시 진입가 설정
                         if buy_count == 0:
@@ -270,7 +282,8 @@ class SingleEMABacktestStrategy(BacktestStrategy):
                             "action": "BUY",
                             "quantity": buy_quantity,
                             "price": float(current_price),
-                            "amount": float(executed_amount),
+                            "amount": float(executed_amount),  # 매수 금액 (수수료 제외)
+                            "fee": float(buy_cost),  # 매수 수수료
                             "current_capital": float(current_capital),
                             "reason": reason,
                         })
@@ -287,23 +300,29 @@ class SingleEMABacktestStrategy(BacktestStrategy):
         if remaining_qty > 0 and not eval_df.empty:
             last_row = eval_df.iloc[-1]
             last_price = last_row["STCK_CLPR"]
-            liquidation_value = remaining_qty * last_price
-            final_capital += liquidation_value
+            gross_liquidation_value = remaining_qty * last_price
+            liquidation_commission = gross_liquidation_value * self.COMMISSION_RATE
+            liquidation_tax = gross_liquidation_value * self.TAX_RATE
+            total_liquidation_fees = liquidation_commission + liquidation_tax
+            net_liquidation_value = gross_liquidation_value - total_liquidation_fees
 
-            # 명확성을 위해 최종 청산 거래 기록 추가
+            final_capital += net_liquidation_value  # 순 청산 금액 합산
+
             _, current_avg_cost = self._calculate_position_state(trades)
-            realized_pnl = (last_price - current_avg_cost) * remaining_qty
-            realized_pnl_pct = ((last_price / current_avg_cost) - 1) * 100 if current_avg_cost > 0 else 0.0
+            realized_pnl_before_fees = (last_price - current_avg_cost) * remaining_qty
+            realized_pnl = realized_pnl_before_fees - total_liquidation_fees
+            realized_pnl_pct = (realized_pnl / (current_avg_cost * remaining_qty)) * 100 if current_avg_cost * remaining_qty > 0 else 0.0
 
             trades.append({
                 "date": last_row["STCK_BSOP_DATE"],
                 "action": "LIQUIDATION",
                 "quantity": remaining_qty,
                 "price": float(last_price),
-                "amount": float(liquidation_value),
+                "amount": float(net_liquidation_value),  # 순 청산 금액
+                "fee": float(total_liquidation_fees),  # 총 청산 비용
                 "current_capital": float(final_capital),
-                "realized_pnl": float(realized_pnl),
-                "realized_pnl_pct": round(realized_pnl_pct, 2),
+                "realized_pnl": float(realized_pnl),  # 실현 손익 (비용 반영)
+                "realized_pnl_pct": round(realized_pnl_pct, 2),  # 실현 수익률 (비용 반영)
                 "reason": "백테스트 종료, 최종 보유분 청산",
             })
 
