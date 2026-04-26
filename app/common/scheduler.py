@@ -15,7 +15,7 @@ async def schedule_start():
     # EMA 캐시 워밍업: 평일 08:30 (장 시작 전)
     scheduler.add_job(
         ema_cache_warmup_job,
-        CronTrigger(minute='30', hour='8', day_of_week='mon-fri')
+        CronTrigger(minute='29', hour='8', day_of_week='mon-fri')
     )
 
     # 시초 매도 배치: 평일 09:00-09:55, 5분마다 실행

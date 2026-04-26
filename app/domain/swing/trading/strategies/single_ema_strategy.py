@@ -2,15 +2,22 @@
 단일 20EMA 매매 전략 (Single EMA Strategy)
 
 Entry Conditions (1차 매수):
-1. EMA 추세: 현재가 > 실시간 EMA20 (추세 확인)
-2. 수급 강도: 외국인 >= 1.5% (거래량 강도 포함)
+1. EMA 추세: 현재가 > 실시간 EMA20
+2. 수급 강도: (외국인 >= 1.5%) AND (OBV z-score >= 1.0) - 이중 검증
 3. 급등 필터: 당일 상승률 <= 5%
-4. 연속 확인: 2회 (Redis 상태 관리)
+4. 괴리율 필터: EMA 괴리율 <= 5% (고점 매수 방지)
+5. 추세 강도: ADX > 25 (횡보장 차단)
+6. 추세 방향: +DI > -DI (상승 추세 확인)
+7. 연속 확인: 2회 (Redis 상태 관리)
 
-Exit Conditions (종가 기준, 다음날 시초 매도):
-1. 절대 손절: -3% (장중 실시간, 즉시 전량 매도)
-2. 1차 매도: (EMA 이탈, 외국인 이탈, 추세 약화) 중 2개 → 다음날 시초 50% 매도
-3. 2차 매도: (EMA 이탈, 외국인 이탈, 추세 약화) 모두 충족 → 다음날 시초 전량 매도
+Exit Conditions:
+[즉시 매도 - 장중 실시간]
+1. 고정 손절: -3%
+2. EMA-ATR 손절: 현재가 <= EMA - (ATR × 1.0)
+
+[전략적 매도 - 종가 → 다음날 시초가]
+1. 1차 매도 (50%): (EMA 이탈 2회, 외국인 이탈, 추세 약화) 중 2개 충족
+2. 2차 매도 (전량): 3가지 모두 충족
 """
 import pandas as pd
 import talib as ta
@@ -22,6 +29,7 @@ from datetime import datetime
 import logging
 
 from .base_trading_strategy import TradingStrategy
+from app.domain.swing.indicators import TechnicalIndicators
 
 logger = logging.getLogger(__name__)
 
@@ -36,19 +44,24 @@ class SingleEMAStrategy(TradingStrategy):
     EMA_PERIOD = 20
 
     # 1차 매수 진입 조건
-    FRGN_STRONG_THRESHOLD = 1.5  # 외국인 1.5% 이상 (거래량 강도 포함)
+    FRGN_STRONG_THRESHOLD = 1.5  # 외국인 1.5% 이상
+    OBV_Z_BUY_THRESHOLD = 1.0  # OBV z-score 1.0 이상 (이중 검증)
     MAX_SURGE_RATIO = 0.05  # 급등 필터 5%
+    MAX_GAP_RATIO = 0.05  # EMA 괴리율 5% 이하 (고점 매수 방지)
+    ADX_THRESHOLD = 25  # ADX 25 이상 (횡보장 차단)
     CONSECUTIVE_REQUIRED = 2  # 2회 연속 확인
 
     # 2차 매수 진입 조건
     SECOND_BUY_PRICE_GAIN_MIN = 0.01  # 최소 1% 상승
     SECOND_BUY_PRICE_GAIN_MAX = 0.04  # 최대 4% 상승
-    SECOND_BUY_FRGN_THRESHOLD = 1.2  # 외국인 1.2% 이상 (1차보다 완화, 거래량 강도 포함)
+    SECOND_BUY_FRGN_THRESHOLD = 1.2  # 외국인 1.2% 이상
+    SECOND_BUY_OBV_THRESHOLD = 0.9  # OBV z-score 0.9 이상 (1차보다 완화)
     SECOND_BUY_SAFETY_MARGIN = 0.04  # 손절가 위 4% 안전 마진
     SECOND_BUY_TIME_MIN = 600  # 최소 10분 경과 (같은 날)
 
     # 청산 조건
     STOP_LOSS_FIXED = -0.03  # 고정 손절 -3%
+    ATR_MULTIPLIER = 1.0  # EMA-ATR 손절 배수
     SUPPLY_REVERSAL_THRESHOLD = -2.0  # 수급 반전 (순매도 -2%)
     SUPPLY_WEAK_THRESHOLD = 1.0  # 수급 약화 (1% 미만)
     EMA_BREACH_REQUIRED = 2  # EMA 이탈 2회 연속 확인
@@ -191,12 +204,21 @@ class SingleEMAStrategy(TradingStrategy):
         prdy_ctrt: float
     ) -> Optional[Dict]:
         """
-        진입 신호 체크 (2회 연속 확인)
+        진입 신호 체크 (6개 조건 + 2회 연속 확인)
+
+        Conditions:
+        1. EMA 추세: 현재가 > EMA20
+        2. 수급 강도: (외국인 >= 1.5%) AND (OBV z-score >= 1.0)
+        3. 급등 필터: 당일 상승률 <= 5%
+        4. 괴리율: EMA 괴리율 <= 5%
+        5. ADX > 25 (횡보장 차단)
+        6. +DI > -DI (상승 추세)
+        7. 연속 2회 확인 (Redis)
 
         Args:
             redis_client: Redis 클라이언트
             symbol: 종목코드
-            df: 주가 데이터
+            df: 주가 데이터 (지표 계산 필요)
             current_price: 현재가
             frgn_ntby_qty: 외국인 순매수량
             pgtr_ntby_qty: 프로그램 순매수량
@@ -207,36 +229,97 @@ class SingleEMAStrategy(TradingStrategy):
         Returns:
             매수 신호 정보 또는 None
         """
-        # === EMA 계산 ===
         curr_price = float(current_price)
-        realtime_ema20 = cls.get_realtime_ema20(df, curr_price)
 
-        if realtime_ema20 is None:
-            logger.warning(f"[{symbol}] EMA 계산 불가")
+        # === 지표 계산 (DataFrame에 없으면 추가) ===
+        try:
+            # DataFrame에 지표가 없으면 계산
+            if 'obv_z' not in df.columns or 'adx' not in df.columns:
+                df = TechnicalIndicators.prepare_indicators_from_df(df)
+
+            # 최신 지표 값 추출
+            if len(df) == 0:
+                logger.warning(f"[{symbol}] DataFrame 비어있음")
+                return None
+
+            last_row = df.iloc[-1]
+
+            # 실시간 EMA 계산
+            realtime_ema20 = cls.get_realtime_ema20(df, curr_price)
+            if realtime_ema20 is None:
+                logger.warning(f"[{symbol}] EMA 계산 불가")
+                return None
+
+            # OBV z-score (어제 값 사용, 5분마다 갱신 권장)
+            obv_z = last_row.get('obv_z', 0) if 'obv_z' in last_row else 0
+
+            # ADX, DMI (어제 값 사용)
+            adx = last_row.get('adx', 0) if 'adx' in last_row else 0
+            plus_di = last_row.get('plus_di', 0) if 'plus_di' in last_row else 0
+            minus_di = last_row.get('minus_di', 0) if 'minus_di' in last_row else 0
+
+            # 괴리율 계산
+            gap_ratio = TechnicalIndicators.calculate_gap_ratio(curr_price, realtime_ema20)
+
+        except Exception as e:
+            logger.error(f"[{symbol}] 지표 계산 실패: {e}", exc_info=True)
             return None
 
         # === 조건 1: EMA 추세 ===
-        price_condition = curr_price > realtime_ema20
+        price_above_ema = curr_price > realtime_ema20
 
-        # === 조건 2: 수급 강도 (외국인) ===
+        # === 조건 2: 수급 강도 (외국인 AND OBV) ===
         frgn_ratio = (frgn_ntby_qty / acml_vol * 100) if acml_vol > 0 else 0
-        supply_condition = frgn_ratio >= cls.FRGN_STRONG_THRESHOLD
+        frgn_strong = frgn_ratio >= cls.FRGN_STRONG_THRESHOLD
+        obv_strong = obv_z >= cls.OBV_Z_BUY_THRESHOLD
+        supply_strong = frgn_strong and obv_strong  # AND 조건
 
         # === 조건 3: 급등 필터 ===
         surge_filtered = prdy_ctrt <= (cls.MAX_SURGE_RATIO * 100)
 
+        # === 조건 4: 괴리율 필터 ===
+        gap_filtered = gap_ratio <= cls.MAX_GAP_RATIO
+
+        # === 조건 5: ADX (추세 강도) ===
+        trend_strong = adx > cls.ADX_THRESHOLD
+
+        # === 조건 6: DMI (추세 방향) ===
+        trend_upward = plus_di > minus_di
+
         # === 전체 조건 ===
         current_signal = (
-            price_condition and
-            supply_condition and
-            surge_filtered
+            price_above_ema and
+            supply_strong and
+            surge_filtered and
+            gap_filtered and
+            trend_strong and
+            trend_upward
         )
 
-        # Redis 상태 관리
+        # === 디버깅 로그 ===
+        if not current_signal:
+            failed_conditions = []
+            if not price_above_ema:
+                failed_conditions.append(f"EMA(가격={curr_price:,.0f} vs EMA={realtime_ema20:,.0f})")
+            if not frgn_strong:
+                failed_conditions.append(f"외국인({frgn_ratio:.2f}% < {cls.FRGN_STRONG_THRESHOLD}%)")
+            if not obv_strong:
+                failed_conditions.append(f"OBV(z={obv_z:.2f} < {cls.OBV_Z_BUY_THRESHOLD})")
+            if not surge_filtered:
+                failed_conditions.append(f"급등({prdy_ctrt:.2f}% > {cls.MAX_SURGE_RATIO*100}%)")
+            if not gap_filtered:
+                failed_conditions.append(f"괴리율({gap_ratio*100:.2f}% > {cls.MAX_GAP_RATIO*100}%)")
+            if not trend_strong:
+                failed_conditions.append(f"ADX({adx:.1f} <= {cls.ADX_THRESHOLD})")
+            if not trend_upward:
+                failed_conditions.append(f"DMI(+DI={plus_di:.1f} <= -DI={minus_di:.1f})")
+
+            logger.debug(f"[{symbol}] 진입 조건 미충족: {', '.join(failed_conditions)}")
+
+        # === Redis 상태 관리 (연속 확인) ===
         prev_state_key = f"entry:{symbol}"
         prev_state_str = await redis_client.get(prev_state_key)
 
-        # === 연속 카운트 ===
         consecutive = 0
         if current_signal:
             if prev_state_str:
@@ -255,6 +338,9 @@ class SingleEMAStrategy(TradingStrategy):
             'curr_price': curr_price,
             'curr_ema20': realtime_ema20,
             'curr_frgn_ratio': frgn_ratio,
+            'curr_obv_z': obv_z,
+            'curr_adx': adx,
+            'curr_gap_ratio': gap_ratio,
             'last_update': datetime.now().isoformat()
         }
         await redis_client.setex(prev_state_key, 900, json.dumps(new_state))
@@ -262,23 +348,28 @@ class SingleEMAStrategy(TradingStrategy):
         # === 최종 판정 ===
         if consecutive >= cls.CONSECUTIVE_REQUIRED:
             logger.info(
-                f"[{symbol}] 1차 매수 신호: consecutive={consecutive}, "
+                f"[{symbol}] ✅ 1차 매수 신호: consecutive={consecutive}, "
                 f"가격={curr_price:,.0f}, EMA={realtime_ema20:,.0f}, "
-                f"외국인={frgn_ratio:.2f}%"
+                f"외국인={frgn_ratio:.2f}%, OBV_z={obv_z:.2f}, "
+                f"ADX={adx:.1f}, 괴리율={gap_ratio*100:.2f}%"
             )
             return {
                 'action': 'BUY',
                 'price': curr_price,
                 'ema20': realtime_ema20,
                 'frgn_ratio': frgn_ratio,
+                'obv_z': obv_z,
+                'adx': adx,
+                'gap_ratio': gap_ratio,
                 'consecutive': consecutive
             }
 
         # 조건 충족 중이지만 아직 2회 미달
         if current_signal and consecutive == 1:
             logger.info(
-                f"[{symbol}] 신호 대기 중: consecutive=1/2, "
-                f"가격={curr_price:,.0f}, EMA={realtime_ema20:,.0f}"
+                f"[{symbol}] 🔔 신호 대기 중 (1/2): "
+                f"가격={curr_price:,.0f}, EMA={realtime_ema20:,.0f}, "
+                f"외국인={frgn_ratio:.2f}%, OBV_z={obv_z:.2f}"
             )
 
         return None
@@ -339,7 +430,28 @@ class SingleEMAStrategy(TradingStrategy):
             return {"action": "SELL", "reason": f"고정손절 (손실: {profit_rate*100:.2f}%)"}
 
         # ========================================
-        # 2. 수급 반전 (외국인 순매도 전환)
+        # 2. EMA-ATR 동적 손절
+        # ========================================
+        # ATR 지표 계산 (없으면 추가)
+        if 'atr' not in df.columns:
+            df = TechnicalIndicators.prepare_indicators_from_df(df)
+
+        if 'atr' in df.columns and not df['atr'].isna().all():
+            atr = float(df['atr'].iloc[-1])
+            ema_atr_stop = realtime_ema20 - (atr * cls.ATR_MULTIPLIER)
+
+            if curr_price <= ema_atr_stop:
+                logger.warning(
+                    f"[{symbol}] EMA-ATR 손절: 현재가={curr_price:,.0f} <= "
+                    f"EMA-ATR={ema_atr_stop:,.0f} (EMA={realtime_ema20:,.0f}, ATR={atr:,.0f})"
+                )
+                return {
+                    "action": "SELL",
+                    "reason": f"EMA-ATR손절 (현재가={curr_price:,.0f} <= {ema_atr_stop:,.0f})"
+                }
+
+        # ========================================
+        # 3. 수급 반전 (외국인 순매도 전환)
         # ========================================
         if frgn_ratio <= cls.SUPPLY_REVERSAL_THRESHOLD:
             logger.warning(f"[{symbol}] 수급 반전: 외국인={frgn_ratio:.2f}%")
@@ -571,7 +683,34 @@ class SingleEMAStrategy(TradingStrategy):
             return None
 
         # ========================================
-        # 4. 수급 강도 체크 (1차 매수 이후 누적)
+        # 4. OBV 체크 (수급 지속성 확인)
+        # ========================================
+        try:
+            # DataFrame에 지표가 없으면 계산
+            if 'obv_z' not in df.columns:
+                df = TechnicalIndicators.prepare_indicators_from_df(df)
+
+            # 최신 OBV z-score 추출 (어제 값 사용, 5분마다 갱신 권장)
+            if len(df) > 0 and 'obv_z' in df.columns:
+                last_row = df.iloc[-1]
+                obv_z = last_row.get('obv_z', 0) if 'obv_z' in last_row else 0
+
+                if obv_z < cls.SECOND_BUY_OBV_THRESHOLD:
+                    logger.debug(
+                        f"[{symbol}] OBV 부족: z={obv_z:.2f} "
+                        f"(최소 {cls.SECOND_BUY_OBV_THRESHOLD} 필요)"
+                    )
+                    return None
+            else:
+                logger.warning(f"[{symbol}] OBV 데이터 없음, 2차 매수 불가")
+                return None
+
+        except Exception as e:
+            logger.error(f"[{symbol}] OBV 계산 실패: {e}", exc_info=True)
+            return None
+
+        # ========================================
+        # 5. 수급 강도 체크 (1차 매수 이후 누적)
         # ========================================
         try:
             yesterday_str = (datetime.now() - pd.Timedelta(days=1)).strftime('%Y%m%d')
