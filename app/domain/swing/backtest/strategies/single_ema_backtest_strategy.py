@@ -22,8 +22,7 @@ Exit Conditions:
 1. 고정 손절: -3%
 2. 수급 반전: OBV z-score < -1.0
 3. EMA-ATR 손절: 현재가 <= EMA - (ATR × 1.0)
-4. 수급 약화: OBV 정체 (z-score 0 근처) + EMA 하회
-5. 추세 악화: EMA 아래에서 가격 하락 + 이탈폭 증가
+4. 추세 약화: ADX < 20 AND +DI < -DI (2일 연속)
 """
 import logging
 from datetime import datetime
@@ -117,6 +116,7 @@ class SingleEMABacktestStrategy(BacktestStrategy):
         entry_price = None  # 진입가
         prev_gap = None  # 이전 EMA 이탈폭 (추세 악화 체크용)
         first_sell_price = None  # 1차 매도가 (2차 매도 조건용)
+        trend_weak_count = 0  # 추세 약화 연속 횟수 (ADX < 20 AND +DI < -DI)
 
         for i in range(len(eval_df)):
             idx = eval_df.index[i]
@@ -139,9 +139,9 @@ class SingleEMABacktestStrategy(BacktestStrategy):
 
             # === 1단계: 청산 신호 체크 (포지션 있을 때) ===
             if has_position:
-                exit_signal, exit_reason = self._check_exit_conditions(
+                exit_signal, exit_reason, trend_weak_count = self._check_exit_conditions(
                     row, prev_row, entry_price, ema_breach_count, prev_gap,
-                    sell_count, first_sell_price
+                    sell_count, first_sell_price, trend_weak_count
                 )
 
                 # EMA 이탈 카운트 업데이트
@@ -202,6 +202,7 @@ class SingleEMABacktestStrategy(BacktestStrategy):
                         sell_count = 0
                         buy_count = 0
                         first_sell_price = None
+                        trend_weak_count = 0
                     else:
                         # 1차 매도 후 포지션 남음
                         first_sell_price = current_price  # 1차 매도가 저장
@@ -209,6 +210,7 @@ class SingleEMABacktestStrategy(BacktestStrategy):
                         ema_breach_count = 0
                         prev_gap = None
                         buy_count = 0  # 재진입 대기
+                        trend_weak_count = 0
                         # sell_count=1 유지 (2차 매도 위해)
 
             # === 2단계: 진입 신호 체크 (청산 후 포지션 재계산) ===
@@ -261,6 +263,7 @@ class SingleEMABacktestStrategy(BacktestStrategy):
                         entry_consecutive = 0
                         ema_breach_count = 0
                         prev_gap = None
+                        trend_weak_count = 0
 
                         # 매수 사유 상세화
                         if buy_count == 0:
@@ -421,8 +424,9 @@ class SingleEMABacktestStrategy(BacktestStrategy):
         ema_breach_count: int,
         prev_gap: Optional[float],
         sell_count: int,
-        first_sell_price: Optional[float] = None
-    ) -> Tuple[bool, str]:
+        first_sell_price: Optional[float],
+        trend_weak_count: int
+    ) -> Tuple[bool, str, int]:
         """
         청산 조건 체크 (1차/2차 매도 조건 분리)
 
@@ -430,8 +434,7 @@ class SingleEMABacktestStrategy(BacktestStrategy):
         1. 고정 손절: -3%
         2. 수급 반전: OBV z-score < -1.0
         3. EMA-ATR 손절: 현재가 <= EMA - (ATR × 배수)
-        4. 추세 전환: +DI < -DI (하락 추세 전환)
-        5. 추세 약화: ADX < 20 (추세 소멸)
+        4. 추세 약화: ADX < 20 AND +DI < -DI (2일 연속)
 
         [2차 매도 조건]
         1. 1차 매도가 대비 -2% 추가 하락
@@ -449,55 +452,71 @@ class SingleEMABacktestStrategy(BacktestStrategy):
         if sell_count == 0:
             # NaN 체크 및 진입가 검증
             if entry_price is None or pd.isna(entry_price):
-                return False, ""
+                return False, "", trend_weak_count
 
             if pd.isna(ema_20) or pd.isna(obv_z) or pd.isna(atr) or pd.isna(adx) or pd.isna(plus_di) or pd.isna(minus_di):
-                return False, ""
+                return False, "", trend_weak_count
 
             profit_rate = (current_price - entry_price) / entry_price
 
-            # 1. 고정 손절 -3% (백업)
+            # 충족된 조건 수집
+            triggered_conditions = []
+
+            # 1. 고정 손절 -3% (최우선)
             if profit_rate <= self.STOP_LOSS_FIXED:
-                return True, f"고정 손절 ({profit_rate*100:.2f}%)"
+                triggered_conditions.append(f"고정손절({profit_rate*100:.2f}%)")
 
             # 2. 수급 반전
             if obv_z <= self.OBV_Z_SELL_THRESHOLD:
-                return True, f"수급 반전 (OBV z={obv_z:.2f})"
+                triggered_conditions.append(f"수급반전(OBV z={obv_z:.2f})")
 
             # 3. EMA-ATR 동적 손절
             ema_stop_loss = ema_20 - (atr * self.ATR_MULTIPLIER)
             if current_price <= ema_stop_loss:
                 gap_pct = abs((current_price - ema_20) / ema_20) * 100
-                return True, f"EMA-ATR 손절 (이탈 {gap_pct:.1f}%, ATR {atr:.0f})"
+                triggered_conditions.append(f"EMA-ATR손절(이탈 {gap_pct:.1f}%)")
 
-            # 4. 추세 전환: +DI < -DI (하락 추세 전환)
-            if minus_di > plus_di:
-                return True, f"추세 전환 (+DI={plus_di:.1f} < -DI={minus_di:.1f})"
+            # 4. 추세 약화: ADX < 20 AND +DI < -DI (2일 연속)
+            if adx < 20 and minus_di > plus_di:
+                trend_weak_count += 1
+                if trend_weak_count >= 2:
+                    triggered_conditions.append(f"추세약화(ADX={adx:.1f}, +DI={plus_di:.1f}<-DI={minus_di:.1f})")
+            else:
+                trend_weak_count = 0
 
-            # 5. 추세 약화: ADX < 20 (추세 소멸)
-            if adx < 20:
-                return True, f"추세 약화 (ADX={adx:.1f})"
+            # 조건 충족 시 청산 (우선순위: 먼저 추가된 조건이 주 사유)
+            if triggered_conditions:
+                reason = " + ".join(triggered_conditions)
+                return True, reason, 0
 
         # === 2차 매도 조건 ===
         else:
             # 1차 매도가 대비 추가 하락만 체크
             if first_sell_price is None:
-                return False, ""
+                return False, "", trend_weak_count
 
             if pd.isna(obv_z):
-                return False, ""
+                return False, "", trend_weak_count
 
             additional_drop = (current_price - first_sell_price) / first_sell_price
 
+            # 충족된 조건 수집
+            triggered_conditions = []
+
             # 1. 1차 매도가 대비 -2% 추가 하락
             if additional_drop <= self.SECOND_SELL_DROP_THRESHOLD:
-                return True, f"추가 하락 ({additional_drop*100:.2f}%)"
+                triggered_conditions.append(f"추가하락({additional_drop*100:.2f}%)")
 
             # 2. 수급 급락
             if obv_z <= self.SECOND_SELL_OBV_THRESHOLD:
-                return True, f"수급 급락 (OBV z={obv_z:.2f})"
+                triggered_conditions.append(f"수급급락(OBV z={obv_z:.2f})")
 
-        return False, ""
+            # 조건 충족 시 청산
+            if triggered_conditions:
+                reason = " + ".join(triggered_conditions)
+                return True, reason, trend_weak_count
+
+        return False, "", trend_weak_count
 
     def _check_second_buy_conditions(
         self,

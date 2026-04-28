@@ -11,13 +11,25 @@ Entry Conditions (1차 매수):
 7. 연속 확인: 2회 (Redis 상태 관리)
 
 Exit Conditions:
-[즉시 매도 - 장중 실시간]
+[즉시 매도 - 장중 실시간, 5분마다]
 1. 고정 손절: -3%
-2. EMA-ATR 손절: 현재가 <= EMA - (ATR × 1.0)
+2. 수급 반전: 외국인 순매도 -2% 이상
+3. EMA-ATR 손절: 현재가 <= EMA - (ATR × 1.0)
+4. EMA 이탈: 2회 연속
+5. 추세 약화: ADX < 20 AND +DI < -DI (2일 연속, Redis 캐시)
+6. 수급 약화: 외국인 1% 미만
 
-[전략적 매도 - 종가 → 다음날 시초가]
-1. 1차 매도 (50%): (EMA 이탈 2회, 외국인 이탈, 추세 약화) 중 2개 충족
-2. 2차 매도 (전량): 3가지 모두 충족
+[워밍업 배치 요구사항]
+매일 15:31에 다음 데이터를 Redis에 저장 필요:
+- Key: "indicators:{종목코드}"
+- Value: JSON {
+    "ema20": {"today": float, "yesterday": float},
+    "adx": {"today": float, "yesterday": float},
+    "plus_di": {"today": float, "yesterday": float},
+    "minus_di": {"today": float, "yesterday": float},
+    "date": "YYYYMMDD"
+  }
+- TTL: 604800 (7일)
 """
 import pandas as pd
 import talib as ta
@@ -393,9 +405,10 @@ class SingleEMAStrategy(TradingStrategy):
         청산 우선순위:
         1. 고정 손절 -3%
         2. 수급 반전 (순매도 -2% 이상)
-        3. EMA 이탈 (2회 연속)
-        4. 수급 약화 (둘 다 1% 미만)
-        5. 추세 악화 (EMA 아래 악화)
+        3. EMA-ATR 동적 손절
+        4. EMA 이탈 (2회 연속)
+        5. 추세 약화 (ADX < 20 AND +DI < -DI, 2회 연속)
+        6. 수급 약화 (외국인 1% 미만)
 
         Args:
             redis_client: Redis 클라이언트
@@ -421,6 +434,19 @@ class SingleEMAStrategy(TradingStrategy):
 
         profit_rate = (curr_price - entry) / entry
         frgn_ratio = (frgn_ntby_qty / acml_vol * 100) if acml_vol > 0 else 0
+
+        # ========================================
+        # Redis에서 2일치 지표 조회 (워밍업 배치로 사전 계산됨)
+        # ========================================
+        indicators_str = await redis_client.get(f"indicators:{symbol}")
+        indicators = None
+
+        if indicators_str:
+            try:
+                indicators = json.loads(indicators_str)
+            except Exception as e:
+                logger.warning(f"[{symbol}] 지표 캐시 파싱 실패: {e}")
+                indicators = None
 
         # ========================================
         # 1. 고정 손절 -3% (최우선)
@@ -515,7 +541,35 @@ class SingleEMAStrategy(TradingStrategy):
             await redis_client.delete(ema_key)
 
         # ========================================
-        # 4. 수급 약화 (외국인 1% 미만)
+        # 4. 추세 약화 (ADX < 20 AND +DI < -DI, 2일 연속)
+        # ========================================
+        if indicators:
+            today_adx = indicators.get('adx', {}).get('today')
+            yesterday_adx = indicators.get('adx', {}).get('yesterday')
+            today_plus_di = indicators.get('plus_di', {}).get('today')
+            today_minus_di = indicators.get('minus_di', {}).get('today')
+            yesterday_plus_di = indicators.get('plus_di', {}).get('yesterday')
+            yesterday_minus_di = indicators.get('minus_di', {}).get('yesterday')
+
+            # 2일 모두 데이터 있고, 2일 연속 (ADX < 20 AND -DI > +DI)
+            if (today_adx is not None and yesterday_adx is not None and
+                today_plus_di is not None and today_minus_di is not None and
+                yesterday_plus_di is not None and yesterday_minus_di is not None):
+
+                if (today_adx < 20 and today_minus_di > today_plus_di and
+                    yesterday_adx < 20 and yesterday_minus_di > yesterday_plus_di):
+                    logger.warning(
+                        f"[{symbol}] 추세 약화 2일 연속: "
+                        f"오늘(ADX={today_adx:.1f}, +DI={today_plus_di:.1f}<-DI={today_minus_di:.1f}), "
+                        f"어제(ADX={yesterday_adx:.1f}, +DI={yesterday_plus_di:.1f}<-DI={yesterday_minus_di:.1f})"
+                    )
+                    return {
+                        "action": "SELL",
+                        "reason": f"추세약화 (ADX < 20, +DI < -DI, 2일 연속)"
+                    }
+
+        # ========================================
+        # 6. 수급 약화 (외국인 1% 미만)
         # ========================================
         if frgn_ratio < cls.SUPPLY_WEAK_THRESHOLD:
             logger.warning(f"[{symbol}] 수급 약화: 외국인={frgn_ratio:.2f}%")
@@ -525,7 +579,7 @@ class SingleEMAStrategy(TradingStrategy):
             }
 
         # ========================================
-        # 5. 추세 악화 (EMA 아래에서 가격 하락 + 이탈폭 증가)
+        # 7. 추세 악화 (EMA 아래에서 가격 하락 + 이탈폭 증가)
         # ========================================
         if below_ema:
             current_gap = realtime_ema20 - curr_price
@@ -1153,3 +1207,75 @@ class SingleEMAStrategy(TradingStrategy):
             "signals": signals,
             "all_satisfied": False
         }
+
+
+# ========================================
+# 워밍업 배치 참고 코드 (auto_swing_batch.py에 추가 필요)
+# ========================================
+"""
+async def warm_up_indicators(redis_client, stock_service):
+    '''
+    일일 지표 계산 및 Redis 캐싱 (2일치)
+
+    - 실행 시점: 매일 15:31 (장 마감 후)
+    - 대상: 활성 스윙 종목 전체
+    - 저장 데이터: EMA20, ADX, +DI, -DI (오늘/어제)
+    '''
+    from datetime import datetime, timedelta
+    import pandas as pd
+    from app.domain.swing.indicators import TechnicalIndicators
+
+    active_stocks = await get_active_swing_stocks()  # 활성 종목 조회
+
+    for stock_code in active_stocks:
+        try:
+            # 60일치 데이터 조회
+            df = await stock_service.get_stock_history(
+                stock_code,
+                start_date=datetime.now() - timedelta(days=60)
+            )
+
+            if len(df) < 20:
+                logger.warning(f"[{stock_code}] 데이터 부족, 건너뜀")
+                continue
+
+            # 지표 계산
+            indicators = TechnicalIndicators.prepare_indicators_from_df(df)
+
+            # 최근 2일 데이터 추출
+            today = indicators.iloc[-1]
+            yesterday = indicators.iloc[-2] if len(indicators) > 1 else None
+
+            # Redis 저장
+            cache_data = {
+                "ema20": {
+                    "today": float(today['ema_20']),
+                    "yesterday": float(yesterday['ema_20']) if yesterday is not None else None
+                },
+                "adx": {
+                    "today": float(today['adx']),
+                    "yesterday": float(yesterday['adx']) if yesterday is not None else None
+                },
+                "plus_di": {
+                    "today": float(today['plus_di']),
+                    "yesterday": float(yesterday['plus_di']) if yesterday is not None else None
+                },
+                "minus_di": {
+                    "today": float(today['minus_di']),
+                    "yesterday": float(yesterday['minus_di']) if yesterday is not None else None
+                },
+                "date": today['STCK_BSOP_DATE'].strftime('%Y%m%d')
+            }
+
+            await redis_client.setex(
+                f"indicators:{stock_code}",
+                604800,  # 7일 TTL
+                json.dumps(cache_data)
+            )
+
+            logger.info(f"[{stock_code}] 지표 캐싱 완료: ADX={cache_data['adx']['today']:.1f}")
+
+        except Exception as e:
+            logger.error(f"[{stock_code}] 지표 캐싱 실패: {e}", exc_info=True)
+            continue
+"""

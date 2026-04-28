@@ -12,7 +12,7 @@ scheduler = AsyncIOScheduler()
 
 
 async def schedule_start():
-    # EMA 캐시 워밍업: 평일 08:30 (장 시작 전)
+    # 지표 캐시 워밍업 (EMA20, ADX, DI): 평일 08:29 (장 시작 전)
     scheduler.add_job(
         ema_cache_warmup_job,
         CronTrigger(minute='29', hour='8', day_of_week='mon-fri')
