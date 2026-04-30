@@ -51,10 +51,16 @@ class SingleEMABacktestStrategy(BacktestStrategy):
     ADX_THRESHOLD = 18
 
     # === 2차 매수 조건 ===
-    SECOND_BUY_PRICE_GAIN_MIN = 0.01
-    SECOND_BUY_PRICE_GAIN_MAX = 0.06
-    SECOND_BUY_OBV_THRESHOLD = 1.1
+    # [시나리오 A] 추세 강화형
+    SECOND_BUY_PRICE_GAIN_MIN = 0.02
+    SECOND_BUY_PRICE_GAIN_MAX = 0.08
+    SECOND_BUY_OBV_THRESHOLD = 1.2
     SECOND_BUY_SAFETY_MARGIN = 0.04
+
+    # [시나리오 B] 조정 매수형
+    PULLBACK_BUY_PRICE_RANGE = (-0.01, 0.01)  # 진입가 ±1%
+    PULLBACK_BUY_OBV_MIN = 0.5                # 수급 최소 요구치
+    PULLBACK_BUY_ATR_MULTIPLIER = 0.5         # ATR 안전 거리
 
     # === 거래 비용 ===
     COMMISSION_RATE = 0.00147
@@ -130,6 +136,8 @@ class SingleEMABacktestStrategy(BacktestStrategy):
             can_buy = position_status is None or (position_status == 'BUY_COMPLETE' and buy_count < 2)
             if can_buy and current_capital > 0:
                 is_entry = False
+                buy_amount = 0  # 초기화
+
                 if position_status is None:
                     if self._check_entry_conditions(row):
                        is_entry = True
@@ -139,7 +147,7 @@ class SingleEMABacktestStrategy(BacktestStrategy):
                         is_entry = True
                         buy_amount = current_capital
 
-                if is_entry:
+                if is_entry and buy_amount > 0:
                     buy_price = row["STCK_CLPR"]
                     buy_quantity = int(buy_amount / buy_price)
 
@@ -247,24 +255,35 @@ class SingleEMABacktestStrategy(BacktestStrategy):
         return all([price_near_ema, supply_strong, surge_filtered, gap_filtered, trend_upward])
 
     def _check_second_buy_conditions(self, row: pd.Series, entry_price: float) -> bool:
-        if any(pd.isna(row[col]) for col in ["ema_20", "obv_z"]):
+        """하이브리드 2차 매수: 추세 강화형 + 조정 매수형"""
+        if any(pd.isna(row[col]) for col in ["ema_20", "obv_z", "atr", "plus_di", "minus_di"]):
             return False
 
         current_price = row["STCK_CLPR"]
-        price_gain = (current_price - entry_price) / entry_price
-        if not (self.SECOND_BUY_PRICE_GAIN_MIN <= price_gain <= self.SECOND_BUY_PRICE_GAIN_MAX):
-            return False
-        if current_price <= row["ema_20"]:
-            return False
-        if row["obv_z"] < self.SECOND_BUY_OBV_THRESHOLD:
-            return False
-        
-        stop_loss_price = entry_price * (1 + self.STOP_LOSS_FIXED)
-        safety_threshold = stop_loss_price * (1 + self.SECOND_BUY_SAFETY_MARGIN)
-        if current_price < safety_threshold:
-            return False
+        price_change = (current_price - entry_price) / entry_price
 
-        return True
+        # === 시나리오 A: 추세 강화형 (2~8% 상승) ===
+        if self.SECOND_BUY_PRICE_GAIN_MIN <= price_change <= self.SECOND_BUY_PRICE_GAIN_MAX:
+            if current_price > row["ema_20"] and row["obv_z"] >= self.SECOND_BUY_OBV_THRESHOLD:
+                stop_loss_price = entry_price * (1 + self.STOP_LOSS_FIXED)
+                safety_threshold = stop_loss_price * (1 + self.SECOND_BUY_SAFETY_MARGIN)
+                if current_price >= safety_threshold:
+                    return True
+
+        # === 시나리오 B: 건강한 조정 후 반등 (진입가 ±1%) ===
+        if self.PULLBACK_BUY_PRICE_RANGE[0] <= price_change <= self.PULLBACK_BUY_PRICE_RANGE[1]:
+            # 조건 1: EMA 위에서 지지 (0.5% 여유)
+            if current_price >= row["ema_20"] * 0.995:
+                # 조건 2: 수급 유지
+                if row["obv_z"] > self.PULLBACK_BUY_OBV_MIN:
+                    # 조건 3: 추세 유지
+                    if row["plus_di"] > row["minus_di"]:
+                        # 조건 4: ATR 대비 안전 거리
+                        atr_support = row["ema_20"] - (row["atr"] * self.PULLBACK_BUY_ATR_MULTIPLIER)
+                        if current_price > atr_support:
+                            return True
+
+        return False
         
     def _prepare_data(self, df: pd.DataFrame) -> pd.DataFrame:
         if "STCK_BSOP_DATE" in df.columns:
