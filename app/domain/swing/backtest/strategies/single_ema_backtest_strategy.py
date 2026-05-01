@@ -48,7 +48,6 @@ class SingleEMABacktestStrategy(BacktestStrategy):
     OBV_Z_BUY_THRESHOLD = 1.0
     OBV_LOOKBACK = 7
     MAX_GAP_RATIO = 0.05
-    ADX_THRESHOLD = 18
 
     # === 2차 매수 조건 ===
     # [시나리오 A] 추세 강화형
