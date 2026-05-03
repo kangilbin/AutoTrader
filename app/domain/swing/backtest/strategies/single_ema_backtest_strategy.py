@@ -3,6 +3,9 @@
 
 실전 매매 전략과 동일한 이원화된 하이브리드 매도 로직을 적용하여 백테스트의 정확도를 높입니다.
 
+**매수 조건 (Entry Conditions):**
+*   **하락장 필터:** 20 EMA < 120 EMA 시 매수 금지 (신규 진입 및 2차 매수 모두 차단)
+
 **매도 조건 (Exit Conditions):**
 
 **[1차 방어선] 즉시 매도 (일일 저가 기준, OR 조건)**
@@ -24,13 +27,15 @@ import pandas as pd
 from typing import Dict, List, Optional, Tuple
 from .base_strategy import BacktestStrategy
 from app.domain.swing.indicators import TechnicalIndicators
-
+from datetime import datetime
+import logging
 
 class SingleEMABacktestStrategy(BacktestStrategy):
     """단일 20EMA 백테스팅 전략 (하이브리드 매도 로직)"""
 
     # === 기본 파라미터 ===
     EMA_PERIOD = 20
+    EMA_LONG_PERIOD = 120  # 장기 EMA (하락장 판단용)
     MAX_SURGE_RATIO = 0.05
     CONSECUTIVE_REQUIRED = 1
 
@@ -101,14 +106,15 @@ class SingleEMABacktestStrategy(BacktestStrategy):
             prev_row = eval_df.iloc[i-1]
             current_date = row["STCK_BSOP_DATE"]
 
+            if current_date > datetime(2025, 12, 18):
+                logging.info("확인해볼까용")
             # === 1단계: 포지션 보유 시 매도 조건 체크 ===
             if position_status in ['BUY_COMPLETE', 'SELL_PRIMARY']:
-                
+
                 # [1차 방어선] 즉시 매도 조건 체크 (저가 기준)
-                immediate_sell_signal, reason = self._check_immediate_sell_conditions(row, entry_price)
+                immediate_sell_signal, reason, sell_price = self._check_immediate_sell_conditions(row, entry_price)
 
                 if immediate_sell_signal:
-                    sell_price = min(entry_price * (1 + self.STOP_LOSS_FIXED), row["STCK_OPRC"]) # 갭하락 고려
                     current_capital = self._execute_sell(trades, current_date, sell_price, current_capital, reason, sell_all=True)
 
                     # 상태 초기화
@@ -172,21 +178,31 @@ class SingleEMABacktestStrategy(BacktestStrategy):
         result = self._format_result(prices_df, params, trades, final_capital)
         return result
 
-    def _check_immediate_sell_conditions(self, row: pd.Series, entry_price: float) -> Tuple[bool, str]:
-        """[1차 방어선] 저가 기준 즉시 매도 조건 체크"""
+    def _check_immediate_sell_conditions(self, row: pd.Series, entry_price: float) -> Tuple[bool, str, float]:
+        """[1차 방어선] 저가 기준 즉시 매도 조건 체크
+
+        Returns:
+            (신호발생여부, 사유, 매도가)
+        """
         low_price = row["STCK_LWPR"]
+        open_price = row["STCK_OPRC"]
 
         # 1. 고정 손절
-        if low_price <= entry_price * (1 + self.STOP_LOSS_FIXED):
-            return True, f"고정손절({self.STOP_LOSS_FIXED*100:.2f}%)"
+        fixed_stop = entry_price * (1 + self.STOP_LOSS_FIXED)
+        if low_price <= fixed_stop:
+            # 갭하락 시 시가에 매도, 그 외 손절가에 매도
+            sell_price = min(fixed_stop, open_price)
+            return True, f"고정손절({self.STOP_LOSS_FIXED*100:.2f}%)", sell_price
 
         # 2. EMA-ATR 동적 손절 (NaN 체크)
         if pd.notna(row["ema_20"]) and pd.notna(row["atr"]):
             ema_stop_loss = row["ema_20"] - (row["atr"] * self.ATR_MULTIPLIER)
             if low_price <= ema_stop_loss:
-                return True, "EMA-ATR손절"
+                # 갭하락 시 시가에 매도, 그 외 손절가에 매도
+                sell_price = min(ema_stop_loss, open_price)
+                return True, "EMA-ATR손절", sell_price
 
-        return False, ""
+        return False, "", 0.0
 
     def _update_and_check_eod_sell_signals(self, row, prev_row, current_date, eod_signal_dates, position_status, entry_price, first_sell_price) -> Tuple[Optional[str], str]:
         """[2차 방어선] EOD 매도 조건 교차 검증"""
@@ -242,6 +258,19 @@ class SingleEMABacktestStrategy(BacktestStrategy):
             return False
         return row['obv_z'] < self.OBV_Z_SELL_THRESHOLD
 
+    def _is_bearish_market(self, row: pd.Series) -> bool:
+        """
+        하락장 판단: 20 EMA가 120 EMA 아래로 내려간 경우
+
+        Returns:
+            True: 하락장 (매수 금지)
+            False: 상승장/횡보장 (매수 허용)
+        """
+        if pd.isna(row.get('ema_20')) or pd.isna(row.get('ema_120')):
+            return False  # 지표 부족 시 매수 허용 (초기 데이터)
+
+        return row['ema_20'] < row['ema_120']
+
     def _calculate_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
         df = TechnicalIndicators.prepare_indicators_from_df(
             df,
@@ -251,23 +280,38 @@ class SingleEMABacktestStrategy(BacktestStrategy):
             obv_lookback=self.OBV_LOOKBACK
         )
         df["daily_return"] = df["STCK_CLPR"].pct_change()
+
+        # 장기 EMA (120) 추가 - 하락장 판단용
+        close = df["STCK_CLPR"].values.astype(float)
+        ema_long = TechnicalIndicators.calculate_ema(close, self.EMA_LONG_PERIOD)
+        if ema_long is not None:
+            df["ema_120"] = ema_long
+
         return df
 
     def _check_entry_conditions(self, row: pd.Series) -> bool:
         if any(pd.isna(row[col]) for col in ["ema_20", "obv_z", "gap_ratio", "plus_di", "minus_di", "daily_return"]):
             return False
 
+        # 하락장 필터: 20 EMA < 120 EMA 시 매수 금지
+        if self._is_bearish_market(row):
+            return False
+
         price_near_ema = row["STCK_CLPR"] >= row["ema_20"] * 0.995
         supply_strong = row["obv_z"] > self.OBV_Z_BUY_THRESHOLD
-        surge_filtered = row["daily_return"] <= self.MAX_SURGE_RATIO
+        # surge_filtered = row["daily_return"] <= self.MAX_SURGE_RATIO
         gap_filtered = row["gap_ratio"] <= self.MAX_GAP_RATIO
         trend_upward = row["plus_di"] > row["minus_di"]
 
-        return all([price_near_ema, supply_strong, surge_filtered, gap_filtered, trend_upward])
+        return all([price_near_ema, supply_strong, gap_filtered, trend_upward])
 
     def _check_second_buy_conditions(self, row: pd.Series, entry_price: float) -> bool:
         """하이브리드 2차 매수: 추세 강화형 + 조정 매수형"""
         if any(pd.isna(row[col]) for col in ["ema_20", "obv_z", "atr", "plus_di", "minus_di"]):
+            return False
+
+        # 하락장 필터: 20 EMA < 120 EMA 시 2차 매수 금지
+        if self._is_bearish_market(row):
             return False
 
         current_price = row["STCK_CLPR"]
