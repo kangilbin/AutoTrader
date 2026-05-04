@@ -185,22 +185,18 @@ class SingleEMABacktestStrategy(BacktestStrategy):
             (신호발생여부, 사유, 매도가)
         """
         low_price = row["STCK_LWPR"]
-        open_price = row["STCK_OPRC"]
 
         # 1. 고정 손절
         fixed_stop = entry_price * (1 + self.STOP_LOSS_FIXED)
         if low_price <= fixed_stop:
-            # 갭하락 시 시가에 매도, 그 외 손절가에 매도
-            sell_price = min(fixed_stop, open_price)
-            return True, f"고정손절({self.STOP_LOSS_FIXED*100:.2f}%)", sell_price
+            return True, f"고정손절({self.STOP_LOSS_FIXED*100:.2f}%)", fixed_stop
 
         # 2. EMA-ATR 동적 손절 (NaN 체크)
         if pd.notna(row["ema_20"]) and pd.notna(row["atr"]):
             ema_stop_loss = row["ema_20"] - (row["atr"] * self.ATR_MULTIPLIER)
             if low_price <= ema_stop_loss:
                 # 갭하락 시 시가에 매도, 그 외 손절가에 매도
-                sell_price = min(ema_stop_loss, open_price)
-                return True, "EMA-ATR손절", sell_price
+                return True, "EMA-ATR손절", ema_stop_loss
 
         return False, "", 0.0
 
