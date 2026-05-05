@@ -28,7 +28,7 @@ class SwingTrade(Base):
     SWING_TYPE = Column(CHAR(1), nullable=False, comment='스윙 타입 (A: 이평선, B: 일목균형표)')
     BUY_RATIO = Column(Integer, nullable=False, comment='매수 비율')
     SELL_RATIO = Column(Integer, nullable=False, comment='매도 비율')
-    SIGNAL = Column(Integer, nullable=False, default=0, comment='매매 신호 상태 (0:대기, 1:1차매수, 2:2차매수, 3:1차매도)')
+    SIGNAL = Column(Integer, nullable=False, default=0, comment='매매 신호 상태 (0:대기, 1:보유)')
     ENTRY_PRICE = Column(DECIMAL(15, 2), nullable=True, comment='평균 매수 단가')
     HOLD_QTY = Column(Integer, nullable=True, default=0, comment='보유 수량')
     EOD_SIGNALS = Column(String(500), nullable=True, comment='EOD 매도 신호 JSON')
@@ -50,10 +50,6 @@ class SwingTrade(Base):
             raise ValidationError("종목코드는 필수입니다")
         if self.SWING_TYPE not in ('S', 'A', 'B'):
             raise ValidationError("스윙 타입은 [S,A,B]여야 합니다")
-        if not (0 <= self.BUY_RATIO <= 100):
-            raise ValidationError("매수 비율은 0~100 사이여야 합니다")
-        if not (0 <= self.SELL_RATIO <= 100):
-            raise ValidationError("매도 비율은 0~100 사이여야 합니다")
 
     # ==================== 상태 조회 ====================
 
@@ -61,58 +57,19 @@ class SwingTrade(Base):
         """대기 상태 여부 (SIGNAL 0)"""
         return self.SIGNAL == 0
 
-    def is_first_buy_done(self) -> bool:
-        """1차 매수 완료 여부 (SIGNAL 1)"""
-        return self.SIGNAL == 1
-
-    def is_second_buy_done(self) -> bool:
-        """2차 매수 완료 여부 (SIGNAL 2)"""
-        return self.SIGNAL == 2
-
-    def is_primary_sold(self) -> bool:
-        """1차 매도 완료 여부 (SIGNAL 3)"""
-        return self.SIGNAL == 3
-
     def has_position(self) -> bool:
-        """포지션 보유 여부 (SIGNAL 1, 2, 3)"""
-        return self.SIGNAL in (1, 2, 3)
+        """포지션 보유 여부 (SIGNAL 1)"""
+        return self.SIGNAL == 1
 
     # ==================== 상태 전환 ====================
 
-    def transition_to_first_buy(self, entry_price: int, hold_qty: int, peak_price: int) -> None:
-        """1차 매수 완료 (SIGNAL 0 -> 1)"""
+    def transition_to_buy(self, entry_price: int, hold_qty: int, peak_price: int) -> None:
+        """매수 완료 (SIGNAL 0 -> 1)"""
         if self.SIGNAL != 0:
-            raise ValidationError(f"1차 매수는 대기 상태(0)에서만 가능합니다. 현재: {self.SIGNAL}")
+            raise ValidationError(f"매수는 대기 상태(0)에서만 가능합니다. 현재: {self.SIGNAL}")
         self.SIGNAL = 1
         self.ENTRY_PRICE = Decimal(entry_price)
         self.HOLD_QTY = hold_qty
-        self.PEAK_PRICE = Decimal(peak_price)
-        self.MOD_DT = datetime.now()
-
-    def transition_to_second_buy(self, new_entry_price: int, total_hold_qty: int) -> None:
-        """2차 매수 완료 (SIGNAL 1 -> 2)"""
-        if self.SIGNAL != 1:
-            raise ValidationError(f"2차 매수는 1차 매수 상태(1)에서만 가능합니다. 현재: {self.SIGNAL}")
-        self.SIGNAL = 2
-        self.ENTRY_PRICE = Decimal(new_entry_price)
-        self.HOLD_QTY = total_hold_qty
-        self.MOD_DT = datetime.now()
-
-    def transition_to_primary_sell(self, remaining_qty: int) -> None:
-        """1차 분할 매도 완료 (SIGNAL 1,2 -> 3)"""
-        if self.SIGNAL not in (1, 2):
-            raise ValidationError(f"1차 매도는 매수 상태(1,2)에서만 가능합니다. 현재: {self.SIGNAL}")
-        self.SIGNAL = 3
-        self.HOLD_QTY = remaining_qty
-        self.MOD_DT = datetime.now()
-
-    def transition_to_reentry(self, new_entry_price: int, total_hold_qty: int, peak_price: int) -> None:
-        """재진입 매수 완료 (SIGNAL 3 -> 1)"""
-        if self.SIGNAL != 3:
-            raise ValidationError(f"재진입은 1차 매도 상태(3)에서만 가능합니다. 현재: {self.SIGNAL}")
-        self.SIGNAL = 1
-        self.ENTRY_PRICE = Decimal(new_entry_price)
-        self.HOLD_QTY = total_hold_qty
         self.PEAK_PRICE = Decimal(peak_price)
         self.MOD_DT = datetime.now()
 
@@ -138,8 +95,7 @@ class SwingTrade(Base):
 
     @classmethod
     def create(cls, account_no: str, mrkt_code: str, st_code: str,
-               init_amount: Decimal, swing_type: str,
-               buy_ratio: int = 70, sell_ratio: int = 50) -> "SwingTrade":
+               init_amount: Decimal, swing_type: str) -> "SwingTrade":
         """새 스윙 매매 생성"""
         swing = cls(
             ACCOUNT_NO=account_no,
@@ -148,8 +104,6 @@ class SwingTrade(Base):
             INIT_AMOUNT=init_amount,
             CUR_AMOUNT=init_amount,
             SWING_TYPE=swing_type,
-            BUY_RATIO=buy_ratio,
-            SELL_RATIO=sell_ratio
         )
         swing.validate()
         return swing

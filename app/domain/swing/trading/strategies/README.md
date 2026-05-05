@@ -62,22 +62,14 @@ SIGNAL 0 (대기)
   ▼
 SIGNAL 1 (1차 매수 완료) ← PEAK_PRICE = 매수가 초기화
   │ 장중 5분마다: PEAK_PRICE = max(PEAK_PRICE, 장중고가)
-  ├─ [1차 방어선] 즉시 손절 ──────────────────────→ SIGNAL 0 (PEAK_PRICE = NULL)
-  ├─ [2차 방어선] 장중 전량 매도 ─────────────────→ SIGNAL 0 (PEAK_PRICE = NULL)
-  ├─ [2차 방어선] 장중 1차 분할 매도 ──→ SIGNAL 3 (PEAK_PRICE 유지)
-  │                                          │ 장중 5분마다: PEAK_PRICE = max(PEAK_PRICE, 장중고가)
-  │                                          ├─ [1차 방어선] 즉시 손절 ──→ SIGNAL 0 (PEAK_PRICE = NULL)
-  │                                          ├─ 재진입 매수 ──→ SIGNAL 1 (PEAK_PRICE = 현재가)
-  │                                          └─ 장중 2차 전량 매도 ──→ SIGNAL 0 (PEAK_PRICE = NULL)
+  ├─ [1차 방어선] 즉시 손절 ──→ SIGNAL 0 (PEAK_PRICE = NULL)
+  ├─ [2차 방어선] 익절 ────────→ SIGNAL 0 (PEAK_PRICE = NULL)
   │
   └─ 2차 매수 조건 충족 ──→ SIGNAL 2 (PEAK_PRICE 유지)
                                 │ 장중 5분마다: PEAK_PRICE = max(PEAK_PRICE, 장중고가)
                                 ├─ [1차 방어선] 즉시 손절 ──→ SIGNAL 0 (PEAK_PRICE = NULL)
-                                ├─ [2차 방어선] 장중 1차 분할 매도 ──→ SIGNAL 3
-                                └─ [2차 방어선] 장중 전량 매도 ──→ SIGNAL 0 (PEAK_PRICE = NULL)
+                                └─ [2차 방어선] 익절 ────────→ SIGNAL 0 (PEAK_PRICE = NULL)
 ```
-
-> **SIGNAL 3 재진입**: 1차 분할 매도 후 잔량 보유 중, 1차 매수 조건 재충족 시 잔량 유지 + 추가 매수로 재진입합니다. PEAK_PRICE는 현재가로 재설정됩니다.
 
 ---
 
@@ -118,44 +110,18 @@ SIGNAL 1 (1차 매수 완료) ← PEAK_PRICE = 매수가 초기화
 
 ### 매도 전략
 
-#### [1차 방어선] 장중 즉시 매도 (5분마다 체크)
+#### [1차 방어선] 장중 즉시 손절 (5분마다 체크)
 
 - **EMA-ATR 동적 손절**: 현재가 ≤ 실시간 EMA20 - ATR×1.0 시 즉시 전량 매도
-- SIGNAL 상태(1, 2, 3) 무관하게 항상 최우선 적용
+- SIGNAL 상태(1, 2) 무관하게 항상 최우선 적용
 - 즉시 SIGNAL 0으로 복귀
 - ATR=0인 경우 손절 체크 스킵 (HOLD)
 
-#### [2차 방어선] 장중 조건부 trailing stop (5분마다 체크)
+#### [2차 방어선] 장중 trailing stop 익절 (5분마다 체크)
 
-장중 5분마다 `trade_job`에서 SIGNAL 1, 2, 3 상태의 종목을 대상으로 trailing stop 조건을 체크합니다.
-게이트 조건 충족 시 즉시 매도를 실행합니다.
-
-**게이트 조건 (2가지 **모두** 충족 시 매도 판단):**
-
-| 조건 | 설명 |
-|-----|------|
-| 추세 약화 | (+DI - -DI) 격차가 2일 연속 감소 (prev_prev > prev > today) |
-| 수급 약화 | OBV z-score < -0.65 (SUPPLY_WEAKNESS_OBV_Z 임계값) |
-
-> 추세 추종 전략에서 매도는 보수적이어야 하므로, 추세 약화와 수급 약화가 동시에 발생해야 매도를 판단합니다.
-
-**DI 비교 데이터 소스:**
-- `prev_prev DI`: 캐시 워밍업 시 저장 (`prev_plus_di`, `prev_minus_di`)
-- `prev DI`: 캐시의 `plus_dm14/minus_dm14/atr`에서 역산 (`(dm14/atr) × 100`)
-- `today DI`: 실시간 증분 계산 (`realtime_plus_di`, `realtime_minus_di`)
-
-**1차 분할 매도 (SIGNAL 1/2 → SIGNAL 3)**
-- 게이트 조건 충족 + 현재가 ≤ 고점(PEAK_PRICE) - **ATR×2.0**
-- `sell_ratio%` 분할 매도, 잔량 보유 후 SIGNAL 3으로 전환
-
-**2차 전량 매도 (SIGNAL 3 → SIGNAL 0)**
-- 게이트 조건 충족 + 현재가 ≤ 고점(PEAK_PRICE) - **ATR×3.0**
-- 잔량 전량 매도 후 SIGNAL 0으로 복귀
-
-**ATR 기반 손절가 계산:**
-- 1차 손절가 = `PEAK_PRICE - ATR × 2.0`
-- 2차 손절가 = `PEAK_PRICE - ATR × 3.0`
-- ATR 무효 시 폴백: 1차 5.0%, 2차 8.0%
+- **고점 대비 ATR×2.0 하락 시 전량 매도**: 현재가 ≤ 고점(PEAK_PRICE) - ATR×2.0
+- 게이트 조건 없음 (ATR 자체가 변동성 적응형 필터 역할)
+- ATR 무효 시 폴백: 고점 대비 5.0% 하락
 
 ---
 
@@ -214,11 +180,8 @@ SIGNAL 1 (1차 매수 완료) ← PEAK_PRICE = 매수가 초기화
 | MAX_SURGE_RATIO | 0.05 | 전일 대비 최대 급등률 (5%) |
 | CONSECUTIVE_REQUIRED | 2 | 연속 확인 횟수 (10분) |
 | ATR_MULTIPLIER | 1.0 | 즉시 손절 ATR 배수 |
-| SUPPLY_WEAKNESS_OBV_Z | -0.65 | 수급 약화 OBV z-score 임계값 |
-| TRAILING_STOP_ATR_PARTIAL_MULT | 2.0 | 1차 분할 매도 ATR 배수 |
-| TRAILING_STOP_ATR_FULL_MULT | 3.0 | 2차 전량 매도 ATR 배수 |
-| TRAILING_STOP_PARTIAL | 5.0 | 1차 폴백 (ATR 무효 시) |
-| TRAILING_STOP_FULL | 8.0 | 2차 폴백 (ATR 무효 시) |
+| TRAILING_STOP_ATR_MULT | 2.0 | 익절 trailing stop ATR 배수 |
+| TRAILING_STOP_FALLBACK_PCT | 5.0 | 익절 폴백 (ATR 무효 시, %) |
 | SECOND_BUY_TIME_MIN | 1200 | 2차 매수 최소 대기 시간 (초, 20분) |
 | SECOND_BUY_ATR_LOWER | 0.5 | 2차 매수 하한 배수 (EMA + ATR×0.5) |
 | SECOND_BUY_ATR_UPPER | 2.0 | 2차 매수 상한 배수 (EMA + ATR×2.0) |
@@ -241,14 +204,10 @@ SIGNAL 1 (1차 매수 완료) ← PEAK_PRICE = 매수가 초기화
 | **연속 확인** | 2회 (Redis, ~10분) | 1회 |
 | **2차 매수** | 통합 조건 (20분 경과 + 전일 양봉) | 동일 (전일 양봉) |
 | **즉시 손절** | 실시간 현재가 기준 | 일일 저가 기준 |
-| **2차 방어선** | 장중 실시간 trailing stop (5분마다 체크) | EOD 조건부 trailing stop (종가 기준) |
-| **2차 방어선 하락률 기준** | 현재가 ≤ 고점 - ATR×MULT | 저가 ≤ 고점 - ATR×MULT |
+| **2차 방어선 (익절)** | 장중 trailing stop (5분마다 체크) | EOD trailing stop (저가 기준) |
+| **익절 조건** | 현재가 ≤ 고점 - ATR×2.0 | 저가 ≤ 고점 - ATR×2.0 |
 | **PEAK_PRICE 갱신** | 장중 5분마다 고가(stck_hgpr) 기준 | 일일 고가(STCK_HGPR) 기준 |
-| **DI 비교 데이터** | 캐시(prev_prev) + 캐시 역산(prev) + 실시간(today) | 일별 데이터 직접 비교 |
-| **1차 분할 매도** | 고점 대비 ATR×2.0 (최소 3%) | 동일 (BUY_COMPLETE → SELL_PRIMARY) |
-| **2차 전량 매도** | 고점 대비 ATR×3.0 (최소 5%) | 동일 (SELL_PRIMARY → None) |
-| **1차 매도 후 재진입** | SIGNAL 3에서 재진입 매수 가능 | SELL_PRIMARY에서 재진입 매수 가능 |
-| **포지션 상태** | SIGNAL 0→1→2→3→0 | None→BUY_COMPLETE→SELL_PRIMARY→None |
+| **포지션 상태** | SIGNAL 0→1→2→0 | None→BUY_COMPLETE→None |
 | **주요 목적** | 장중 실시간 매매 | 과거 데이터 성능 검증 |
 
 ---

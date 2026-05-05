@@ -39,11 +39,7 @@ None (대기)
     │                            │
     │                            ├─ [1차 방어선] 즉시 손절 ──→ None
     │                            │
-    │                            └─ [2차 방어선] EOD 1차 매도 ──→ SELL_PRIMARY (잔량 보유)
-    │                                                                │
-    │                                                                ├─ 재진입 매수 ──→ BUY_COMPLETE
-    │                                                                ├─ EOD 2차 전량 매도 ──→ None
-    │                                                                └─ [1차 방어선] 즉시 손절 ──→ None
+    │                            └─ [2차 방어선] 익절 ──→ None
 ```
 
 ---
@@ -87,47 +83,15 @@ None (대기)
 #### [1차 방어선] 즉시 손절 (일일 저가 기준) — 급락 대응
 
 - **EMA-ATR 동적 손절**: 저가 ≤ EMA20 - ATR×1.0 도달 시 전량 즉시 매도
-- 포지션 상태(BUY_COMPLETE / SELL_PRIMARY) 무관하게 항상 최우선 적용
+- 포지션 상태(BUY_COMPLETE) 무관하게 항상 최우선 적용
 - ATR=0인 경우 손절 체크 스킵
 - 발동 시 peak_price 초기화
 
-#### [2차 방어선] EOD 조건부 trailing stop (일일 종가 기준) — 점진적 하락 대응
+#### [2차 방어선] trailing stop 익절 (일일 저가 기준)
 
-**게이트 조건** (아래 2가지 **모두** 충족 시 고점 대비 하락률 평가):
-
-| 조건 | 판단 기준 | 의미 |
-|-----|----------|------|
-| 추세 약화 | (+DI - -DI) 격차 2일 연속 감소 | 매수세 대비 매도세의 힘의 균형이 이동 |
-| 수급 약화 | OBV z-score < -0.65 (SUPPLY_WEAKNESS_OBV_Z) | 거래량 기반 수급 악화 |
-
-> **AND 조건을 사용하는 이유:**
-> - 추세 추종 전략에서 매도는 매수보다 보수적이어야 함 (허위 매도 시 수익 손실)
-> - 한쪽만 약화된 경우(예: DI 감소 but OBV 증가)는 일시적 조정일 수 있음
-> - 추세 약화 + 수급 약화 동시 발생 시에만 진짜 하락 전환으로 판단
-> - ATR 기반 하락률 기준이 추가 필터 역할을 하므로 매도 누락 위험은 제한적
-
-> **DI 격차를 사용하는 이유:**
-> - +DI, -DI는 이미 **14일 Wilder 스무딩**이 적용된 값이므로, 2일 연속 격차 감소는 단기 노이즈가 아닌 실질적 방향성 변화를 의미
-> - `-DI > +DI` 역전은 강한 상승 이후 지연이 심함 (ex: +10% 급등 후 14일 스무딩으로 인해 역전까지 10일 이상 소요)
-> - 격차 감소는 역전 이전에 감지 가능하여 반응 속도 개선
-
-**매도 결정** (게이트 조건 충족 후, ATR 기반 손절가로 단계 결정):
-
-| 현재 상태 | 손절가 | 매도 행동 |
-|----------|--------|----------|
-| BUY_COMPLETE | 저가 ≤ peak - **ATR×2.0** | 1차 분할 매도 (`sell_ratio%`), SELL_PRIMARY로 전환 |
-| SELL_PRIMARY | 저가 ≤ peak - **ATR×3.0** | 2차 전량 매도, None(대기)으로 복귀, peak_price 초기화 |
-
-> **ATR 기반 손절가:** `stop = peak_price - ATR × MULT`로 직접 계산합니다. ATR 무효 시 폴백: 1차 5.0%, 2차 8.0%.
-
-**오매도 방지 (2중 필터):**
-
-| 시나리오 | DI 격차 감소 AND OBV 감소 | drawdown ≥ ATR기준 | 결과 |
-|---------|:---:|:---:|------|
-| 진짜 하락 | O | O | 매도 발동 |
-| 추세만 약화 (수급 유지) | **X** | O | 매도 안 됨 |
-| 일시 조정 (1~2일 하락) | O | **X** | 매도 안 됨 |
-| 횡보 구간 (약화 신호 없음) | **X** | X | 매도 안 됨 |
+- **고점 대비 ATR×2.0 하락 시 전량 매도**: 저가 ≤ 고점(peak_price) - ATR×2.0
+- 게이트 조건 없음 (ATR 자체가 변동성 적응형 필터 역할)
+- ATR 무효 시 폴백: 고점 대비 5.0% 하락
 
 ---
 
@@ -155,14 +119,11 @@ None (대기)
 | SECOND_BUY_ATR_UPPER | 2.0 | 상한 배수 (EMA + ATR×2.0) |
 | SECOND_BUY_ADX_MIN | 20 | ADX 최소값 |
 | SECOND_BUY_OBV_MIN | 0.5 | OBV z-score 최소값 |
-| **매도 - 1차 방어선** | | |
+| **매도 - 1차 방어선 (손절)** | | |
 | ATR_MULTIPLIER | 1.0 | 즉시 손절 ATR 배수 |
-| **매도 - 2차 방어선 (ATR 기반)** | | |
-| SUPPLY_WEAKNESS_OBV_Z | -0.65 | 수급 약화 OBV z-score 임계값 |
-| TRAILING_STOP_ATR_PARTIAL_MULT | 2.0 | 1차 분할 매도 ATR 배수 |
-| TRAILING_STOP_ATR_FULL_MULT | 3.0 | 2차 전량 매도 ATR 배수 |
-| TRAILING_STOP_PARTIAL | 5.0 | 1차 폴백 (ATR 무효 시) |
-| TRAILING_STOP_FULL | 8.0 | 2차 폴백 (ATR 무효 시) |
+| **매도 - 2차 방어선 (익절)** | | |
+| TRAILING_STOP_ATR_MULT | 2.0 | 익절 trailing stop ATR 배수 |
+| TRAILING_STOP_FALLBACK_PCT | 5.0 | 익절 폴백 (ATR 무효 시, %) |
 
 ---
 
@@ -230,14 +191,10 @@ None (대기)
 | **1차 매수** | 시나리오 A(눌림목) + B(추세 추종), 연속 2회 | 동일 (연속 1회) |
 | **2차 매수** | 통합 조건 (20분 경과 + 전일 양봉) | 동일 (전일 양봉) |
 | **즉시 손절** | 실시간 현재가 기준 | 일일 저가 기준 |
-| **2차 방어선** | 장중 실시간 trailing stop (5분마다 체크) | EOD 조건부 trailing stop (종가 기준) |
-| **2차 방어선 하락률 기준** | 현재가 ≤ 고점 - ATR×MULT | 저가 ≤ 고점 - ATR×MULT |
+| **2차 방어선 (익절)** | 장중 trailing stop (5분마다 체크) | EOD trailing stop (저가 기준) |
+| **익절 조건** | 현재가 ≤ 고점 - ATR×2.0 | 저가 ≤ 고점 - ATR×2.0 |
 | **PEAK_PRICE 갱신** | 장중 5분마다 고가(stck_hgpr) 기준 | 일일 고가(STCK_HGPR) 기준 |
-| **DI 비교 데이터** | 캐시(prev_prev) + 캐시 역산(prev) + 실시간(today) | 일별 데이터 직접 비교 |
-| **1차 분할 매도** | 고점 대비 ATR×2.0 (최소 3%) | 동일 (BUY_COMPLETE → SELL_PRIMARY) |
-| **2차 전량 매도** | 고점 대비 ATR×3.0 (최소 5%) | 동일 (SELL_PRIMARY → None) |
-| **분할 매도** | ✅ 있음 (SELL_PARTIAL → SELL_ALL) | ✅ 있음 (SELL_PRIMARY → SELL_ALL) |
-| **포지션 상태** | SIGNAL 0→1→2→3→0 | None → BUY_COMPLETE → SELL_PRIMARY → None |
+| **포지션 상태** | SIGNAL 0→1→2→0 | None → BUY_COMPLETE → None |
 | **주요 목적** | 장중 실시간 매매 | 과거 데이터 성능 검증 |
 
 ---

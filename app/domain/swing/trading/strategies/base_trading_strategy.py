@@ -2,10 +2,9 @@
 실시간 거래 전략의 추상 베이스 클래스
 
 신호 판단만 담당 (Single Responsibility)
-- check_entry_signal: 1차 매수 진입 신호
+- check_entry_signal: 매수 진입 신호
 - check_exit_signal: 매도/손절 신호
-- check_second_buy_signal: 2차 매수 신호
-- check_trailing_stop_signal: 장중 trailing stop
+- check_trailing_stop_signal: 장중 trailing stop 익절
 - get_cached_indicators: Redis 캐시 지표 조회
 
 주문 실행 및 상태 전환은 auto_swing_batch.py 오케스트레이터에서 처리
@@ -92,41 +91,6 @@ class TradingStrategy(ABC):
 
         Returns:
             매도 신호 정보 (action: "SELL" or "HOLD")
-        """
-        pass
-
-    @classmethod
-    @abstractmethod
-    async def check_second_buy_signal(
-        cls,
-        redis_client,
-        swing_id: int,
-        symbol: str,
-        entry_price: Decimal,
-        hold_qty: int,
-        current_price: Decimal,
-        frgn_ntby_qty: int,
-        acml_vol: int,
-        prdy_vrss_vol_rate: float,
-        cached_indicators: Dict
-    ) -> Optional[Dict]:
-        """
-        2차 매수 신호 체크 (하위 클래스에서 구현 필수)
-
-        Args:
-            redis_client: Redis 클라이언트
-            swing_id: 스윙 ID
-            symbol: 종목 코드
-            entry_price: 1차 매수가 (평균 단가)
-            hold_qty: 보유 수량
-            current_price: 현재가
-            frgn_ntby_qty: 외국인 순매수량 (당일 실시간)
-            acml_vol: 누적 거래량 (당일 실시간)
-            prdy_vrss_vol_rate: 전일 대비 거래량 비율 (%)
-            cached_indicators: 실시간 증분 계산된 지표 (필수)
-
-        Returns:
-            2차 매수 신호 정보 또는 None
         """
         pass
 

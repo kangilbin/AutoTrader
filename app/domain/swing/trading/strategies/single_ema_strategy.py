@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 
 class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
-    """단일 20EMA 매매 전략 (하이브리드 매도 로직)"""
+    """단일 20EMA 매매 전략"""
 
     # 전략 이름
     name = "단일 20EMA 전략"
@@ -22,12 +22,8 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
     # ========================================
     # 실전 전용 파라미터
     # ========================================
-    # 매수 조건
     CONSECUTIVE_REQUIRED = 2         # 연속 확인 횟수 (10분)
     ENTRY_STATE_TTL = 1800           # 연속성 상태 Redis TTL (초, 30분)
-
-    # 공통
-    SECOND_BUY_TIME_MIN = 1200       # 1차 매수 후 최소 경과 시간 (초, 20분)
 
 
     # ========================================
@@ -362,68 +358,8 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
         )
         return result if result else {"action": "HOLD", "reasons": []}
 
-    @classmethod
-    async def check_second_buy_signal(
-        cls,
-        redis_client,
-        swing_id: int,
-        symbol: str,
-        entry_price: Decimal,
-        hold_qty: int,
-        current_price: Decimal,
-        frgn_ntby_qty: int,
-        acml_vol: int,
-        prdy_vrss_vol_rate: float,
-        cached_indicators: Dict
-    ) -> Optional[Dict]:
-        """2차 매수 신호 체크 (통합: 추세 안정화 후 추가 매수)"""
-        try:
-            curr_price = float(current_price)
-
-            # 시간 필터: 1차 매수 후 최소 20분 경과 체크
-            time_key = f"first_buy_time:{swing_id}"
-            if await redis_client.exists(time_key):
-                return None
-
-            # 전일 EMA20 상승 필터
-            yesterday_ema20 = cached_indicators.get('ema20')
-            prev_ema20 = cached_indicators.get('prev_ema20')
-            if not (yesterday_ema20 is not None and prev_ema20 is not None and yesterday_ema20 > prev_ema20):
-                return None
-
-            # 지표 사용 (모두 실시간 증분 계산 완료 상태)
-            realtime_adx = cached_indicators['realtime_adx']
-            realtime_plus_di = cached_indicators['realtime_plus_di']
-            realtime_minus_di = cached_indicators['realtime_minus_di']
-            realtime_atr = cached_indicators['realtime_atr']
-            realtime_ema20 = cached_indicators['realtime_ema20']
-            realtime_obv_z = cached_indicators['realtime_obv_z']
-
-            # 가격 위치: EMA 이상 ~ EMA + ATR × 2.0 (추세 확인 + 과열 방지)
-            lower = realtime_ema20 + (realtime_atr * cls.SECOND_BUY_ATR_LOWER)
-            upper = realtime_ema20 + (realtime_atr * cls.SECOND_BUY_ATR_UPPER)
-
-            if lower <= curr_price <= upper:
-                # 추세 안정: ADX >= 20 + 상승 방향
-                if realtime_adx >= cls.SECOND_BUY_ADX_MIN and realtime_plus_di > realtime_minus_di:
-                    # 수급 확인: OBV z-score
-                    if realtime_obv_z >= cls.SECOND_BUY_OBV_MIN:
-                        atr_ratio = f"{(curr_price-realtime_ema20)/realtime_atr:.2f}" if realtime_atr > 0 else "N/A"
-                        logger.info(f"[{symbol}] ✅ 2차 매수 신호 (추세안정): EMA+ATR×{atr_ratio}, ADX={realtime_adx:.1f}")
-                        return {
-                            'action': 'BUY',
-                            'price': curr_price,
-                            'reasons': ["2차 매수", "추세 안정"]
-                        }
-
-            return None
-
-        except Exception as e:
-            logger.error(f"[{symbol}] 2차 매수 신호 체크 실패: {e}", exc_info=True)
-            return None
-
     # ========================================
-    # 매도 신호 로직 (핵심: 이원화된 하이브리드 전략)
+    # 매도 신호 로직
     # ========================================
 
     @classmethod
@@ -474,104 +410,40 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
         cached_indicators: Dict
     ) -> Optional[Dict]:
         """
-        [2차 방어선] 장중 trailing stop 신호 체크
+        [2차 방어선] 장중 trailing stop 익절 신호 체크
 
-        게이트 조건 (확정값 + 실시간값):
-          - DI 격차 2일 연속 감소: today < prev < prev_prev
-          - OBV z-score 감소: today < prev
-
-        하락률 판단 (현재가 기준):
-          - SIGNAL 1/2: 고점 대비 ATR×2.0 이상 → SELL_PRIMARY (1차 분할)
-          - SIGNAL 3: 고점 대비 ATR×3.0 이상 → SELL_ALL (2차 전량)
+        고점 대비 ATR×2.0 이상 하락 시 전량 매도 (게이트 조건 없음)
 
         Args:
             symbol: 종목코드
             current_price: 현재가
             peak_price: PEAK_PRICE (DB)
-            signal: 현재 SIGNAL (1, 2, 3)
+            signal: 현재 SIGNAL (1, 2)
             cached_indicators: 실시간 증분 계산 완료된 지표
 
         Returns:
-            {"action": "SELL_PRIMARY"|"SELL_ALL", "reasons": [...]} or None
+            {"action": "SELL_ALL", "reasons": [...]} or None
         """
         curr_price = int(current_price)
 
         if peak_price <= 0:
             return None
         updated_peak = max(peak_price or 0, curr_price)
-        # === 실시간 지표 ===
-        realtime_plus_di = cached_indicators.get('realtime_plus_di')
-        realtime_minus_di = cached_indicators.get('realtime_minus_di')
-        realtime_obv_z = cached_indicators.get('realtime_obv_z')
-        realtime_atr = cached_indicators.get('realtime_atr', 0)
 
-        # === 전일 확정값 (캐시) ===
-        # plus_dm14/minus_dm14와 atr에서 DI 역산
-        yesterday_atr = cached_indicators.get('atr', 0)
-        if yesterday_atr > 0:
-            yesterday_plus_di = (cached_indicators.get('plus_dm14', 0) / yesterday_atr) * 100
-            yesterday_minus_di = (cached_indicators.get('minus_dm14', 0) / yesterday_atr) * 100
-        else:
-            return None
-        yesterday_obv_z = cached_indicators.get('obv_z')
-
-        # === 전전일 확정값 (캐시) ===
-        prev_prev_plus_di = cached_indicators.get('prev_plus_di')
-        prev_prev_minus_di = cached_indicators.get('prev_minus_di')
-
-        # NaN/None 체크
-        required = [realtime_plus_di, realtime_minus_di, realtime_obv_z,
-                    yesterday_obv_z, prev_prev_plus_di, prev_prev_minus_di]
-        if any(v is None for v in required):
-            return None
-
-        # === 게이트 조건 ===
-        di_spread_today = realtime_plus_di - realtime_minus_di
-        di_spread_prev = yesterday_plus_di - yesterday_minus_di
-        di_spread_prev2 = prev_prev_plus_di - prev_prev_minus_di
-
-        trend_weakening = di_spread_today < di_spread_prev < di_spread_prev2
-
-        # 조건 2: 수급 약화 — OBV z-score 임계값 이하
-        supply_weakening = round(realtime_obv_z,2) < cls.SUPPLY_WEAKNESS_OBV_Z
-
-        if not (trend_weakening and supply_weakening):
-            return None
-
-        # ATR Trailing Stop 손절가 계산
         if updated_peak <= 0:
             return None
 
+        realtime_atr = cached_indicators.get('realtime_atr', 0)
         atr = round(realtime_atr, 2)
+
         if atr > 0:
-            stop_partial = updated_peak - atr * cls.TRAILING_STOP_ATR_PARTIAL_MULT
-            stop_full = updated_peak - atr * cls.TRAILING_STOP_ATR_FULL_MULT
+            stop_price = updated_peak - atr * cls.TRAILING_STOP_ATR_MULT
         else:
-            stop_partial = updated_peak * (1 - cls.TRAILING_STOP_PARTIAL / 100)
-            stop_full = updated_peak * (1 - cls.TRAILING_STOP_FULL / 100)
+            stop_price = updated_peak * (1 - cls.TRAILING_STOP_FALLBACK_PCT / 100)
 
-        # 약화 사유 동적 생성
-        weakness_reasons = []
-        if trend_weakening:
-            weakness_reasons.append("추세약화")
-        if supply_weakening:
-            weakness_reasons.append("수급약화")
-        weakness_str = "+".join(weakness_reasons)
-
-        drawdown_pct = round((updated_peak - curr_price) / updated_peak * 100, 1)
-
-        # 매도 결정
-        action = None
-        reason = ""
-
-        if signal == 3 and curr_price <= stop_full:
-            action = "SELL_ALL"
-            reason = f"2차 전량매도({weakness_str}, 고점대비 -{drawdown_pct}%, 손절가 {stop_full:.0f}원)"
-        elif signal in (1, 2) and curr_price <= stop_partial:
-            action = "SELL_PRIMARY"
-            reason = f"1차 분할매도({weakness_str}, 고점대비 -{drawdown_pct}%, 손절가 {stop_partial:.0f}원)"
-
-        if action:
-            return {"action": action, "reasons": [reason]}
+        if curr_price <= stop_price:
+            drawdown_pct = round((updated_peak - curr_price) / updated_peak * 100, 1)
+            reason = f"익절(고점대비 -{drawdown_pct}%, 익절가 {stop_price:,.0f}원)"
+            return {"action": "SELL_ALL", "reasons": [reason]}
 
         return None

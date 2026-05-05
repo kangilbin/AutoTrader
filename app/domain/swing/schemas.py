@@ -14,8 +14,6 @@ class SwingCreateRequest(BaseModel):
     ACCOUNT_NO: str
     INIT_AMOUNT: int
     SWING_TYPE: str  # 'A': 이평선, 'B': 일목균형표
-    BUY_RATIO: Optional[int] = 70
-    SELL_RATIO: Optional[int] = 50
     # EMA 옵션 (SWING_TYPE이 'A'인 경우)
     SHORT_TERM: Optional[int] = 5
     MEDIUM_TERM: Optional[int] = 20
@@ -27,8 +25,6 @@ class SwingUpdateRequest(BaseModel):
     USE_YN: Optional[str] = None
     INIT_AMOUNT: Optional[int] = None
     SWING_TYPE: Optional[str] = None
-    BUY_RATIO: Optional[int] = None
-    SELL_RATIO: Optional[int] = None
 
 
 class SwingResponse(BaseModel):
@@ -42,8 +38,6 @@ class SwingResponse(BaseModel):
     INIT_AMOUNT: Optional[Decimal] = None
     CUR_AMOUNT: Optional[Decimal] = None
     SWING_TYPE: Optional[str] = None
-    BUY_RATIO: Optional[int] = None
-    SELL_RATIO: Optional[int] = None
     SIGNAL: Optional[int] = None
     REG_DT: Optional[datetime] = None
     MOD_DT: Optional[datetime] = None

@@ -1,7 +1,5 @@
 """
-단일 20EMA 백테스팅 전략 (Single EMA Backtest Strategy) - 하이브리드 매도 로직 적용
-
-실전 매매 전략과 동일한 이원화된 하이브리드 매도 로직을 적용하여 백테스트의 정확도를 높입니다.
+단일 20EMA 백테스팅 전략 (Single EMA Backtest Strategy)
 
 **매수 조건 (Entry Conditions):**
 *   **1차 매수 시나리오 A (눌림목 매집):** EMA ± ATR × 0.5, ADX 18~30 + +DI>-DI, OBV 상승
@@ -10,15 +8,11 @@
 
 **매도 조건 (Exit Conditions):**
 
-**[1차 방어선] 즉시 매도 (일일 저가 기준)**
-*   **EMA-ATR 동적 손절:** 저가가 EMA - (ATR × 1.0) 도달
+**[1차 방어선] 즉시 손절 (일일 저가 기준)**
+*   **EMA-ATR 동적 손절:** 저가가 EMA - (ATR × 1.0) 도달 시 전량 매도
 
-**[2차 방어선] EOD 조건부 trailing stop (일일 종가 기준)**
-*   **추세 약화 AND 수급 약화 동시 충족 시:**
-*   추세 약화: (+DI - -DI) 격차 2일 연속 감소
-*   수급 약화: OBV z-score < -0.65 (SUPPLY_WEAKNESS_OBV_Z 임계값)
-1.  **1차 분할 매도:** BUY_COMPLETE 상태 + 저가 ≤ 고점 - ATR×2.0
-2.  **2차 전량 매도:** SELL_PRIMARY 상태 + 저가 ≤ 고점 - ATR×3.0
+**[2차 방어선] trailing stop 익절 (일일 저가 기준)**
+*   저가 ≤ 고점(PEAK) - ATR×2.0 시 전량 매도
 """
 import pandas as pd
 from typing import Dict, List, Optional, Tuple
@@ -27,7 +21,7 @@ from app.domain.swing.indicators import TechnicalIndicators
 from app.domain.swing.trading.strategies.base_single_ema import BaseSingleEMAStrategy
 
 class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
-    """단일 20EMA 백테스팅 전략 (하이브리드 매도 로직)"""
+    """단일 20EMA 백테스팅 전략"""
 
     # === 백테스팅 전용 파라미터 ===
     CONSECUTIVE_REQUIRED = 1     # 백테스팅에서는 연속 확인 불필요
@@ -41,8 +35,6 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
 
     def compute(self, prices_df: pd.DataFrame, params: Dict) -> Dict:
         initial_capital = params["init_amount"]
-        buy_ratio = params["buy_ratio"]
-        sell_ratio = params["sell_ratio"]
         eval_start = pd.to_datetime(params["eval_start"])
 
         df = self._prepare_data(prices_df)
@@ -53,9 +45,8 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
         current_capital = initial_capital
 
         # === 상태 추적 변수 ===
-        position_status = None  # None, 'BUY_COMPLETE', 'SELL_PRIMARY'
-        buy_count = 0
-        peak_price = 0.0  # 매수 이후 최고 종가
+        has_position = False
+        peak_price = 0.0
 
         for i in range(2, len(eval_df)):
             row = eval_df.iloc[i]
@@ -64,81 +55,49 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
             current_date = row["STCK_BSOP_DATE"]
 
             # === 1단계: 포지션 보유 시 매도 조건 체크 ===
-            if position_status in ['BUY_COMPLETE', 'SELL_PRIMARY']:
+            if has_position:
                 peak_price = max(peak_price, row["STCK_HGPR"])
 
-                # [1차 방어선] 즉시 매도 조건 체크 (저가 기준)
+                # [1차 방어선] 즉시 손절 조건 체크 (저가 기준)
                 immediate_sell_signal, reasons, sell_price = self._check_immediate_sell_conditions(row)
 
                 if immediate_sell_signal:
                     current_capital = self._execute_sell(trades, current_date, sell_price, current_capital, reasons, sell_all=True)
-
-                    # 상태 초기화
-                    position_status, buy_count = None, 0
+                    has_position = False
                     peak_price = 0.0
                     continue
 
-                # [2차 방어선] EOD 조건부 trailing stop (종가 기준)
-                eod_sell_action, reasons = self._check_eod_trailing_stop(
-                    row, prev_row, prev_prev_row, peak_price, position_status
-                )
+                # [2차 방어선] trailing stop 익절 (저가 기준)
+                trailing_sell, reasons = self._check_trailing_stop(row, peak_price)
 
-                if eod_sell_action == 'SELL_PRIMARY':
-                    sell_price = row["STCK_CLPR"]
-                    current_capital = self._execute_sell(trades, current_date, sell_price, current_capital, reasons, sell_ratio=sell_ratio)
-                    position_status = 'SELL_PRIMARY'
-
-                elif eod_sell_action == 'SELL_ALL':
+                if trailing_sell:
                     sell_price = row["STCK_CLPR"]
                     current_capital = self._execute_sell(trades, current_date, sell_price, current_capital, reasons, sell_all=True)
-                    position_status, buy_count = None, 0
+                    has_position = False
                     peak_price = 0.0
+                    continue
 
-                elif position_status == 'SELL_PRIMARY':
-                    # 매도 신호 없음: 재진입 조건 체크 (실전 SIGNAL 3 재진입과 동일)
-                    matched, signal_reasons = self._check_entry_conditions(row, prev_row, prev_prev_row)
-                    if matched and current_capital > 0:
-                        buy_price = row["STCK_CLPR"]
-                        buy_amount = current_capital * buy_ratio
-                        buy_quantity = int(buy_amount / buy_price)
-                        if buy_quantity > 0:
-                            reasons = ["재진입 매수"] + signal_reasons
-                            current_capital = self._execute_buy(trades, current_date, buy_price, buy_quantity, current_capital, reasons)
-                            buy_count = 1
-                            position_status = 'BUY_COMPLETE'
-                            peak_price = row["STCK_CLPR"]
-                            continue
+            # === 2단계: 포지션 미보유 시 매수 조건 체크 (ATR 기반 포지션 사이징) ===
+            if not has_position and current_capital > 0:
+                matched, signal_reasons = self._check_entry_conditions(row, prev_row, prev_prev_row)
 
-            # === 2단계: 포지션 미보유 또는 추가매수 가능 시 매수 조건 체크 ===
-            can_buy = position_status is None or (position_status == 'BUY_COMPLETE' and buy_count < 2)
-            if can_buy and current_capital > 0:
-                is_entry = False
-                buy_amount = 0  # 초기화
-                signal_reasons = []
-
-                if position_status is None:
-                    matched, signal_reasons = self._check_entry_conditions(row, prev_row, prev_prev_row)
-                    if matched:
-                       is_entry = True
-                       buy_amount = current_capital * buy_ratio
-                else: # 2차 매수
-                    matched, signal_reasons = self._check_second_buy_conditions(row, prev_row, prev_prev_row)
-                    if matched:
-                        is_entry = True
-                        buy_amount = current_capital
-
-                if is_entry and buy_amount > 0:
+                if matched:
                     buy_price = row["STCK_CLPR"]
-                    buy_quantity = int(buy_amount / buy_price)
+                    atr = row.get("atr", 0)
+
+                    # ATR 기반 수량 계산: min(Equity×Risk%/ATR, Equity×MaxPos%/Price)
+                    if pd.notna(atr) and atr > 0 and buy_price > 0:
+                        risk_qty = current_capital * self.RISK_PCT / atr
+                        max_qty = current_capital * self.MAX_POSITION_PCT / buy_price
+                        buy_quantity = int(min(risk_qty, max_qty))
+                    else:
+                        buy_quantity = int(current_capital * self.MAX_POSITION_PCT / buy_price)
 
                     if buy_quantity > 0:
-                        is_first_buy = position_status is None
-                        reasons = [f"{buy_count+1}차 매수"] + signal_reasons
+                        reasons = ["매수"] + signal_reasons
                         current_capital = self._execute_buy(trades, current_date, buy_price, buy_quantity, current_capital, reasons)
-                        buy_count += 1
-                        position_status = 'BUY_COMPLETE'
-                        if is_first_buy:
-                            peak_price = row["STCK_CLPR"]
+                        has_position = True
+                        peak_price = buy_price
 
         # 최종 청산 및 결과 포맷팅
         final_capital = self._liquidate_final_position(trades, eval_df, current_capital)
@@ -161,70 +120,28 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
 
         return False, [], 0.0
 
-    def _check_eod_trailing_stop(self, row, prev_row, prev_prev_row, peak_price, position_status) -> Tuple[Optional[str], List[str]]:
-        """[2차 방어선] EOD 조건부 trailing stop
+    def _check_trailing_stop(self, row, peak_price) -> Tuple[bool, List[str]]:
+        """[2차 방어선] trailing stop 익절
 
-        조건: 추세 약화((+DI - -DI) 격차 2일 연속 감소) + 수급 약화(OBV z-score 감소) 충족 시
-        → 고점 대비 하락률로 매도 단계 결정
+        고점 대비 ATR×2.0 이상 하락 시 전량 매도 (게이트 조건 없음)
         """
-        # row_date = row["STCK_BSOP_DATE"] 테스트를 위한 디버그
-        # if hasattr(row_date, "month") and row_date.month == 7 and row_date.day == 21:
-        #     print("hellow TEST")
-
-        # NaN 체크
-        required_cols = ["minus_di", "plus_di", "obv_z"]
-        if any(pd.isna(row[col]) for col in required_cols):
-            return None, []
-        if any(pd.isna(prev_row.get(col)) for col in ["minus_di", "plus_di", "obv_z"]):
-            return None, []
-        if any(pd.isna(prev_prev_row[col]) for col in ["minus_di", "plus_di"]):
-            return None, []
-
-        # 조건 1: 추세 약화 — (+DI - -DI) 격차 2일 연속 감소
-        di_spread_today = row["plus_di"] - row["minus_di"]
-        di_spread_prev = prev_row["plus_di"] - prev_row["minus_di"]
-        di_spread_prev2 = prev_prev_row["plus_di"] - prev_prev_row["minus_di"]
-        trend_weakening = di_spread_today < di_spread_prev < di_spread_prev2
-
-        # 조건 2: 수급 약화 — OBV z-score 임계값 이하
-        supply_weakening = round(row["obv_z"],2) < self.SUPPLY_WEAKNESS_OBV_Z
-        if not (trend_weakening and supply_weakening):
-            return None, []
-
-        # ATR Trailing Stop 손절가 계산
         if peak_price <= 0:
-            return None, []
+            return False, []
 
         low_price = row["STCK_LWPR"]
         atr = row.get("atr", 0)
 
         if pd.notna(atr) and atr > 0:
-            stop_partial = int(peak_price - atr * self.TRAILING_STOP_ATR_PARTIAL_MULT)
-            stop_full = int(peak_price - atr * self.TRAILING_STOP_ATR_FULL_MULT)
+            stop_price = int(peak_price - atr * self.TRAILING_STOP_ATR_MULT)
         else:
-            stop_partial = int(peak_price * (1 - self.TRAILING_STOP_PARTIAL / 100))
-            stop_full = int(peak_price * (1 - self.TRAILING_STOP_FULL / 100))
+            stop_price = int(peak_price * (1 - self.TRAILING_STOP_FALLBACK_PCT / 100))
 
-        # 약화 사유 동적 생성
-        weakness_reasons = []
-        if trend_weakening:
-            weakness_reasons.append("추세약화")
-        if supply_weakening:
-            weakness_reasons.append("수급약화")
+        if low_price <= stop_price:
+            drawdown_pct = round((peak_price - low_price) / peak_price * 100, 1)
+            reasons = ["익절", f"고점대비 -{drawdown_pct}%", f"익절가 {stop_price:.0f}원"]
+            return True, reasons
 
-        drawdown_pct = round((peak_price - low_price) / peak_price * 100, 1)
-
-        # 2차 전량 매도: SELL_PRIMARY 상태 + 저가가 전량매도 손절가 이하
-        if position_status == 'SELL_PRIMARY' and low_price <= stop_full:
-            reasons = ["2차 전량매도"] + weakness_reasons + [f"고점대비 -{drawdown_pct}%", f"손절가 {stop_full:.0f}원"]
-            return "SELL_ALL", reasons
-
-        # 1차 분할 매도: BUY_COMPLETE 상태 + 저가가 분할매도 손절가 이하
-        if position_status == 'BUY_COMPLETE' and low_price <= stop_partial:
-            reasons = ["1차 분할매도"] + weakness_reasons + [f"고점대비 -{drawdown_pct}%", f"손절가 {stop_partial:.0f}원"]
-            return "SELL_PRIMARY", reasons
-
-        return None, []
+        return False, []
 
     def _calculate_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
         """지표 계산 (공통 메서드 사용)"""
@@ -348,20 +265,14 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
         return current_capital - total_cost
 
     def _execute_sell(self, trades: List[Dict], date, price: float, current_capital: float, reasons: List[str],
-                      sell_ratio: float = None, sell_all: bool = False):
-        """매도 실행 및 거래 내역 추가"""
+                      sell_all: bool = False):
+        """매도 실행 및 거래 내역 추가 (항상 전량 매도)"""
         curr_qty, curr_avg_cost = self._calculate_position_state(trades)
 
         if curr_qty == 0:
             return current_capital
 
-        # 매도 수량 결정
-        if sell_all:
-            sell_quantity = curr_qty
-        elif sell_ratio:
-            sell_quantity = int(curr_qty * sell_ratio)
-        else:
-            sell_quantity = curr_qty
+        sell_quantity = curr_qty
 
         if sell_quantity == 0:
             return current_capital
