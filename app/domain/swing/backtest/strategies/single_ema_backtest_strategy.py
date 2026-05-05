@@ -5,12 +5,13 @@
 
 **매수 조건 (Entry Conditions):**
 *   **하락장 필터:** 20 EMA < 120 EMA 시 매수 금지 (신규 진입 및 2차 매수 모두 차단)
+*   **2차 매수 시나리오 A (추세 강화형):** EMA + ATR × (0.3~2.0), ADX > 25, OBV z-score >= 1.2
+*   **2차 매수 시나리오 B (눌림목 반등):** EMA ± ATR × 0.5, 18 <= ADX <= 23, 저가 대비 0.4% 반등
 
 **매도 조건 (Exit Conditions):**
 
-**[1차 방어선] 즉시 매도 (일일 저가 기준, OR 조건)**
-1.  **고정 손절:** 저가가 진입가 대비 -3% 도달
-2.  **EMA-ATR 동적 손절:** 저가가 EMA - (ATR × 1.0) 도달
+**[1차 방어선] 즉시 매도 (일일 저가 기준)**
+*   **EMA-ATR 동적 손절:** 저가가 EMA - (ATR × 1.0) 도달
 
 **[2차 방어선] 장 마감 매도 (일일 종가 기준, 교차 검증)**
 *   **시간 윈도우:** 최근 3거래일 이내 발생한 신호만 유효
@@ -19,7 +20,6 @@
     -   추세 약화 (ADX/DMI 2일 연속 약세)
     -   수급 이탈 (OBV z-score)
 2.  **2차 전량 매도:** 1차 매도 후, 아래 조건 중 하나라도 충족 시
-    -   -3% 고정 손절 도달
     -   장 마감 시, 위 3개 조건이 **모두** 충족
     -   1차 매도가 대비 -2% 추가 하락
 """
@@ -41,7 +41,6 @@ class SingleEMABacktestStrategy(BacktestStrategy):
 
     # === 매도 조건 파라미터 ===
     # [1차 방어선]
-    STOP_LOSS_FIXED = -0.03
     ATR_MULTIPLIER = 1.0
     # [2차 방어선]
     OBV_Z_SELL_THRESHOLD = -1.0
@@ -55,18 +54,19 @@ class SingleEMABacktestStrategy(BacktestStrategy):
     MAX_GAP_RATIO = 0.05
 
     # === 2차 매수 조건 ===
-    # [시나리오 A] 추세 강화형
-    SECOND_BUY_PRICE_GAIN_MIN = 0.02
-    SECOND_BUY_PRICE_GAIN_MAX = 0.08
-    SECOND_BUY_OBV_THRESHOLD = 1.2
-    SECOND_BUY_SAFETY_MARGIN = 0.04
+    # [시나리오 A] 추세 강화형 (EMA-ATR 가드레일)
+    TREND_BUY_ATR_LOWER = 0.3        # 하한: EMA + ATR × 0.3 (추세 가속 최소선)
+    TREND_BUY_ATR_UPPER = 2.0        # 상한: EMA + ATR × 2.0 (과열 방지선)
+    TREND_BUY_OBV_THRESHOLD = 1.2    # OBV z-score 최소값
+    TREND_BUY_ADX_MIN = 25           # ADX 최소값 (강한 추세)
 
-    # [시나리오 B] 눌림목 매수형 (건강한 조정 후 반등)
-    PULLBACK_BUY_DROP_MIN = -0.025            # 진입가 대비 최대 하락폭 (-2.5%, 손절 전 안전마진)
-    PULLBACK_BUY_DROP_MAX = -0.01             # 진입가 대비 최소 하락폭 (-1.0%, 조정 인정 최소선)
-    PULLBACK_BUY_EMA_TOLERANCE = 0.98         # EMA 대비 허용 하한 (EMA × 0.98)
-    PULLBACK_BUY_OBV_MIN = 0.0                # 수급 최소 요구치 (중립 이상)
-    PULLBACK_BUY_REBOUND_RATIO = 1.01         # 저점 대비 반등 비율 (1%)
+    # [시나리오 B] 눌림목 반등 (EMA-ATR 가드레일)
+    PULLBACK_BUY_ATR_LOWER = -0.5    # 하한: EMA - ATR × 0.5 (조정 허용 하한)
+    PULLBACK_BUY_ATR_UPPER = 0.3     # 상한: EMA + ATR × 0.3 (조정 범위 상한)
+    PULLBACK_BUY_OBV_MIN = 0.0       # OBV z-score 최소값 (중립 이상)
+    PULLBACK_BUY_ADX_MIN = 18        # ADX 하한 (추세 유지)
+    PULLBACK_BUY_ADX_MAX = 23        # ADX 상한 (조정 구간)
+    PULLBACK_BUY_REBOUND_RATIO = 1.004  # 저점 대비 반등 비율 (0.4%)
 
     # === 거래 비용 ===
     COMMISSION_RATE = 0.00147
@@ -93,7 +93,7 @@ class SingleEMABacktestStrategy(BacktestStrategy):
         entry_price = 0.0
         first_sell_price = 0.0
         buy_count = 0
-        
+
         # EOD 신호 발생일 추적 (시간 윈도우용)
         eod_signal_dates = {
             'ema_breach': None,
@@ -132,6 +132,7 @@ class SingleEMABacktestStrategy(BacktestStrategy):
                     current_capital = self._execute_sell(trades, current_date, sell_price, current_capital, reason, sell_ratio=sell_ratio)
                     position_status = 'SELL_PRIMARY'
                     first_sell_price = sell_price
+                    eod_signal_dates = {k: None for k in eod_signal_dates}  # 신호 리셋
 
                 elif eod_sell_action == 'SELL_ALL':
                     sell_price = row["STCK_CLPR"]
@@ -186,16 +187,10 @@ class SingleEMABacktestStrategy(BacktestStrategy):
         """
         low_price = row["STCK_LWPR"]
 
-        # 1. 고정 손절
-        fixed_stop = entry_price * (1 + self.STOP_LOSS_FIXED)
-        if low_price <= fixed_stop:
-            return True, f"고정손절({self.STOP_LOSS_FIXED*100:.2f}%)", fixed_stop
-
-        # 2. EMA-ATR 동적 손절 (NaN 체크)
+        # EMA-ATR 동적 손절 (NaN 체크)
         if pd.notna(row["ema_20"]) and pd.notna(row["atr"]):
             ema_stop_loss = row["ema_20"] - (row["atr"] * self.ATR_MULTIPLIER)
             if low_price <= ema_stop_loss:
-                # 갭하락 시 시가에 매도, 그 외 손절가에 매도
                 return True, "EMA-ATR손절", ema_stop_loss
 
         return False, "", 0.0
@@ -205,8 +200,6 @@ class SingleEMABacktestStrategy(BacktestStrategy):
         
         # 2차 전량 매도 조건 (1차 분할매도 상태일 때)
         if position_status == 'SELL_PRIMARY':
-            if row['STCK_CLPR'] <= entry_price * (1 + self.STOP_LOSS_FIXED):
-                 return "SELL_ALL", "2차매도(고정손절)"
             if row['STCK_CLPR'] <= first_sell_price * (1 + self.SECONDARY_SELL_ADDITIONAL_DROP):
                  return "SELL_ALL", f"2차매도(추가하락 {self.SECONDARY_SELL_ADDITIONAL_DROP*100:.2f}%)"
 
@@ -302,8 +295,8 @@ class SingleEMABacktestStrategy(BacktestStrategy):
         return all([price_near_ema, supply_strong, gap_filtered, trend_upward])
 
     def _check_second_buy_conditions(self, row: pd.Series, entry_price: float) -> bool:
-        """하이브리드 2차 매수: 추세 강화형 + 조정 매수형"""
-        if any(pd.isna(row[col]) for col in ["ema_20", "obv_z", "atr", "plus_di", "minus_di"]):
+        """하이브리드 2차 매수: 추세 강화형 + 눌림목 반등 (EMA-ATR 가드레일)"""
+        if any(pd.isna(row[col]) for col in ["ema_20", "obv_z", "atr", "adx", "plus_di", "minus_di"]):
             return False
 
         # 하락장 필터: 20 EMA < 120 EMA 시 2차 매수 금지
@@ -311,26 +304,34 @@ class SingleEMABacktestStrategy(BacktestStrategy):
             return False
 
         current_price = row["STCK_CLPR"]
-        price_change = (current_price - entry_price) / entry_price
 
-        # === 시나리오 A: 추세 강화형 (2~8% 상승) ===
-        if self.SECOND_BUY_PRICE_GAIN_MIN <= price_change <= self.SECOND_BUY_PRICE_GAIN_MAX:
-            if current_price > row["ema_20"] and row["obv_z"] >= self.SECOND_BUY_OBV_THRESHOLD:
-                stop_loss_price = entry_price * (1 + self.STOP_LOSS_FIXED)
-                safety_threshold = stop_loss_price * (1 + self.SECOND_BUY_SAFETY_MARGIN)
-                if current_price >= safety_threshold:
-                    return True
+        # === 시나리오 A: 추세 강화형 ===
+        # 가격 가드레일: EMA + ATR × (0.3 ~ 2.5)
+        trend_lower = row["ema_20"] + (row["atr"] * self.TREND_BUY_ATR_LOWER)
+        trend_upper = row["ema_20"] + (row["atr"] * self.TREND_BUY_ATR_UPPER)
 
-        # === 시나리오 B: 눌림목 매수 (건강한 조정 후 반등) ===
-        # 가격 조건: 진입가 대비 -2.5% ~ -1.0% 하락 (손절 -3% 전 안전마진 확보)
-        if self.PULLBACK_BUY_DROP_MIN <= price_change <= self.PULLBACK_BUY_DROP_MAX:
-            # 조건 1: EMA 지지 (EMA 2% 이내)
-            if current_price >= row["ema_20"] * self.PULLBACK_BUY_EMA_TOLERANCE:
-                # 조건 2: 수급 유지 (중립 이상)
-                if row["obv_z"] > self.PULLBACK_BUY_OBV_MIN:
-                    # 조건 3: 추세 유지
-                    if row["plus_di"] > row["minus_di"]:
-                        # 조건 4: 반등 신호 (저점 대비 1% 이상 회복)
+        if trend_lower <= current_price <= trend_upper:
+            # 추세 강도: ADX > 25
+            if row["adx"] > self.TREND_BUY_ADX_MIN:
+                # 추세 방향: +DI > -DI
+                if row["plus_di"] > row["minus_di"]:
+                    # 수급 지속: OBV z-score >= 1.2
+                    if row["obv_z"] >= self.TREND_BUY_OBV_THRESHOLD:
+                        return True
+
+        # === 시나리오 B: 눌림목 반등 ===
+        # 가격 가드레일: EMA - ATR × 0.5 ~ EMA + ATR × 0.3
+        pullback_lower = row["ema_20"] + (row["atr"] * self.PULLBACK_BUY_ATR_LOWER)  # EMA - ATR × 0.5
+        pullback_upper = row["ema_20"] + (row["atr"] * self.PULLBACK_BUY_ATR_UPPER)  # EMA + ATR × 0.3
+
+        if pullback_lower <= current_price <= pullback_upper:
+            # 추세 강도: 18 <= ADX <= 23 (중간 추세, 조정 구간)
+            if self.PULLBACK_BUY_ADX_MIN <= row["adx"] <= self.PULLBACK_BUY_ADX_MAX:
+                # 추세 방향: +DI > -DI
+                if row["plus_di"] > row["minus_di"]:
+                    # 수급 유지: OBV z-score > 0 (중립 이상)
+                    if row["obv_z"] > self.PULLBACK_BUY_OBV_MIN:
+                        # 반등 신호: 당일 저가 대비 0.4% 이상 회복
                         if current_price >= row["STCK_LWPR"] * self.PULLBACK_BUY_REBOUND_RATIO:
                             return True
 

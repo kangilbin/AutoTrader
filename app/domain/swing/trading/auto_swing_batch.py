@@ -211,6 +211,13 @@ async def process_single_swing(
                     entry_price = order_result.get("avg_price", int(current_price))
                     hold_qty = order_result.get("qty", 0)
                     logger.info(f"[{st_code}] 1차 매수 완료: 평단가={entry_price:,}원, 수량={hold_qty}주")
+
+                    # 2차 매수 시간 필터용 Redis 키 생성 (20분 TTL)
+                    await redis_client.setex(
+                        f"first_buy_time:{swing_id}",
+                        1200,  # 20분
+                        datetime.now().isoformat()
+                    )
                 else:
                     logger.error(f"[{st_code}] 1차 매수 실패: {order_result.get('reason')}")
             else:
