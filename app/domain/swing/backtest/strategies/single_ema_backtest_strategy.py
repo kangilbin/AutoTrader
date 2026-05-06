@@ -112,7 +112,7 @@ class SingleEMABacktestStrategy(BacktestStrategy):
             if position_status in ['BUY_COMPLETE', 'SELL_PRIMARY']:
 
                 # [1차 방어선] 즉시 매도 조건 체크 (저가 기준)
-                immediate_sell_signal, reason, sell_price = self._check_immediate_sell_conditions(row, entry_price)
+                immediate_sell_signal, reason, sell_price = self._check_immediate_sell_conditions(row)
 
                 if immediate_sell_signal:
                     current_capital = self._execute_sell(trades, current_date, sell_price, current_capital, reason, sell_all=True)
@@ -124,7 +124,7 @@ class SingleEMABacktestStrategy(BacktestStrategy):
 
                 # [2차 방어선] 장 마감 매도 조건 체크 (종가 기준)
                 eod_sell_action, reason = self._update_and_check_eod_sell_signals(
-                    row, prev_row, current_date, eod_signal_dates, position_status, entry_price, first_sell_price
+                    row, prev_row, current_date, eod_signal_dates, position_status, first_sell_price
                 )
 
                 if eod_sell_action == 'SELL_PRIMARY':
@@ -179,7 +179,7 @@ class SingleEMABacktestStrategy(BacktestStrategy):
         result = self._format_result(prices_df, params, trades, final_capital)
         return result
 
-    def _check_immediate_sell_conditions(self, row: pd.Series, entry_price: float) -> Tuple[bool, str, float]:
+    def _check_immediate_sell_conditions(self, row: pd.Series) -> Tuple[bool, str, float]:
         """[1차 방어선] 저가 기준 즉시 매도 조건 체크
 
         Returns:
@@ -195,7 +195,7 @@ class SingleEMABacktestStrategy(BacktestStrategy):
 
         return False, "", 0.0
 
-    def _update_and_check_eod_sell_signals(self, row, prev_row, current_date, eod_signal_dates, position_status, entry_price, first_sell_price) -> Tuple[Optional[str], str]:
+    def _update_and_check_eod_sell_signals(self, row, prev_row, current_date, eod_signal_dates, position_status, first_sell_price) -> Tuple[Optional[str], str]:
         """[2차 방어선] EOD 매도 조건 교차 검증"""
         
         # 2차 전량 매도 조건 (1차 분할매도 상태일 때)
