@@ -1,17 +1,14 @@
 import pandas as pd
 import asyncio
 import os
-import uuid
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 from dateutil.relativedelta import relativedelta
 from sqlalchemy.ext.asyncio import AsyncSession
-import json
 
 from app.domain.stock.service import StockService
 from .strategy_factory import StrategyFactory
 from app.domain.swing.schemas import SwingCreateRequest
-from app.common.redis import get_redis
 
 # ===== 백테스트 잡 실행 환경 =====
 _EXECUTOR = ThreadPoolExecutor(max_workers=min(4, (os.cpu_count() or 2)))
@@ -45,10 +42,8 @@ async def compute_backtest_offloaded(prices_df: pd.DataFrame, params: dict) -> d
         )
 
 
-async def start_backtest_job(db: AsyncSession, swing_data: SwingCreateRequest) -> str:
-    """
-    비동기 백테스트 잡 시작
-    """
+async def run_backtest(db: AsyncSession, swing_data: SwingCreateRequest) -> dict:
+    """백테스트 실행 및 결과 반환"""
     if not swing_data.ST_CODE:
         raise ValueError("주식 코드는 필수입니다.")
 
@@ -82,8 +77,6 @@ async def start_backtest_job(db: AsyncSession, swing_data: SwingCreateRequest) -
 
     prices_df = pd.DataFrame(price_days)
 
-    job_id = uuid.uuid4().hex
-
     params = {
         "st_code": swing_data.ST_CODE,
         "swing_type": swing_data.SWING_TYPE,
@@ -96,76 +89,4 @@ async def start_backtest_job(db: AsyncSession, swing_data: SwingCreateRequest) -
         "eval_start": eval_start,
     }
 
-    # 잡 생성
-    await job_create(job_id)
-
-    async def runner():
-        await job_set_status(job_id, "running")
-        try:
-            result = await compute_backtest_offloaded(prices_df, params)
-            await job_set_result(job_id, result={"success": True, "message": "백테스팅 완료", "data": result})
-            await job_set_status(job_id, "done")
-        except Exception as e:
-            await job_set_result(job_id, result=None, error=str(e))
-            await job_set_status(job_id, "error")
-
-    asyncio.create_task(runner())
-    return job_id
-
-
-# ===== Redis 잡 관리 함수 =====
-
-def job_key(job_id: str) -> str:
-    return f"backtest:{job_id}"
-
-
-async def job_create(job_id: str) -> None:
-    redis = await get_redis()
-    now = datetime.now().isoformat()
-    await redis.hset(
-        job_key(job_id),
-        mapping={
-            "status": "queued",
-            "result": "",
-            "error": "",
-            "created_at": now,
-            "updated_at": now,
-        },
-    )
-    await redis.expire(job_key(job_id), 60 * 60 * 24)
-
-
-async def job_set_status(job_id: str, status: str) -> None:
-    redis = await get_redis()
-    await redis.hset(
-        job_key(job_id),
-        mapping={
-            "status": status,
-            "updated_at": datetime.now().isoformat(),
-        },
-    )
-
-
-async def job_set_result(job_id: str, result: dict | None = None, error: str | None = None) -> None:
-    redis = await get_redis()
-    mapping = {"updated_at": datetime.now().isoformat()}
-    if result is not None:
-        mapping["result"] = json.dumps(result, ensure_ascii=False)
-    if error is not None:
-        mapping["error"] = error
-    await redis.hset(job_key(job_id), mapping=mapping)
-
-
-async def get_backtest_job(job_id: str) -> dict:
-    redis = await get_redis()
-    data = await redis.hgetall(job_key(job_id))
-    if not data:
-        return {"status": "not_found", "result": None, "error": "job_id 없음"}
-    result = data.get("result")
-    return {
-        "status": data.get("status"),
-        "result": json.loads(result) if result else None,
-        "error": data.get("error") or None,
-        "created_at": data.get("created_at"),
-        "updated_at": data.get("updated_at"),
-    }
+    return await compute_backtest_offloaded(prices_df, params)

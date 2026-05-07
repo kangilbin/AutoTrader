@@ -7,7 +7,7 @@ from dateutil.relativedelta import relativedelta
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import SQLAlchemyError, IntegrityError
 from typing import List, Dict, Any
-from datetime import datetime, timedelta
+from datetime import datetime
 from decimal import Decimal
 import logging
 
@@ -73,8 +73,8 @@ class SwingService:
                 )
                 logger.info(f"[{request.ST_CODE}] 데이터 적재 백그라운드 태스크 시작")
 
-            # 등록된 종목의 EMA20 캐싱
-            await self.cache_single_ema(request.ST_CODE)
+            # 등록된 종목의 지표 캐싱
+            await self.cache_single_indicators(request.ST_CODE)
 
             return SwingResponse.model_validate(db_swing).model_dump()
 
@@ -312,9 +312,9 @@ class SwingService:
             logger.error(f"신호 초기화 실패: {e}", exc_info=True)
             raise DatabaseError("신호 초기화에 실패했습니다")
 
-    async def cache_single_ema(self, st_code: str) -> bool:
+    async def cache_single_indicators(self, st_code: str) -> bool:
         """
-        단일 종목 EMA20 캐싱 (스윙 등록 시 호출)
+        단일 종목 지표 캐싱 (스윙 등록 시 호출)
 
         Args:
             st_code: 종목 코드
@@ -322,6 +322,9 @@ class SwingService:
         Returns:
             캐싱 성공 여부
         """
+        from app.domain.swing.indicators import TechnicalIndicators
+        import json
+
         try:
             stock_service = StockService(self.db)
             redis_client = await Redis.get_connection()
@@ -332,34 +335,66 @@ class SwingService:
 
             if not price_history or len(price_history) < 20:
                 logger.warning(
-                    f"[{st_code}] EMA 캐싱 스킵 - 데이터 부족: "
+                    f"[{st_code}] 지표 캐싱 스킵 - 데이터 부족: "
                     f"{len(price_history) if price_history else 0}일"
                 )
                 return False
 
-            # EMA20 계산
+            # 지표 계산
             df = pd.DataFrame(price_history)
-            close_prices = df["STCK_CLPR"].values.astype(float)
-            ema_array = ta.EMA(close_prices, timeperiod=20)
+            indicators = TechnicalIndicators.prepare_indicators_from_df(df)
 
-            if len(ema_array) == 0 or np.isnan(ema_array[-1]):
-                logger.warning(f"[{st_code}] EMA 계산 실패")
+            if len(indicators) < 2:
+                logger.warning(f"[{st_code}] 지표 데이터 부족 (2일 미만)")
                 return False
 
-            ema20 = float(ema_array[-1])
+            today = indicators.iloc[-1]
+            yesterday = indicators.iloc[-2]
 
-            # Redis 저장 (TTL: 7일 = 604800초)
-            cache_key = f"ema20:{st_code}"
-            await redis_client.setex(cache_key, 604800, str(ema20))
+            required_cols = ['ema_20', 'adx', 'plus_di', 'minus_di']
+            if not all(col in today.index for col in required_cols):
+                logger.warning(f"[{st_code}] 필수 지표 누락")
+                return False
+
+            if any(pd.isna(today[col]) for col in required_cols):
+                logger.warning(f"[{st_code}] 지표 값 NaN")
+                return False
+
+            indicators_data = {
+                "ema20": {
+                    "today": float(today['ema_20']),
+                    "yesterday": float(yesterday['ema_20'])
+                },
+                "adx": {
+                    "today": float(today['adx']),
+                    "yesterday": float(yesterday['adx'])
+                },
+                "plus_di": {
+                    "today": float(today['plus_di']),
+                    "yesterday": float(yesterday['plus_di'])
+                },
+                "minus_di": {
+                    "today": float(today['minus_di']),
+                    "yesterday": float(yesterday['minus_di'])
+                },
+                "date": today['STCK_BSOP_DATE']
+            }
+
+            await redis_client.setex(
+                f"indicators:{st_code}",
+                604800,
+                json.dumps(indicators_data)
+            )
 
             logger.info(
-                f"[{st_code}] EMA20 캐싱 완료: {ema20:.2f} "
+                f"[{st_code}] 지표 캐싱 완료: EMA={indicators_data['ema20']['today']:.2f}, "
+                f"ADX={indicators_data['adx']['today']:.1f} "
                 f"(데이터: {len(price_history)}일)"
             )
             return True
 
         except Exception as e:
-            logger.error(f"[{st_code}] EMA 캐싱 실패: {e}")
+            logger.error(f"[{st_code}] 지표 캐싱 실패: {e}")
             return False
 
     async def warmup_ema_cache(self, redis_client) -> Dict[str, Any]:
@@ -435,11 +470,7 @@ class SwingService:
                         fail_count += 1
                         continue
 
-                    # 1) EMA20 단독 저장 (하위 호환성 유지)
                     ema20 = float(today['ema_20'])
-                    await redis_client.setex(f"ema20:{st_code}", 604800, str(ema20))
-
-                    # 2) 전체 지표 2일치 저장 (신규)
                     indicators_data = {
                         "ema20": {
                             "today": float(today['ema_20']),
