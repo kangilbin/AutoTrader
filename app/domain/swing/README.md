@@ -79,15 +79,14 @@ result = strategy.compute(prices_df, params)
 class TradingStrategy(ABC):
     @abstractmethod
     async def check_entry_signal(...) -> Optional[Dict]:
-        """1차 매수 신호"""
-    
-    @abstractmethod
-    async def check_second_buy_signal(...) -> Optional[Dict]:
-        """2차 매수 신호"""
+        """매수 신호"""
     
     @abstractmethod
     async def check_exit_signal(...) -> Dict:
-        """매도 신호"""
+        """손절 신호"""
+    
+    async def check_trailing_stop_signal(...) -> Optional[Dict]:
+        """익절 신호 (1차/2차)"""
 ```
 
 ### 사용 예시
@@ -140,17 +139,17 @@ class MyTradingStrategy(TradingStrategy):
     
     @classmethod
     async def check_entry_signal(cls, ...):
-        # 1차 매수 로직
-        pass
-    
-    @classmethod
-    async def check_second_buy_signal(cls, ...):
-        # 2차 매수 로직
+        # 매수 로직
         pass
     
     @classmethod
     async def check_exit_signal(cls, ...):
-        # 매도 로직
+        # 손절 로직
+        pass
+    
+    @classmethod
+    async def check_trailing_stop_signal(cls, ...):
+        # 익절 로직
         pass
 
 # trading/trading_strategy_factory.py에 등록

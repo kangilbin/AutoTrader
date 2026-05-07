@@ -22,7 +22,7 @@ class TradingStrategy(ABC):
     실시간 거래 전략 베이스 클래스
 
     모든 실시간 거래 전략은 이 클래스를 상속하고
-    check_entry_signal, check_exit_signal, check_second_buy_signal을 구현해야 합니다.
+    check_entry_signal, check_exit_signal을 구현해야 합니다.
 
     Attributes:
         name: 전략 이름 (클래스 속성으로 정의)
@@ -74,10 +74,11 @@ class TradingStrategy(ABC):
         entry_price: Decimal,
         frgn_ntby_qty: int,
         acml_vol: int,
-        cached_indicators: Dict
+        cached_indicators: Dict,
+        signal: int = 1
     ) -> Dict:
         """
-        매도 신호 체크 (하위 클래스에서 구현 필수)
+        손절 신호 체크 (하위 클래스에서 구현 필수)
 
         Args:
             redis_client: Redis 클라이언트
@@ -88,6 +89,7 @@ class TradingStrategy(ABC):
             frgn_ntby_qty: 외국인 순매수량
             acml_vol: 누적거래량
             cached_indicators: 실시간 증분 계산된 지표 (필수)
+            signal: 현재 SIGNAL 상태 (1: 익절 전, 2: 익절 후 본전 방어)
 
         Returns:
             매도 신호 정보 (action: "SELL" or "HOLD")

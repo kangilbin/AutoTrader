@@ -40,7 +40,7 @@ class TradingStrategyFactory:
                 - 기타: SingleEMAStrategy (기본값)
 
         Returns:
-            전략 클래스 (check_entry_signal, check_exit_signal, check_second_buy_signal 제공)
+            전략 클래스 (check_entry_signal, check_exit_signal 제공)
         """
         strategy = cls._strategies.get(swing_type, SingleEMAStrategy)
 

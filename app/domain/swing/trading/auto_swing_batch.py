@@ -1,11 +1,11 @@
 """
 스윙 매매 배치 작업 (5분 간격)
-단일 20EMA 전략 + 분할 매수 지원
+단일 20EMA 전략 + 2단계 분할 익절
 
 SIGNAL 상태:
 - 0: 대기 (포지션 없음)
-- 1: 1차 매수 완료 (부분 포지션)
-- 2: 2차 매수 완료 (전체 포지션)
+- 1: 보유 (1차 익절 전)
+- 2: 보유 (1차 익절 후, 잔량 보유)
 
 배치 스케줄:
 - 08:30: ema_cache_warmup_job (EMA 캐시 워밍업)
@@ -14,7 +14,7 @@ SIGNAL 상태:
 
 오케스트레이션 패턴:
 - Strategy: 신호 판단만 (check_entry_signal, check_exit_signal 등)
-- Entity (SwingTrade): 상태 전환 (transition_to_first_buy, reset_cycle 등)
+- Entity (SwingTrade): 상태 전환 (transition_to_buy, transition_to_partial, reset_cycle 등)
 - OrderExecutor: 주문 실행 (execute_buy_with_partial, execute_sell_with_partial)
 - Orchestrator (이 파일): 위 세 계층을 조율
 """
@@ -179,9 +179,23 @@ async def process_single_swing(
                     new_signal = partial_result.get("signal_on_complete", swing.SIGNAL)
                     if new_signal == 0:
                         swing.reset_cycle()
+                    elif new_signal == 2 and swing.SIGNAL == 1:
+                        # 1차 익절 분할 체결 완료
+                        sold_qty = partial_result.get("qty", 0)
+                        swing.transition_to_partial(sold_qty)
+                        swing.PEAK_PRICE = Decimal(str(int(current_price)))
                     else:
                         swing.SIGNAL = new_signal
                         swing.MOD_DT = datetime.now()
+
+                # CUR_AMOUNT 업데이트 (분할 체결 chunk 금액 반영)
+                chunk_amount = partial_result.get("chunk_amount", 0)
+                if chunk_amount > 0:
+                    exec_type = partial_result.get("exec_type")
+                    if exec_type == "buy":
+                        swing.deduct_amount(chunk_amount)
+                    elif exec_type == "sell":
+                        swing.add_amount(chunk_amount)
 
                 # Entity 상태 업데이트
                 if partial_result.get("entry_price"):
@@ -267,7 +281,7 @@ async def _handle_waiting(
     prdy_vrss_vol_rate, prdy_ctrt,
     cached_indicators, avg_daily_amount, mrkt_code=""
 ):
-    """대기 상태 → 매수 신호 확인 (ATR 기반 포지션 사이징)"""
+    """대기 상태 → 매수 신호 확인 (리스크 기반 포지션 사이징)"""
     entry_result = await strategy.check_entry_signal(
         redis_client=redis_client,
         swing_id=swing.SWING_ID,
@@ -287,18 +301,30 @@ async def _handle_waiting(
         logger.warning(f"[{st_code}] USER_ID 없음, 주문 실행 불가")
         return
 
-    # ATR 기반 포지션 사이징: Qty = min(Equity×Risk%/ATR, Equity×MaxPos%/Price)
+    # 포지션 사이징: min(배정금 × ENTRY_PCT, 손실제한 수량)
+    realtime_ema20 = cached_indicators.get('realtime_ema20', 0)
     realtime_atr = cached_indicators.get('realtime_atr', 0)
-    equity = float(swing.INIT_AMOUNT)
+    equity = float(swing.CUR_AMOUNT)
     curr_price = float(current_price)
 
-    if realtime_atr > 0 and curr_price > 0:
-        risk_qty = equity * strategy.RISK_PCT / realtime_atr
-        max_qty = equity * strategy.MAX_POSITION_PCT / curr_price
-        target_qty = int(min(risk_qty, max_qty))
-        target_amount = Decimal(str(target_qty)) * current_price
+    # 기본 수량: 배정금의 ENTRY_PCT만큼 투입
+    entry_qty = int(equity * strategy.ENTRY_PCT / curr_price) if curr_price > 0 else 0
+
+    # 안전장치: 손절 시 배정금의 MAX_LOSS_PCT 이내 손실로 제한
+    stop_price = realtime_ema20 - realtime_atr * strategy.ATR_MULTIPLIER
+    risk_per_share = curr_price - stop_price
+
+    if risk_per_share > 0 and curr_price > 0:
+        loss_limit_qty = int(equity * strategy.MAX_LOSS_PCT / risk_per_share)
+        target_qty = min(entry_qty, loss_limit_qty)
     else:
-        target_amount = Decimal(str(equity)) * Decimal(str(strategy.MAX_POSITION_PCT))
+        target_qty = entry_qty
+
+    target_amount = Decimal(str(target_qty)) * current_price if target_qty > 0 else Decimal(0)
+
+    if target_qty <= 0:
+        logger.info(f"[{st_code}] 매수 수량 부족 (CUR_AMOUNT={equity:,.0f}원)")
+        return
 
     order_result = await SwingOrderExecutor.execute_buy_with_partial(
         swing_id=swing.SWING_ID,
@@ -321,6 +347,10 @@ async def _handle_waiting(
 
     avg_price = order_result.get("avg_price", int(current_price))
     qty = order_result.get("qty", 0)
+
+    # CUR_AMOUNT 차감 (매수 금액만큼 가용 금액 감소)
+    if qty > 0:
+        swing.deduct_amount(avg_price * qty)
 
     if order_result.get("completed", True):
         swing.transition_to_buy(avg_price, qty, int(current_price))
@@ -345,14 +375,14 @@ async def _handle_position(
     current_price, frgn_ntby_qty, acml_vol,
     cached_indicators, avg_daily_amount, mrkt_code=""
 ):
-    """보유 상태 → 손절/익절 확인"""
+    """보유 상태 → 손절/1차 익절/2차 익절 확인"""
     entry_price = int(swing.ENTRY_PRICE) if swing.ENTRY_PRICE else 0
     hold_qty = swing.HOLD_QTY or 0
 
     if entry_price <= 0:
         return
 
-    # 1. 손절 신호 체크
+    # 1. 손절 신호 체크 (SIGNAL 2에서는 본전 방어 적용)
     exit_result = await strategy.check_exit_signal(
         redis_client=redis_client,
         position_id=swing.SWING_ID,
@@ -361,7 +391,8 @@ async def _handle_position(
         entry_price=Decimal(entry_price),
         frgn_ntby_qty=frgn_ntby_qty,
         acml_vol=acml_vol,
-        cached_indicators=cached_indicators
+        cached_indicators=cached_indicators,
+        signal=swing.SIGNAL
     )
 
     if exit_result and exit_result.get("action") == "SELL":
@@ -383,17 +414,85 @@ async def _handle_position(
         cached_indicators=cached_indicators
     )
 
+    if ts_result and ts_result.get("action") == "SELL_HALF":
+        # 1차 익절: 50% 매도 (SIGNAL 1 → 2)
+        sell_qty = hold_qty // 2
+        if sell_qty > 0:
+            await _execute_partial_sell(
+                swing, redis_client, db, user_id, st_code,
+                current_price, sell_qty, avg_daily_amount,
+                ts_result.get("reasons", ["1차 익절"]),
+                f"[{user_id} - 주식: {st_code}] 1차 익절 50% 매도 완료",
+                mrkt_code=mrkt_code
+            )
+        return
+
     if ts_result and ts_result.get("action") == "SELL_ALL":
+        # 2차 익절: 잔량 전량 매도 (SIGNAL 2 → 0)
         await _execute_full_sell(
             swing, redis_client, db, user_id, st_code,
             current_price, hold_qty, avg_daily_amount,
-            ts_result.get("reasons", ["익절"]),
-            f"[{user_id} - 주식: {st_code}] 익절 전량 매도 완료, 사이클 종료",
+            ts_result.get("reasons", ["2차 익절"]),
+            f"[{user_id} - 주식: {st_code}] 2차 익절 전량 매도 완료, 사이클 종료",
             mrkt_code=mrkt_code
         )
 
 
 # ==================== 공통 매도 헬퍼 ====================
+
+
+async def _execute_partial_sell(
+    swing, redis_client, db, user_id, st_code,
+    current_price, sell_qty, avg_daily_amount,
+    reasons, success_log_msg, mrkt_code=""
+):
+    """1차 익절 50% 매도 실행 → Entity transition_to_partial()"""
+    if not user_id:
+        logger.warning(f"[{st_code}] USER_ID 없음, 매도 주문 실행 불가")
+        return
+
+    order_result = await SwingOrderExecutor.execute_sell_with_partial(
+        swing_id=swing.SWING_ID,
+        user_id=user_id,
+        st_code=st_code,
+        current_price=current_price,
+        target_qty=sell_qty,
+        avg_daily_amount=avg_daily_amount,
+        signal_on_complete=2,
+        db=db,
+        mrkt_code=mrkt_code,
+    )
+
+    if not order_result.get("success"):
+        logger.error(f"[{st_code}] 1차 익절 매도 실패: {order_result.get('reason')}")
+        return
+
+    if order_result.get("partial_state"):
+        swing._pending_partial_state = order_result["partial_state"]
+
+    # CUR_AMOUNT 가산 (매도 금액만큼 가용 금액 증가)
+    sold_qty_for_amount = order_result.get("qty", 0)
+    if sold_qty_for_amount > 0:
+        sell_price = order_result.get("avg_price", int(current_price))
+        swing.add_amount(sell_price * sold_qty_for_amount)
+
+    if order_result.get("completed", True):
+        actual_sold = order_result.get("qty", sell_qty)
+        swing.transition_to_partial(actual_sold)
+        # PEAK를 현재가로 리셋 → 2차 익절 새로 추적
+        swing.PEAK_PRICE = Decimal(str(int(current_price)))
+    else:
+        sold_qty = order_result.get("qty", 0)
+        swing.update_hold_qty_partial(sold_qty)
+
+    trade_service = TradeHistoryService(db)
+    await trade_service.record_trade(
+        swing_id=swing.SWING_ID,
+        trade_type="S",
+        order_result=order_result,
+        reasons=reasons
+    )
+    logger.info(success_log_msg)
 
 
 async def _execute_full_sell(
@@ -425,6 +524,12 @@ async def _execute_full_sell(
     # order_result에 partial_state가 있으면 Entity에 임시 저장
     if order_result.get("partial_state"):
         swing._pending_partial_state = order_result["partial_state"]
+
+    # CUR_AMOUNT 가산 (매도 금액만큼 가용 금액 증가)
+    sold_qty_for_amount = order_result.get("qty", 0)
+    if sold_qty_for_amount > 0:
+        sell_price = order_result.get("avg_price", int(current_price))
+        swing.add_amount(sell_price * sold_qty_for_amount)
 
     if order_result.get("completed", True):
         swing.reset_cycle()
@@ -599,8 +704,23 @@ def _fire_trade_notification(
         )
         task.add_done_callback(_on_notification_done)
 
-    # 전량 매도 (SIGNAL 1→0)
-    elif new_signal == 0 and prev_signal == 1:
+    # 1차 익절 (SIGNAL 1→2)
+    elif new_signal == 2 and prev_signal == 1:
+        task = asyncio.create_task(
+            PushNotificationService.send_trade_notification(
+                user_id=user_id,
+                noti_type="TRADE",
+                st_code=st_code,
+                qty=hold_qty,
+                price=entry_price,
+                reasons=["1차 익절 50% 매도 완료"],
+            )
+        )
+        task.add_done_callback(_on_notification_done)
+
+    # 전량 매도 (SIGNAL 1,2→0)
+    elif new_signal == 0 and prev_signal in (1, 2):
+        reason = "2차 익절 전량 매도 완료" if prev_signal == 2 else "전량 매도 완료"
         task = asyncio.create_task(
             PushNotificationService.send_trade_notification(
                 user_id=user_id,
@@ -608,7 +728,7 @@ def _fire_trade_notification(
                 st_code=st_code,
                 qty=0,
                 price=entry_price,
-                reasons=["전량 매도 완료"],
+                reasons=[reason],
             )
         )
         task.add_done_callback(_on_notification_done)

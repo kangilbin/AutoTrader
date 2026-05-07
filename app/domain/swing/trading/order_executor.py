@@ -18,12 +18,6 @@ class SwingOrderExecutor:
     """
     스윙 매매 주문 실행기
 
-    분할 매수/매도:
-    - 1차 매수: buy_ratio% of init_amount
-    - 2차 매수: remaining (100 - buy_ratio)%
-    - 1차 매도: sell_ratio% of holdings
-    - 2차 매도: remaining holdings
-
     체결 분할 (TWAP):
     - 주문금액 / 일평균거래대금 > SLIPPAGE_RATIO 초과 시 자동 분할
     - 5분 사이클마다 한 chunk씩 실행
@@ -360,12 +354,14 @@ class SwingOrderExecutor:
                 logger.info(f"[{st_code}] {state['phase']}차 분할 매수 완료: 총 {new_hold_qty}주, 평단가={new_entry_price:,}원")
                 return {"completed": True, "aborted": False, "signal_on_complete": state["phase"],
                         "entry_price": new_entry_price, "hold_qty": new_hold_qty,
+                        "chunk_amount": chunk_amount, "exec_type": "buy",
                         "clear_partial": True}
 
             state["executed_amount"] = new_executed_amount
             logger.info(f"[{st_code}] 분할 매수 진행: {progress_pct:.1f}% (누적 {new_hold_qty}주)")
             return {"completed": False, "aborted": False, "signal_on_complete": state["phase"],
                     "entry_price": new_entry_price, "hold_qty": new_hold_qty,
+                    "chunk_amount": chunk_amount, "exec_type": "buy",
                     "partial_state": state}
 
         # ── 매도 부분 실행 ──
@@ -421,17 +417,21 @@ class SwingOrderExecutor:
                 reasons=[f"분할매도({state['phase']}차)", f"{progress_pct:.0f}% 완료"]
             )
 
+            chunk_amount = float(actual_qty * avg_sell_price)
+
             if new_executed_qty >= target_qty:
                 logger.info(f"[{st_code}] {state['phase']}차 분할 매도 완료: {new_executed_qty}주, 잔량={new_hold_qty}주")
                 return {"completed": True, "aborted": False, "signal_on_complete": state["phase"],
                         "entry_price": current_entry_price if new_hold_qty > 0 else 0,
                         "hold_qty": new_hold_qty,
+                        "chunk_amount": chunk_amount, "exec_type": "sell",
                         "clear_partial": True}
 
             state["executed_qty"] = new_executed_qty
             logger.info(f"[{st_code}] 분할 매도 진행: {progress_pct:.1f}% (잔량 {new_hold_qty}주)")
             return {"completed": False, "aborted": False, "signal_on_complete": state["phase"],
                     "entry_price": current_entry_price, "hold_qty": new_hold_qty,
+                    "chunk_amount": chunk_amount, "exec_type": "sell",
                     "partial_state": state}
 
         return {"completed": True, "aborted": False, "signal_on_complete": None,

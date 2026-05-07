@@ -67,8 +67,6 @@ class SwingService:
                 st_code=request.ST_CODE,
                 init_amount=Decimal(request.INIT_AMOUNT),
                 swing_type=request.SWING_TYPE,
-                buy_ratio=request.BUY_RATIO,
-                sell_ratio=request.SELL_RATIO
             )
 
             db_swing = await self.repo.save(swing)
@@ -263,7 +261,7 @@ class SwingService:
                         "HLDG_QTY": buy_item.get("hldg_qty"),
                         "EVLU_AMT": buy_item.get("evlu_amt"),
                         "EVLU_PFLS_RT": rate,
-                        "EVLU_PFLS_AMT": data["INIT_AMOUNT"] - data["CUR_AMOUNT"],
+                        "EVLU_PFLS_AMT": data["CUR_AMOUNT"] - data["INIT_AMOUNT"],
                     }
                     results.append(result_data)
 
@@ -283,7 +281,7 @@ class SwingService:
                         # "CUR_AMOUNT": swing["CUR_AMOUNT"],
                         # "SWING_TYPE": swing["SWING_TYPE"],
                         "EVLU_PFLS_RT": rate,
-                        "EVLU_PFLS_AMT": swing["INIT_AMOUNT"] - swing["CUR_AMOUNT"],
+                        "EVLU_PFLS_AMT": swing["CUR_AMOUNT"] - swing["INIT_AMOUNT"],
                     }
                     results.append(result_data)
 

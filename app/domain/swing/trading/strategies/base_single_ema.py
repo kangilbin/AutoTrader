@@ -35,16 +35,22 @@ class BaseSingleEMAStrategy:
     BREAKOUT_ENTRY_ADX_MIN = 15      # ADX 최소값 (최소 추세 강도)
     BREAKOUT_ENTRY_OBV_MIN = 0.0     # OBV z-score 최소값
 
-    # 포지션 사이징 (ATR 기반)
-    RISK_PCT = 0.02                  # 1회 손절 시 자산 대비 최대 손실률 (2%)
-    MAX_POSITION_PCT = 0.25          # 1종목 최대 포지션 비중 (25%)
+    # 포지션 사이징
+    # Qty = min(CUR_AMOUNT × ENTRY_PCT / 현재가, CUR_AMOUNT × MAX_LOSS_PCT / risk_per_share)
+    ENTRY_PCT = 0.5                  # 매 사이클 배정금 대비 투입 비율 (50%)
+    MAX_LOSS_PCT = 0.10              # 손절 시 배정금 대비 최대 손실률 (10%, 고변동성 안전장치)
 
     # 매도 조건
-    # [1차 방어선] 장중 손절 (EMA-ATR 이탈 시 즉시 전량 매도)
+    # [손절] EMA-ATR 이탈 시 즉시 전량 매도 (SIGNAL 2에서는 본전 방어 적용)
     ATR_MULTIPLIER = 1.0
 
-    # [2차 방어선] trailing stop 익절 (고점 대비 ATR 하락 시 전량 매도)
-    TRAILING_STOP_ATR_MULT = 2.0  # ATR × 2.0 하락 시 전량 익절
+    # [1차 익절] 고점 대비 ATR 하락 시 50% 매도 (SIGNAL 1 → 2)
+    TRAILING_STOP_ATR_MULT = 2.0          # 고점 - ATR × 2.0
+    FIRST_PROFIT_TAKE_RATIO = 0.5         # 50% 매도
+
+    # [2차 익절] 고점 대비 ATR 하락 + OBV 꺾임 시 잔량 전량 매도 (SIGNAL 2 → 0)
+    OBV_Z_SELL_THRESHOLD = -0.5           # OBV z-score < -0.5 시 2차 매도
+
     # 폴백 (ATR 무효 시 고정값)
     TRAILING_STOP_FALLBACK_PCT = 5.0
 

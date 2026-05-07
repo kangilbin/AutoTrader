@@ -26,9 +26,7 @@ class SwingTrade(Base):
     INIT_AMOUNT = Column(DECIMAL(15, 2), nullable=False, comment='초기 투자금')
     CUR_AMOUNT = Column(DECIMAL(15, 2), nullable=False, comment='현재 투자금')
     SWING_TYPE = Column(CHAR(1), nullable=False, comment='스윙 타입 (A: 이평선, B: 일목균형표)')
-    BUY_RATIO = Column(Integer, nullable=False, comment='매수 비율')
-    SELL_RATIO = Column(Integer, nullable=False, comment='매도 비율')
-    SIGNAL = Column(Integer, nullable=False, default=0, comment='매매 신호 상태 (0:대기, 1:보유)')
+    SIGNAL = Column(Integer, nullable=False, default=0, comment='매매 신호 상태 (0:대기, 1:보유-익절전, 2:보유-익절후)')
     ENTRY_PRICE = Column(DECIMAL(15, 2), nullable=True, comment='평균 매수 단가')
     HOLD_QTY = Column(Integer, nullable=True, default=0, comment='보유 수량')
     EOD_SIGNALS = Column(String(500), nullable=True, comment='EOD 매도 신호 JSON')
@@ -58,8 +56,12 @@ class SwingTrade(Base):
         return self.SIGNAL == 0
 
     def has_position(self) -> bool:
-        """포지션 보유 여부 (SIGNAL 1)"""
-        return self.SIGNAL == 1
+        """포지션 보유 여부 (SIGNAL 1 or 2)"""
+        return self.SIGNAL in (1, 2)
+
+    def is_partial_position(self) -> bool:
+        """1차 익절 후 잔여 포지션 보유 (SIGNAL 2)"""
+        return self.SIGNAL == 2
 
     # ==================== 상태 전환 ====================
 
@@ -73,6 +75,15 @@ class SwingTrade(Base):
         self.PEAK_PRICE = Decimal(peak_price)
         self.MOD_DT = datetime.now()
 
+    def transition_to_partial(self, sold_qty: int) -> None:
+        """1차 익절 완료 (SIGNAL 1 -> 2) — 50% 매도 후 잔여 포지션"""
+        if self.SIGNAL != 1:
+            raise ValidationError(f"1차 익절은 SIGNAL 1에서만 가능합니다. 현재: {self.SIGNAL}")
+        self.SIGNAL = 2
+        self.HOLD_QTY = (self.HOLD_QTY or 0) - sold_qty
+        self.PEAK_PRICE = None  # PEAK 리셋 → 2차 익절을 위해 새로 추적
+        self.MOD_DT = datetime.now()
+
     def reset_cycle(self) -> None:
         """사이클 종료 — 전량 매도 후 초기화 (SIGNAL -> 0)"""
         self.SIGNAL = 0
@@ -80,6 +91,12 @@ class SwingTrade(Base):
         self.HOLD_QTY = 0
         self.PEAK_PRICE = None
         self.MOD_DT = datetime.now()
+
+    def get_stop_loss_floor(self) -> int:
+        """1차 익절 후 손절 하한선 = 평단가 (본전 방어)"""
+        if self.SIGNAL == 2 and self.ENTRY_PRICE:
+            return int(self.ENTRY_PRICE)
+        return 0
 
     def update_peak_price(self, current_high: int) -> None:
         """장중 고가 갱신"""
@@ -89,6 +106,16 @@ class SwingTrade(Base):
     def update_hold_qty_partial(self, sold_qty: int) -> None:
         """부분 체결 시 보유 수량 차감"""
         self.HOLD_QTY = (self.HOLD_QTY or 0) - sold_qty
+        self.MOD_DT = datetime.now()
+
+    def deduct_amount(self, amount) -> None:
+        """매수 체결 시 투자 가능 금액 차감"""
+        self.CUR_AMOUNT = (self.CUR_AMOUNT or Decimal(0)) - Decimal(str(amount))
+        self.MOD_DT = datetime.now()
+
+    def add_amount(self, amount) -> None:
+        """매도 체결 시 투자 가능 금액 가산"""
+        self.CUR_AMOUNT = (self.CUR_AMOUNT or Decimal(0)) + Decimal(str(amount))
         self.MOD_DT = datetime.now()
 
     # ==================== 팩토리 메서드 ====================

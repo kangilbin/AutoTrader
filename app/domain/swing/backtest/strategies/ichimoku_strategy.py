@@ -27,8 +27,8 @@ class IchimokuStrategy(BacktestStrategy):
         df = prices_df.copy()
 
         initial_capital = params["init_amount"]
-        buy_ratio = params["buy_ratio"]
-        sell_ratio = params["sell_ratio"]
+        buy_ratio = 0.7
+        sell_ratio = 0.5
         eval_start = params["eval_start"]
 
         eval_df = df[df["STCK_BSOP_DATE"] >= eval_start].copy()

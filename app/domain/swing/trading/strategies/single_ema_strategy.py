@@ -347,14 +347,15 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
         entry_price: Decimal,
         frgn_ntby_qty: int,
         acml_vol: int,
-        cached_indicators: Dict
+        cached_indicators: Dict,
+        signal: int = 1
     ) -> Dict:
         """
-        매도 신호 체크 (베이스 클래스 구현)
-        실제로는 check_immediate_sell_signal을 호출합니다.
+        손절 신호 체크 — SIGNAL 2에서는 본전 방어 적용
         """
         result = await cls.check_immediate_sell_signal(
-            redis_client, symbol, current_price, cached_indicators
+            redis_client, symbol, current_price, cached_indicators,
+            entry_price=int(entry_price), signal=signal
         )
         return result if result else {"action": "HOLD", "reasons": []}
 
@@ -368,34 +369,36 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
         redis_client,
         symbol: str,
         current_price: Decimal,
-        cached_indicators: Dict
+        cached_indicators: Dict,
+        entry_price: int = 0,
+        signal: int = 1
     ) -> Optional[Dict]:
         """
-        [1차 방어선] 장중 즉시 매도 신호 체크
-        - trade_job (5분 주기)에서 호출
-        - 조건: EMA-ATR 동적 손절만 사용 (백테스팅과 일치)
+        [손절] 장중 즉시 매도 신호 체크
+        - SIGNAL 1: EMA - ATR×1.0 손절
+        - SIGNAL 2: Max(EMA - ATR×1.0, 평단가) 본전 방어
         """
         curr_price = float(current_price)
 
-        # 실시간 EMA, ATR 사용
         realtime_ema20 = cached_indicators['realtime_ema20']
         realtime_atr = cached_indicators['realtime_atr']
 
-        # ATR=0 가드: ATR이 유효하지 않으면 손절 체크 스킵
         if realtime_atr <= 0:
             logger.warning(f"[{symbol}] ATR이 0 이하, 손절 체크 스킵")
             return {"action": "HOLD", "reasons": []}
 
-        # EMA-ATR 동적 손절
         ema_atr_stop = realtime_ema20 - (realtime_atr * cls.ATR_MULTIPLIER)
+
+        # SIGNAL 2 (1차 익절 후): 본전 방어 — 손절 하한을 평단가로 올림
+        if signal == 2 and entry_price > 0:
+            ema_atr_stop = max(ema_atr_stop, entry_price)
+
         if curr_price <= ema_atr_stop:
-            logger.warning(f"[{symbol}] 🚨 즉시 매도 신호: EMA-ATR손절(현재가≤{ema_atr_stop:,.0f})")
+            reason_prefix = "손절" if signal == 1 else "손절(본전방어)"
+            logger.warning(f"[{symbol}] 🚨 {reason_prefix}: 현재가≤{ema_atr_stop:,.0f}")
             return {
                 "action": "SELL",
-                "reasons": [
-                    "손절",
-                    f"EMA-ATR 이탈 (손절가: {ema_atr_stop:,.0f}원)"
-                ]
+                "reasons": [reason_prefix, f"손절가: {ema_atr_stop:,.0f}원"]
             }
 
         return {"action": "HOLD", "reasons": []}
@@ -410,19 +413,11 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
         cached_indicators: Dict
     ) -> Optional[Dict]:
         """
-        [2차 방어선] 장중 trailing stop 익절 신호 체크
+        장중 trailing stop 익절 신호 체크 (2단계)
 
-        고점 대비 ATR×2.0 이상 하락 시 전량 매도 (게이트 조건 없음)
-
-        Args:
-            symbol: 종목코드
-            current_price: 현재가
-            peak_price: PEAK_PRICE (DB)
-            signal: 현재 SIGNAL (1, 2)
-            cached_indicators: 실시간 증분 계산 완료된 지표
-
-        Returns:
-            {"action": "SELL_ALL", "reasons": [...]} or None
+        SIGNAL 1: 고점 - ATR×2.0 → SELL_HALF (50% 매도)
+        SIGNAL 2: 고점 - ATR×2.0 AND OBV-Z < -0.5 → SELL_ALL (잔량 전량)
+                  OBV 양호 시 → 추세 추적 계속 (매도 안 함)
         """
         curr_price = int(current_price)
 
@@ -443,7 +438,21 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
 
         if curr_price <= stop_price:
             drawdown_pct = round((updated_peak - curr_price) / updated_peak * 100, 1)
-            reason = f"익절(고점대비 -{drawdown_pct}%, 익절가 {stop_price:,.0f}원)"
-            return {"action": "SELL_ALL", "reasons": [reason]}
+
+            if signal == 1:
+                reason = f"1차익절(고점대비 -{drawdown_pct}%, 익절가 {stop_price:,.0f}원)"
+                return {"action": "SELL_HALF", "reasons": [reason]}
+
+            elif signal == 2:
+                realtime_obv_z = cached_indicators.get('realtime_obv_z', 0)
+                if realtime_obv_z < cls.OBV_Z_SELL_THRESHOLD:
+                    reason = f"2차익절(고점대비 -{drawdown_pct}%, OBV z={realtime_obv_z:.2f})"
+                    return {"action": "SELL_ALL", "reasons": [reason]}
+                else:
+                    logger.info(
+                        f"[{symbol}] 2차 익절 ATR 조건 충족이나 OBV 양호 "
+                        f"(z={realtime_obv_z:.2f} >= {cls.OBV_Z_SELL_THRESHOLD}), 추세 유지"
+                    )
+                    return None
 
         return None
