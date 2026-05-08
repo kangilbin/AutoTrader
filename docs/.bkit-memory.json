@@ -1,11 +1,19 @@
 {
-  "sessionCount": 60,
+  "sessionCount": 61,
   "lastSession": {
-    "startedAt": "2026-05-07T11:56:34.410Z",
+    "startedAt": "2026-05-08T12:37:38.137Z",
     "platform": "claude",
     "level": "Starter"
   },
   "features": {
+    "swing-reg": {
+      "phase": "archived",
+      "matchRate": 95,
+      "iterationCount": 0,
+      "startedAt": "2026-04-15T09:00:00.000Z",
+      "archivedAt": "2026-05-08T12:00:00.000Z",
+      "archivedTo": "docs/archive/2026-05/swing-reg/"
+    },
     "balance-api": {
       "phase": "archived",
       "matchRate": 100,
