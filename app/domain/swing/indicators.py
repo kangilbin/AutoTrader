@@ -102,6 +102,29 @@ class TechnicalIndicators:
             return None, None, None
 
     @staticmethod
+    def calculate_realtime_ema_from_cache(
+        yesterday_ema: float,
+        current_price: float,
+        period: int = 20
+    ) -> float:
+        """
+        캐시된 어제 EMA를 활용한 실시간 EMA 증분 계산
+
+        EMA 공식: EMA_today = (Price × K) + (EMA_yesterday × (1 - K))
+        where K = 2 / (period + 1)
+
+        Args:
+            yesterday_ema: Redis 캐시에서 가져온 어제 EMA 값
+            current_price: 현재가 (실시간)
+            period: EMA 기간 (기본값: 20)
+
+        Returns:
+            오늘 실시간 EMA 값
+        """
+        k = 2.0 / (period + 1)  # smoothing factor (20일 EMA: k ≈ 0.095)
+        return (current_price * k) + (yesterday_ema * (1 - k))
+
+    @staticmethod
     def calculate_gap_ratio(
         price: float,
         ema: float

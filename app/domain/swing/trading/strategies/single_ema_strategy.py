@@ -15,10 +15,9 @@
 
 **매도 조건 (Exit Conditions) - 이원화된 하이브리드 전략:**
 
-**[1차 방어선] 장중 즉시 매도 (5분마다 체크, OR 조건)**
+**[1차 방어선] 장중 즉시 매도 (5분마다 체크)**
 *   목표: 급락 사고 방어
 1.  **EMA-ATR 동적 손절:** 현재가 <= EMA - (ATR × 1.0)
-2.  **급격한 수급 반전:** 외국인 순매도 비율 <= -2.0%
 
 **[2차 방어선] 장 마감 매도 (매일 종가에 체크, 교차 검증)**
 *   목표: 노이즈를 제거한 추세 이탈 '확정'
@@ -35,11 +34,10 @@ import pandas as pd
 import talib as ta
 import numpy as np
 import json
+import logging
 from typing import Dict, Optional
 from decimal import Decimal
 from datetime import datetime, timedelta
-import logging
-
 from .base_trading_strategy import TradingStrategy
 from app.domain.swing.indicators import TechnicalIndicators
 
@@ -87,7 +85,6 @@ class SingleEMAStrategy(TradingStrategy):
     # 매도 조건 (이원화)
     # [1차 방어선]
     ATR_MULTIPLIER = 1.0
-    SUPPLY_REVERSAL_THRESHOLD = -2.0
     # [2차 방어선]
     EOD_SIGNAL_WINDOW_DAYS = 3  # 시간 윈도우 (3일)
     EOD_TREND_WEAK_DAYS = 2
@@ -101,13 +98,103 @@ class SingleEMAStrategy(TradingStrategy):
     # ========================================
 
     @classmethod
-    def get_realtime_ema20(cls, df: pd.DataFrame, current_price: float) -> Optional[float]:
-        if len(df) < cls.EMA_PERIOD:
+    async def _get_cached_indicators(cls, redis_client, symbol: str) -> Optional[Dict]:
+        """
+        Redis 캐시에서 지표 조회
+
+        Returns:
+            {
+                'ema20_yesterday': 50000.0,
+                'adx': 25.5,
+                'plus_di': 30.1,
+                'minus_di': 15.2,
+                'atr': 1200.0,
+                'obv_z': 1.5,
+                'date': '20260127'
+            } or None
+        """
+        try:
+            cached = await redis_client.get(f"indicators:{symbol}")
+            if not cached:
+                return None
+
+            data = json.loads(cached)
+            return {
+                'ema20_yesterday': data['ema20']['today'],  # 어제 종가 기준 EMA
+                'adx': data['adx']['today'],
+                'plus_di': data['plus_di']['today'],
+                'minus_di': data['minus_di']['today'],
+                'atr': data['atr']['today'],  # ATR
+                'obv_z': data['obv_z'],  # OBV z-score (종가 기준)
+                'date': data['date']
+            }
+        except Exception as e:
+            logger.warning(f"[{symbol}] 캐시 조회 실패: {e}")
             return None
-        close_prices = df["STCK_CLPR"].values.astype(float)
-        close_with_today = np.append(close_prices, current_price)
-        ema_array = ta.EMA(close_with_today, timeperiod=cls.EMA_PERIOD)
-        return float(ema_array[-1]) if len(ema_array) > 0 and not np.isnan(ema_array[-1]) else None
+
+    @classmethod
+    async def get_realtime_ema20(
+        cls,
+        redis_client,
+        symbol: str,
+        df: pd.DataFrame,
+        current_price: float,
+        cached_indicators: Optional[Dict] = None
+    ) -> Optional[float]:
+        """
+        최적화된 실시간 EMA20 계산 (캐시 우선)
+
+        전략:
+        1. cached_indicators 파라미터 우선 사용
+        2. 없으면 Redis 캐시에서 어제 EMA 조회 시도
+        3. 캐시 히트: 증분 계산 (O(1), 수백 배 빠름) ⚡
+        4. 캐시 미스: TA-Lib 전체 계산 (O(n), 폴백)
+
+        Args:
+            redis_client: Redis 클라이언트
+            symbol: 종목 코드
+            df: 과거 OHLCV 데이터
+            current_price: 현재가
+            cached_indicators: 미리 조회한 캐시 데이터
+
+        Returns:
+            실시간 EMA20 값
+        """
+        try:
+            # 1. 파라미터로 전달된 캐시 우선 사용
+            if not cached_indicators:
+                cached_indicators = await cls._get_cached_indicators(redis_client, symbol)
+
+            if cached_indicators:
+                yesterday_ema = cached_indicators['ema20_yesterday']
+                # 증분 계산
+                realtime_ema = TechnicalIndicators.calculate_realtime_ema_from_cache(
+                    yesterday_ema, current_price, cls.EMA_PERIOD
+                )
+                logger.debug(
+                    f"[{symbol}] EMA 캐시 히트 - 증분 계산: "
+                    f"어제={yesterday_ema:.2f} → 오늘={realtime_ema:.2f}"
+                )
+                return realtime_ema
+
+            # 2. 캐시 미스: 전체 계산 (폴백)
+            logger.debug(f"[{symbol}] EMA 캐시 미스 - TA-Lib 전체 계산")
+            if len(df) < cls.EMA_PERIOD:
+                return None
+            close_prices = df["STCK_CLPR"].values.astype(float)
+            close_with_today = np.append(close_prices, current_price)
+            ema_array = ta.EMA(close_with_today, timeperiod=cls.EMA_PERIOD)
+            return float(ema_array[-1]) if len(ema_array) > 0 and not np.isnan(ema_array[-1]) else None
+
+        except Exception as e:
+            logger.error(f"[{symbol}] 실시간 EMA 계산 실패: {e}", exc_info=True)
+            # 최종 폴백: 기존 방식
+            if len(df) < cls.EMA_PERIOD:
+                return None
+            close_prices = df["STCK_CLPR"].values.astype(float)
+            close_with_today = np.append(close_prices, current_price)
+            ema_array = ta.EMA(close_with_today, timeperiod=cls.EMA_PERIOD)
+            return float(ema_array[-1]) if len(ema_array) > 0 and not np.isnan(ema_array[-1]) else None
 
     # ========================================
     # 매수 신호 로직 (기존과 유사)
@@ -118,28 +205,50 @@ class SingleEMAStrategy(TradingStrategy):
         cls,
         redis_client,
         symbol: str,
-        df: pd.DataFrame,
+        df: Optional[pd.DataFrame],
         current_price: Decimal,
         frgn_ntby_qty: int,
         acml_vol: int,
         prdy_vrss_vol_rate: float,
-        prdy_ctrt: float
+        prdy_ctrt: float,
+        cached_indicators: Optional[Dict] = None
     ) -> Optional[Dict]:
         """1차 매수 진입 신호 체크"""
         curr_price = float(current_price)
 
         # 지표 계산
         try:
-            if 'obv_z' not in df.columns or 'adx' not in df.columns:
-                df = TechnicalIndicators.prepare_indicators_from_df(df)
-            last_row = df.iloc[-1]
-            realtime_ema20 = cls.get_realtime_ema20(df, curr_price)
-            if realtime_ema20 is None: return None
+            # 1. 캐시된 지표 조회 (ADX, DI, OBV) - 파라미터 우선 사용
+            if not cached_indicators:
+                cached_indicators = await cls._get_cached_indicators(redis_client, symbol)
 
-            obv_z = last_row.get('obv_z', 0)
-            plus_di = last_row.get('plus_di', 0)
-            minus_di = last_row.get('minus_di', 0)
+            if cached_indicators:
+                # 캐시 히트: 빠른 조회
+                plus_di = cached_indicators['plus_di']
+                minus_di = cached_indicators['minus_di']
+                obv_z = cached_indicators.get('obv_z', 0)  # OBV z-score (어제 종가 기준)
+                logger.debug(f"[{symbol}] ADX/DI/OBV 캐시 히트")
+            else:
+                # 캐시 미스: DataFrame에서 계산
+                if df is None:
+                    logger.warning(f"[{symbol}] 진입 신호 체크 불가: 캐시 미스 & df 없음")
+                    return None
+                if 'adx' not in df.columns:
+                    df = TechnicalIndicators.prepare_indicators_from_df(df)
+                last_row = df.iloc[-1]
+                plus_di = last_row.get('plus_di', 0)
+                minus_di = last_row.get('minus_di', 0)
+                obv_z = last_row.get('obv_z', 0)
+
+            # 3. 실시간 EMA (캐시 우선)
+            realtime_ema20 = await cls.get_realtime_ema20(
+                redis_client, symbol, df, curr_price, cached_indicators
+            )
+            if realtime_ema20 is None:
+                return None
+
             gap_ratio = TechnicalIndicators.calculate_gap_ratio(curr_price, realtime_ema20)
+
         except Exception as e:
             logger.error(f"[{symbol}] 매수 신호 지표 계산 실패: {e}", exc_info=True)
             return None
@@ -183,18 +292,19 @@ class SingleEMAStrategy(TradingStrategy):
         redis_client,
         position_id: int,
         symbol: str,
-        df: pd.DataFrame,
+        df: Optional[pd.DataFrame],
         current_price: Decimal,
         entry_price: Decimal,
         frgn_ntby_qty: int,
-        acml_vol: int
+        acml_vol: int,
+        cached_indicators: Optional[Dict] = None
     ) -> Dict:
         """
         매도 신호 체크 (베이스 클래스 구현)
         실제로는 check_immediate_sell_signal을 호출합니다.
         """
         result = await cls.check_immediate_sell_signal(
-            symbol, df, current_price, entry_price, frgn_ntby_qty, acml_vol
+            redis_client, symbol, df, current_price, cached_indicators
         )
         return result if result else {"action": "HOLD", "reason": "매도 조건 미충족"}
 
@@ -206,13 +316,14 @@ class SingleEMAStrategy(TradingStrategy):
         redis_client,
         swing_id: int,
         symbol: str,
-        df: pd.DataFrame,
+        df: Optional[pd.DataFrame],
         entry_price: Decimal,
         hold_qty: int,
         current_price: Decimal,
         frgn_ntby_qty: int,
         acml_vol: int,
-        prdy_vrss_vol_rate: float
+        prdy_vrss_vol_rate: float,
+        cached_indicators: Optional[Dict] = None
     ) -> Optional[Dict]:
         """
         2차 매수 신호 체크 (하이브리드: 추세 강화형 + 눌림목 반등)
@@ -222,7 +333,6 @@ class SingleEMAStrategy(TradingStrategy):
         """
         try:
             curr_price = float(current_price)
-            entry = float(entry_price)
 
             # 시간 필터: 1차 매수 후 최소 20분 경과 체크
             time_key = f"first_buy_time:{swing_id}"
@@ -230,20 +340,49 @@ class SingleEMAStrategy(TradingStrategy):
                 return None  # 키 존재 = 20분 미경과 → 2차 매수 불가
 
             # 지표 계산
-            if 'obv_z' not in df.columns or 'adx' not in df.columns or 'atr' not in df.columns:
-                df = TechnicalIndicators.prepare_indicators_from_df(df, atr_period=14)
+            # 1. 캐시된 지표 조회 (ADX, DI, ATR) - 파라미터 우선
+            if not cached_indicators:
+                cached_indicators = await cls._get_cached_indicators(redis_client, symbol)
 
-            last_row = df.iloc[-1]
-            realtime_ema20 = cls.get_realtime_ema20(df, curr_price)
+            if cached_indicators:
+                # 캐시 히트: 빠른 조회
+                adx = cached_indicators['adx']
+                plus_di = cached_indicators['plus_di']
+                minus_di = cached_indicators['minus_di']
+                atr = cached_indicators.get('atr')
+                obv_z = cached_indicators.get('obv_z', 0)  # OBV z-score (어제 종가 기준)
+            else:
+                # 캐시 미스: DataFrame에서 계산
+                if df is None:
+                    logger.warning(f"[{symbol}] 2차 매수 체크 불가: 캐시 미스 & df 없음")
+                    return None
+                if 'adx' not in df.columns:
+                    df = TechnicalIndicators.prepare_indicators_from_df(df, atr_period=14)
+                last_row = df.iloc[-1]
+                adx = last_row.get('adx', 0)
+                plus_di = last_row.get('plus_di', 0)
+                minus_di = last_row.get('minus_di', 0)
+                atr = None
+                obv_z = last_row.get('obv_z', 0)
+
+            # ATR이 캐시에 없으면 DataFrame에서 가져옴
+            if atr is None:
+                if df is None:
+                    logger.warning(f"[{symbol}] 2차 매수 체크 불가: ATR 없음 (캐시 미스 & df 없음)")
+                    return None
+                if 'atr' not in df.columns:
+                    df = TechnicalIndicators.prepare_indicators_from_df(df, atr_period=14)
+                last_row = df.iloc[-1]
+                atr = last_row.get('atr', 0)
+
+            frgn_ratio = (frgn_ntby_qty / acml_vol * 100) if acml_vol > 0 else 0
+
+            # 3. 실시간 EMA (캐시 우선)
+            realtime_ema20 = await cls.get_realtime_ema20(
+                redis_client, symbol, df, curr_price, cached_indicators
+            )
             if realtime_ema20 is None:
                 return None
-
-            obv_z = last_row.get('obv_z', 0)
-            atr = last_row.get('atr', 0)
-            adx = last_row.get('adx', 0)
-            plus_di = last_row.get('plus_di', 0)
-            minus_di = last_row.get('minus_di', 0)
-            frgn_ratio = (frgn_ntby_qty / acml_vol * 100) if acml_vol > 0 else 0
 
             # === 시나리오 A: 추세 강화형 ===
             # 가격 가드레일: EMA + ATR × (0.3 ~ 2.5)
@@ -313,41 +452,49 @@ class SingleEMAStrategy(TradingStrategy):
     @classmethod
     async def check_immediate_sell_signal(
         cls,
+        redis_client,
         symbol: str,
-        df: pd.DataFrame,
+        df: Optional[pd.DataFrame],
         current_price: Decimal,
-        entry_price: Decimal,
-        frgn_ntby_qty: int,
-        acml_vol: int
+        cached_indicators: Optional[Dict] = None
     ) -> Optional[Dict]:
         """
-        [1차 방어선] 장중 즉시 매도 신호 체크 (OR 조건)
+        [1차 방어선] 장중 즉시 매도 신호 체크
         - trade_job (5분 주기)에서 호출
+        - 조건: EMA-ATR 동적 손절만 사용 (백테스팅과 일치)
         """
         curr_price = float(current_price)
-        entry = float(entry_price)
-        reasons = []
 
-        # 조건 1: EMA-ATR 동적 손절
-        realtime_ema20 = cls.get_realtime_ema20(df, curr_price)
-        if realtime_ema20:
+        # EMA-ATR 동적 손절
+        realtime_ema20 = await cls.get_realtime_ema20(
+            redis_client, symbol, df, curr_price, cached_indicators
+        )
+        if not realtime_ema20:
+            return {"action": "HOLD", "reason": "EMA 계산 실패"}
+
+        # ATR 조회 (파라미터 우선)
+        if not cached_indicators:
+            cached_indicators = await cls._get_cached_indicators(redis_client, symbol)
+
+        if cached_indicators and cached_indicators.get('atr'):
+            atr = cached_indicators['atr']
+            logger.debug(f"[{symbol}] ATR 캐시 히트: {atr:.2f}")
+        else:
+            # 캐시 미스: DataFrame에서 계산
+            if df is None:
+                logger.warning(f"[{symbol}] 즉시 매도 체크 불가: 캐시 미스 & df 없음")
+                return {"action": "HOLD", "reason": "ATR 계산 실패 (캐시 미스)"}
             if 'atr' not in df.columns:
                 df = TechnicalIndicators.prepare_indicators_from_df(df, atr_period=14)
-            if 'atr' in df.columns and not df['atr'].isna().all():
-                atr = float(df['atr'].iloc[-1])
-                ema_atr_stop = realtime_ema20 - (atr * cls.ATR_MULTIPLIER)
-                if curr_price <= ema_atr_stop:
-                    reasons.append(f"EMA-ATR손절(현재가≤{ema_atr_stop:,.0f})")
+            if 'atr' not in df.columns or df['atr'].isna().all():
+                return {"action": "HOLD", "reason": "ATR 계산 실패"}
+            atr = float(df['atr'].iloc[-1])
+            logger.debug(f"[{symbol}] ATR 캐시 미스 - DataFrame 계산: {atr:.2f}")
 
-        # 조건 2: 급격한 수급 반전
-        frgn_ratio = (frgn_ntby_qty / acml_vol * 100) if acml_vol > 0 else 0
-        if frgn_ratio <= cls.SUPPLY_REVERSAL_THRESHOLD:
-            reasons.append(f"수급반전(외국인={frgn_ratio:.1f}%)")
-
-        if reasons:
-            reason_str = " + ".join(reasons)
-            logger.warning(f"[{symbol}] 🚨 즉시 매도 신호: {reason_str}")
-            return {"action": "SELL", "reason": f"즉시매도: {reason_str}"}
+        ema_atr_stop = realtime_ema20 - (atr * cls.ATR_MULTIPLIER)
+        if curr_price <= ema_atr_stop:
+            logger.warning(f"[{symbol}] 🚨 즉시 매도 신호: EMA-ATR손절(현재가≤{ema_atr_stop:,.0f})")
+            return {"action": "SELL", "reason": f"즉시매도: EMA-ATR손절(현재가≤{ema_atr_stop:,.0f})"}
 
         return {"action": "HOLD", "reason": "즉시 매도 조건 미충족"}
 

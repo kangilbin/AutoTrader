@@ -90,7 +90,6 @@ class SingleEMABacktestStrategy(BacktestStrategy):
 
         # === 상태 추적 변수 ===
         position_status = None  # None, 'BUY_COMPLETE', 'SELL_PRIMARY'
-        entry_price = 0.0
         first_sell_price = 0.0
         buy_count = 0
 
@@ -151,7 +150,7 @@ class SingleEMABacktestStrategy(BacktestStrategy):
                        is_entry = True
                        buy_amount = current_capital * buy_ratio
                 else: # 2차 매수
-                    if self._check_second_buy_conditions(row, entry_price):
+                    if self._check_second_buy_conditions(row):
                         is_entry = True
                         buy_amount = current_capital
 
@@ -166,7 +165,6 @@ class SingleEMABacktestStrategy(BacktestStrategy):
                             curr_qty, curr_avg_cost = self._calculate_position_state(trades)
                             total_cost = (curr_avg_cost * curr_qty) + (buy_quantity * buy_price)
                             total_qty = curr_qty + buy_quantity
-                            entry_price = total_cost / total_qty
 
                         current_capital = self._execute_buy(trades, current_date, buy_price, buy_quantity, current_capital, f"{buy_count+1}차 매수")
                         buy_count += 1
@@ -288,13 +286,12 @@ class SingleEMABacktestStrategy(BacktestStrategy):
 
         price_near_ema = row["STCK_CLPR"] >= row["ema_20"] * 0.995
         supply_strong = row["obv_z"] > self.OBV_Z_BUY_THRESHOLD
-        # surge_filtered = row["daily_return"] <= self.MAX_SURGE_RATIO
         gap_filtered = row["gap_ratio"] <= self.MAX_GAP_RATIO
         trend_upward = row["plus_di"] > row["minus_di"]
 
         return all([price_near_ema, supply_strong, gap_filtered, trend_upward])
 
-    def _check_second_buy_conditions(self, row: pd.Series, entry_price: float) -> bool:
+    def _check_second_buy_conditions(self, row: pd.Series) -> bool:
         """하이브리드 2차 매수: 추세 강화형 + 눌림목 반등 (EMA-ATR 가드레일)"""
         if any(pd.isna(row[col]) for col in ["ema_20", "obv_z", "atr", "adx", "plus_di", "minus_di"]):
             return False
