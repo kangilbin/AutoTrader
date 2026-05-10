@@ -170,16 +170,6 @@ class SwingService:
             result = await self.repo.update(swing_id, data)
             await self.db.commit()
 
-            # USE_YN 활성화 시 데이터 적재 여부 확인
-            if data.get("USE_YN") == "Y" and user_id:
-                stock_service = StockService(self.db)
-                stock_info = await stock_service.get_stock_info(swing.MRKT_CODE, swing.ST_CODE)
-                if stock_info.get("DATA_YN") != "Y":
-                    asyncio.create_task(
-                        self._fetch_and_cache(user_id, swing.MRKT_CODE, swing.ST_CODE, stock_info)
-                    )
-                    logger.info(f"[{swing.MRKT_CODE}/{swing.ST_CODE}] 활성화 - 데이터 적재 + 캐싱 백그라운드 태스크 시작")
-
             return SwingResponse.model_validate(result).model_dump()
         except SQLAlchemyError as e:
             await self.db.rollback()
@@ -215,6 +205,7 @@ class SwingService:
 
             swing_dict = {swing["ST_CODE"]: swing for swing in swing_list}
             buy_dict = {item.get("pdno"): item for item in buy_list if item.get("pdno")}
+            stock_service = StockService(self.db)
             results = []
 
             # 1. buy_list 기준으로 처리 (기존 로직)
@@ -224,51 +215,86 @@ class SwingService:
                     continue
 
                 if st_code not in swing_dict:
-                    # 새 스윙 등록
-                    mrkt_code = mrkt_code if mrkt_code == "NASD" else buy_item.get("mrkt_code", "J")
-                    swing = SwingTrade.create(
-                        account_no=account_no,
-                        mrkt_code=mrkt_code,
-                        st_code=st_code,
-                        init_amount=Decimal(0),
-                        swing_type='S'
-                    )
-                    swing.USE_YN = 'N'
-                    db_swing = await self.repo.save(swing)
+                    # 새 스윙 등록 — 매입금액을 초기 투자금으로 설정
+                    item_mrkt_code = mrkt_code if mrkt_code == "NASD" else buy_item.get("mrkt_code", "J")
+                    pchs_amt = Decimal(buy_item.get("pchs_amt", 0))
+                    try:
+                        async with self.db.begin_nested():
+                            swing = SwingTrade.create(
+                                account_no=account_no,
+                                mrkt_code=item_mrkt_code,
+                                st_code=st_code,
+                                init_amount=pchs_amt,
+                                swing_type='S'
+                            )
+                            swing.CUR_AMOUNT = Decimal(0)  # 이미 매수 완료 상태
+                            swing.ENTRY_PRICE = Decimal(buy_item.get("pchs_avg_pric", 0))
+                            swing.HOLD_QTY = int(buy_item.get("hldg_qty", 0))
+                            swing.USE_YN = 'N'
+                            db_swing = await self.repo.save(swing)
+                    except IntegrityError:
+                        db_swing = await self.repo.find_by_account_and_stock(account_no, item_mrkt_code, st_code)
+                        if not db_swing:
+                            continue
+
+                    # 주가 데이터 적재 여부 확인 후 백그라운드 적재
+                    stock_info = await stock_service.get_stock_info(item_mrkt_code, st_code)
+                    if stock_info.get("DATA_YN") != 'Y':
+                        asyncio.create_task(
+                            self._fetch_and_cache(user_id, item_mrkt_code, st_code, stock_info)
+                        )
+                        logger.info(f"[{item_mrkt_code}/{st_code}] 매핑 등록 - 데이터 적재 백그라운드 태스크 시작")
+
                     swing_result = SwingResponse.model_validate(db_swing).model_dump()
                     result_data = {
                         **swing_result,
                         "ST_NM": buy_item.get("prdt_name"),
                         "HLDG_QTY": buy_item.get("hldg_qty"),
                         "EVLU_AMT": buy_item.get("evlu_amt"),
+                        "EVLU_PFLS_RT": float(buy_item.get("evlu_pfls_rt", 0)),
+                        "EVLU_PFLS_AMT": int(buy_item.get("evlu_pfls_amt", 0)),
                     }
                     results.append(result_data)
                 else:
                     # 기존 데이터 merge
                     data = swing_dict[st_code]
-                    init_amount = data["INIT_AMOUNT"] if data["INIT_AMOUNT"] else 1
                     evlu_amt = int(buy_item.get("evlu_amt", 0))
-                    total_asset = data["CUR_AMOUNT"] + evlu_amt
-                    rate = float((total_asset - init_amount) / init_amount * 100)
+
+                    if data["INIT_AMOUNT"]:
+                        # INIT_AMOUNT > 0: 자체 계산 (서비스에서 등록/매매한 종목)
+                        init_amount = data["INIT_AMOUNT"]
+                        total_asset = data["CUR_AMOUNT"] + evlu_amt
+                        rate = float((total_asset - init_amount) / init_amount * 100)
+                        pfls_amt = total_asset - init_amount
+                    else:
+                        # INIT_AMOUNT = 0: KIS API 값 사용 (외부 매수 자동 등록 종목)
+                        rate = float(buy_item.get("evlu_pfls_rt", 0))
+                        pfls_amt = int(buy_item.get("evlu_pfls_amt", 0))
+
                     result_data = {
                         **data,
                         "ST_NM": buy_item.get("prdt_name"),
                         "HLDG_QTY": buy_item.get("hldg_qty"),
                         "EVLU_AMT": evlu_amt,
                         "EVLU_PFLS_RT": rate,
-                        "EVLU_PFLS_AMT": total_asset - init_amount,
+                        "EVLU_PFLS_AMT": pfls_amt,
                     }
                     results.append(result_data)
 
             # 2. swing_list에만 있는 항목 추가 (보유 주식 없음, evlu_amt = 0)
             for swing in swing_list:
                 if swing["ST_CODE"] not in buy_dict:
-                    init_amount = swing["INIT_AMOUNT"] if swing["INIT_AMOUNT"] else 1
-                    rate = float((swing["CUR_AMOUNT"] - init_amount) / init_amount * 100)
+                    if swing["INIT_AMOUNT"]:
+                        init_amount = swing["INIT_AMOUNT"]
+                        rate = float((swing["CUR_AMOUNT"] - init_amount) / init_amount * 100)
+                        pfls_amt = swing["CUR_AMOUNT"] - init_amount
+                    else:
+                        rate = 0.0
+                        pfls_amt = 0
                     result_data = {
                         **swing,
                         "EVLU_PFLS_RT": rate,
-                        "EVLU_PFLS_AMT": swing["CUR_AMOUNT"] - init_amount,
+                        "EVLU_PFLS_AMT": pfls_amt,
                     }
                     results.append(result_data)
 
@@ -306,88 +332,100 @@ class SwingService:
         """활성화된 해외 스윙 목록 조회"""
         return await self.repo.find_active_overseas_swings()
 
-    async def cache_single_indicators(self, mrkt_code: str, st_code: str) -> bool:
-        """
-        단일 종목 지표 캐싱 (스윙 등록 시 호출)
+    async def _calculate_indicators(self, mrkt_code: str, st_code: str, include_prev: bool = False) -> dict | None:
+        """지표 계산 공통 로직
 
         Args:
             mrkt_code: 시장 코드
             st_code: 종목 코드
+            include_prev: 전전일 데이터 포함 여부
 
         Returns:
-            캐싱 성공 여부
+            지표 데이터 dict 또는 None (데이터 부족/검증 실패 시)
         """
+        stock_service = StockService(self.db)
+        start_date = datetime.now() - relativedelta(years=3)
+        price_history = await stock_service.get_stock_history(mrkt_code, st_code, start_date)
 
-        try:
-            stock_service = StockService(self.db)
-            redis_client = await Redis.get_connection()
-
-            # 과거 3년 데이터 조회
-            start_date = datetime.now() - relativedelta(years=3)
-            price_history = await stock_service.get_stock_history(mrkt_code, st_code, start_date)
-
-            if not price_history or len(price_history) < 20:
-                logger.warning(
-                    f"[{st_code}] 지표 캐싱 스킵 - 데이터 부족: "
-                    f"{len(price_history) if price_history else 0}일"
-                )
-                return False
-
-            # 지표 계산
-            df = pd.DataFrame(price_history)
-
-            # 일평균 거래대금 계산 (최근 20일)
-            recent_20 = df.tail(20) if len(df) >= 20 else df
-            avg_daily_amount = float(
-                (recent_20['ACML_VOL'].astype(float) * recent_20['STCK_CLPR'].astype(float)).mean()
+        if not price_history or len(price_history) < 20:
+            logger.warning(
+                f"[{st_code}] 데이터 부족: "
+                f"{len(price_history) if price_history else 0}일"
             )
+            return None
 
-            indicators = TechnicalIndicators.prepare_indicators_from_df(df)
+        df = pd.DataFrame(price_history)
 
-            if len(indicators) < 8:
-                logger.warning(f"[{st_code}] 지표 데이터 부족 (8일 미만, OBV z-score 계산 불가)")
+        # 일평균 거래대금 계산 (최근 20일)
+        recent_20 = df.tail(20) if len(df) >= 20 else df
+        avg_daily_amount = float(
+            (recent_20['ACML_VOL'].astype(float) * recent_20['STCK_CLPR'].astype(float)).mean()
+        )
+
+        indicators = TechnicalIndicators.prepare_indicators_from_df(df)
+
+        if len(indicators) < 8:
+            logger.warning(f"[{st_code}] 지표 데이터 부족 (8일 미만, OBV z-score 계산 불가)")
+            return None
+
+        yesterday = indicators.iloc[-1]
+        required_cols = ['ema_20', 'adx', 'plus_di', 'minus_di', 'atr', 'obv', 'obv_z']
+        if not all(col in yesterday.index for col in required_cols):
+            logger.warning(f"[{st_code}] 필수 지표 누락")
+            return None
+
+        if any(pd.isna(yesterday[col]) for col in required_cols):
+            logger.warning(f"[{st_code}] 지표 값 NaN")
+            return None
+
+        # OBV diff 최근 6일 추출 (NaN 필터링)
+        obv_diffs = indicators['obv'].diff()
+        recent_6_diffs = [float(x) for x in obv_diffs.iloc[-6:].tolist() if not pd.isna(x)]
+
+        # DM14 역산 (+DM14 = +DI × ATR / 100)
+        atr = float(yesterday['atr'])
+        plus_dm14 = (float(yesterday['plus_di']) * atr) / 100
+        minus_dm14 = (float(yesterday['minus_di']) * atr) / 100
+
+        indicators_data = {
+            "ema20": float(yesterday['ema_20']),
+            "adx": float(yesterday['adx']),
+            "plus_dm14": plus_dm14,
+            "minus_dm14": minus_dm14,
+            "atr": atr,
+            "obv": float(yesterday['obv']),
+            "obv_z": float(yesterday['obv_z']),
+            "obv_recent_diffs": recent_6_diffs,
+            "close": float(yesterday['STCK_CLPR']),
+            "open": float(yesterday['STCK_OPRC']),
+            "high": float(yesterday['STCK_HGPR']),
+            "low": float(yesterday['STCK_LWPR']),
+            "date": yesterday['STCK_BSOP_DATE'],
+            "avg_daily_amount": avg_daily_amount,
+        }
+
+        if include_prev and len(indicators) >= 2:
+            prev_prev = indicators.iloc[-2]
+            indicators_data.update({
+                "prev_ema20": float(prev_prev['ema_20']) if not pd.isna(prev_prev['ema_20']) else None,
+                "prev_plus_di": float(prev_prev['plus_di']) if not pd.isna(prev_prev['plus_di']) else None,
+                "prev_minus_di": float(prev_prev['minus_di']) if not pd.isna(prev_prev['minus_di']) else None,
+                "prev_obv_z": float(prev_prev['obv_z']) if not pd.isna(prev_prev['obv_z']) else None,
+            })
+
+        return indicators_data
+
+    async def cache_single_indicators(self, mrkt_code: str, st_code: str) -> bool:
+        """단일 종목 지표 캐싱 (스윙 등록 시 호출)"""
+        try:
+            redis_client = await Redis.get_connection()
+            indicators_data = await self._calculate_indicators(mrkt_code, st_code)
+            if not indicators_data:
                 return False
-
-            yesterday = indicators.iloc[-1]
-            required_cols = ['ema_20', 'adx', 'plus_di', 'minus_di', 'atr', 'obv', 'obv_z']
-            if not all(col in yesterday.index for col in required_cols):
-                logger.warning(f"[{st_code}] 필수 지표 누락")
-                return False
-
-            if any(pd.isna(yesterday[col]) for col in required_cols):
-                logger.warning(f"[{st_code}] 지표 값 NaN")
-                return False
-
-            # OBV diff 최근 6일 추출 (NaN 필터링) - 어제 diff 포함하여 연속 윈도우 구성
-            obv_diffs = indicators['obv'].diff()
-            recent_6_diffs = [float(x) for x in obv_diffs.iloc[-6:].tolist() if not pd.isna(x)]
-
-            # DM14 역산 (+DM14 = +DI × ATR / 100)
-            atr = float(yesterday['atr'])
-            plus_dm14 = (float(yesterday['plus_di']) * atr) / 100
-            minus_dm14 = (float(yesterday['minus_di']) * atr) / 100
-
-            # 평탄화된 캐시 구조 (cache_single_indicators와 동일)
-            indicators_data = {
-                "ema20": float(yesterday['ema_20']),
-                "adx": float(yesterday['adx']),
-                "plus_dm14": plus_dm14,      # 중간값 저장 (실시간 계산용)
-                "minus_dm14": minus_dm14,    # 중간값 저장 (실시간 계산용)
-                "atr": atr,
-                "obv": float(yesterday['obv']),
-                "obv_z": float(yesterday['obv_z']),
-                "obv_recent_diffs": recent_6_diffs,
-                "close": float(yesterday['STCK_CLPR']),
-                "open": float(yesterday['STCK_OPRC']),   # 어제 시가
-                "high": float(yesterday['STCK_HGPR']),  # 어제 고가
-                "low": float(yesterday['STCK_LWPR']),   # 어제 저가
-                "date": yesterday['STCK_BSOP_DATE'],
-                "avg_daily_amount": avg_daily_amount,  # 일평균 거래대금 (체결 분할용)
-            }
 
             now = datetime.now()
-            target = datetime.combine(now.date(), time(16, 0))  # 오늘 오후 4시
-            ttl = max(int((target - now).total_seconds()), 60)  # 최소 60초 (방어 코드)
+            target = datetime.combine(now.date(), time(16, 0))
+            ttl = max(int((target - now).total_seconds()), 60)
 
             await redis_client.setex(
                 f"indicators:{st_code}",
@@ -399,8 +437,7 @@ class SwingService:
                 f"[{st_code}] 지표 캐싱 완료: EMA={indicators_data['ema20']:.2f}, "
                 f"ADX={indicators_data['adx']:.1f}, "
                 f"ATR={indicators_data['atr']:.2f}, "
-                f"OBV_Z={indicators_data['obv_z']:.2f} "
-                f"(데이터: {len(price_history)}일)"
+                f"OBV_Z={indicators_data['obv_z']:.2f}"
             )
             return True
 
@@ -418,6 +455,7 @@ class SwingService:
 
         Args:
             redis_client: Redis 클라이언트
+            overseas_only: 해외 종목만 워밍업 여부
 
         Returns:
             워밍업 결과 (성공/실패 건수)
@@ -425,7 +463,6 @@ class SwingService:
 
         logger.info("=== 지표 캐시 워밍업 시작 (EMA20, ADX, DI) ===")
 
-        stock_service = StockService(self.db)
         success_count = 0
         fail_count = 0
 
@@ -443,89 +480,14 @@ class SwingService:
             # 2. 각 종목별 지표 계산 및 캐싱
             for mrkt_code, st_code in active_codes:
                 try:
-                    # 과거 3년 데이터 조회
-                    start_date = datetime.now() - relativedelta(years=3)
-                    price_history = await stock_service.get_stock_history(mrkt_code, st_code, start_date)
-
-                    if not price_history or len(price_history) < 20:
-                        logger.warning(
-                            f"[{st_code}] 데이터 부족: "
-                            f"{len(price_history) if price_history else 0}일"
-                        )
+                    indicators_data = await self._calculate_indicators(mrkt_code, st_code, include_prev=True)
+                    if not indicators_data:
                         fail_count += 1
                         continue
-
-                    # 지표 계산
-                    df = pd.DataFrame(price_history)
-
-                    # 일평균 거래대금 계산 (최근 20일)
-                    recent_20 = df.tail(20) if len(df) >= 20 else df
-                    avg_daily_amount = float(
-                        (recent_20['ACML_VOL'].astype(float) * recent_20['STCK_CLPR'].astype(float)).mean()
-                    )
-
-                    indicators = TechnicalIndicators.prepare_indicators_from_df(df)
-
-                    if len(indicators) < 8:
-                        logger.warning(f"[{st_code}] 지표 데이터 부족 (8일 미만, OBV z-score 계산 불가)")
-                        fail_count += 1
-                        continue
-
-                    # 어제 데이터 추출 (실전 거래에서 사용할 기준)
-                    yesterday = indicators.iloc[-1]
-
-                    # 필수 지표 존재 여부 확인
-                    required_cols = ['ema_20', 'adx', 'plus_di', 'minus_di', 'atr', 'obv', 'obv_z']
-                    if not all(col in yesterday.index for col in required_cols):
-                        logger.warning(f"[{st_code}] 필수 지표 누락")
-                        fail_count += 1
-                        continue
-
-                    # NaN 체크
-                    if any(pd.isna(yesterday[col]) for col in required_cols):
-                        logger.warning(f"[{st_code}] 지표 값 NaN")
-                        fail_count += 1
-                        continue
-
-                    # OBV diff 최근 6일 추출 (NaN 필터링) - 어제 diff 포함하여 연속 윈도우 구성
-                    obv_diffs = indicators['obv'].diff()
-                    recent_6_diffs = [x for x in obv_diffs.iloc[-6:].tolist() if not pd.isna(x)]
-
-                    # DM14 역산 (+DM14 = +DI × ATR / 100)
-                    atr = float(yesterday['atr'])
-                    plus_dm14 = (float(yesterday['plus_di']) * atr) / 100
-                    minus_dm14 = (float(yesterday['minus_di']) * atr) / 100
-
-                    # 전전일 데이터 추출 (2차 방어선 게이트 조건용)
-                    prev_prev = indicators.iloc[-2]
-
-                    # 평탄화된 캐시 구조 (cache_single_indicators와 동일)
-                    ema20 = float(yesterday['ema_20'])
-                    indicators_data = {
-                        "ema20": ema20,
-                        "adx": float(yesterday['adx']),
-                        "plus_dm14": plus_dm14,      # 중간값 저장
-                        "minus_dm14": minus_dm14,    # 중간값 저장
-                        "atr": atr,
-                        "obv": float(yesterday['obv']),
-                        "obv_z": float(yesterday['obv_z']),
-                        "obv_recent_diffs": [float(x) for x in recent_6_diffs],
-                        "close": float(yesterday['STCK_CLPR']),
-                        "open": float(yesterday['STCK_OPRC']),   # 어제 시가
-                        "high": float(yesterday['STCK_HGPR']),  # 어제 고가
-                        "low": float(yesterday['STCK_LWPR']),   # 어제 저가
-                        "date": yesterday['STCK_BSOP_DATE'],
-                        "avg_daily_amount": avg_daily_amount,   # 일평균 거래대금 (체결 분할용)
-                        # 전전일 데이터 (공통 필터 + 2차 방어선 게이트)
-                        "prev_ema20": float(prev_prev['ema_20']) if not pd.isna(prev_prev['ema_20']) else None,
-                        "prev_plus_di": float(prev_prev['plus_di']) if not pd.isna(prev_prev['plus_di']) else None,
-                        "prev_minus_di": float(prev_prev['minus_di']) if not pd.isna(prev_prev['minus_di']) else None,
-                        "prev_obv_z": float(prev_prev['obv_z']) if not pd.isna(prev_prev['obv_z']) else None,
-                    }
 
                     now = datetime.now()
-                    target = datetime.combine(now.date(), time(16, 0))  # 오늘 오후 4시
-                    ttl = max(int((target - now).total_seconds()), 60)  # 최소 60초 (방어 코드)
+                    target = datetime.combine(now.date(), time(16, 0))
+                    ttl = max(int((target - now).total_seconds()), 60)
 
                     await redis_client.setex(
                         f"indicators:{st_code}",
@@ -534,14 +496,13 @@ class SwingService:
                     )
 
                     logger.info(
-                        f"[{st_code}] 지표 캐싱 완료: EMA={ema20:.2f}, "
+                        f"[{st_code}] 지표 캐싱 완료: EMA={indicators_data['ema20']:.2f}, "
                         f"ADX={indicators_data['adx']:.1f}, "
                         f"+DM14={indicators_data['plus_dm14']:.2f}, "
                         f"-DM14={indicators_data['minus_dm14']:.2f}, "
                         f"ATR={indicators_data['atr']:.2f}, "
                         f"OBV={indicators_data['obv']:.0f}, "
-                        f"OBV_Z={indicators_data['obv_z']:.2f} "
-                        f"(데이터: {len(price_history)}일)"
+                        f"OBV_Z={indicators_data['obv_z']:.2f}"
                     )
                     success_count += 1
 

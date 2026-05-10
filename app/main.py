@@ -49,7 +49,7 @@ async def lifespan(app: FastAPI):
     # EMA 캐시 워밍업 (애플리케이션 시작 시 1회 실행)
     await _warmup_ema_cache()
 
-    await schedule_start()
+    # await schedule_start()
 
     logger.info("AutoTrader API started successfully")
 

@@ -1,6 +1,6 @@
 {
   "version": "2.0",
-  "lastUpdated": "2026-05-08T12:42:25.798Z",
+  "lastUpdated": "2026-05-09T12:30:21.521Z",
   "activeFeatures": [
     "foreign-swing",
     "foreign-stock",
@@ -122,7 +122,7 @@
       "documents": {},
       "timestamps": {
         "started": "2026-02-28T03:36:02.099Z",
-        "lastUpdated": "2026-05-08T12:42:25.798Z"
+        "lastUpdated": "2026-05-09T12:30:21.520Z"
       },
       "lastFile": "/Users/apple/IdeaProjects/AutoTrader/app/domain/swing/service.py"
     },
@@ -200,9 +200,9 @@
       "documents": {},
       "timestamps": {
         "started": "2026-03-13T06:07:09.839Z",
-        "lastUpdated": "2026-03-21T07:28:04.468Z"
+        "lastUpdated": "2026-05-09T11:13:36.619Z"
       },
-      "lastFile": "/Users/apple/IdeaProjects/AutoTrader/app/domain/routers/__init__.py"
+      "lastFile": "/Users/apple/IdeaProjects/AutoTrader/app/domain/routers/backtest_router.py"
     },
     "AutoTrader": {
       "phase": "do",
@@ -387,7 +387,7 @@
   "session": {
     "startedAt": "2026-02-28T03:08:34.644Z",
     "onboardingCompleted": false,
-    "lastActivity": "2026-05-08T12:42:25.798Z"
+    "lastActivity": "2026-05-09T12:30:21.521Z"
   },
   "history": [
     {
@@ -3698,6 +3698,108 @@
     },
     {
       "timestamp": "2026-05-08T12:42:25.798Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-09T10:21:50.990Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-09T10:22:07.661Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-09T10:28:37.540Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-09T10:41:46.588Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-09T10:41:57.007Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-09T10:42:05.385Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-09T10:57:32.171Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-09T11:01:26.324Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-09T11:13:28.615Z",
+      "feature": "domain",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-09T11:13:36.619Z",
+      "feature": "domain",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-09T11:21:45.423Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-09T11:21:53.640Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-09T11:23:14.911Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-09T11:24:42.303Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-09T11:24:49.793Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-09T12:29:02.441Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-09T12:30:21.520Z",
       "feature": "swing",
       "phase": "do",
       "action": "updated"

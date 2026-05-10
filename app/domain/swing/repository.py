@@ -26,6 +26,16 @@ class SwingRepository:
         result = await self.db.execute(query)
         return result.scalars().first()
 
+    async def find_by_account_and_stock(self, account_no: str, mrkt_code: str, st_code: str) -> Optional[SwingTrade]:
+        """계좌번호 + 시장코드 + 종목코드로 스윙 조회"""
+        query = select(SwingTrade).filter(
+            SwingTrade.ACCOUNT_NO == account_no,
+            SwingTrade.MRKT_CODE == mrkt_code,
+            SwingTrade.ST_CODE == st_code
+        )
+        result = await self.db.execute(query)
+        return result.scalars().first()
+
     async def find_all_by_account_no(self, account_no: str, mrkt_code: str = None) -> List[dict]:
         """계좌번호로 스윙 목록 조회"""
         query = (

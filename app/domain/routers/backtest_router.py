@@ -11,6 +11,7 @@ from app.domain.swing.schemas import SwingCreateRequest
 from app.domain.swing.backtest.backtest_service import run_backtest
 from app.core.response import success_response
 from app.exceptions import DatabaseError
+from app.exceptions.base import AppError
 
 router = APIRouter(prefix="/backtesting", tags=["Backtest"])
 
@@ -25,5 +26,7 @@ async def request_backtest(
     try:
         result = await run_backtest(db, swing)
         return success_response("백테스팅 완료", result)
+    except AppError:
+        raise
     except Exception as e:
         raise DatabaseError("백테스팅 처리 중 오류가 발생했습니다", operation="backtest", original_error=e)
