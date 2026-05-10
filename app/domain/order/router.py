@@ -8,7 +8,7 @@ from app.common.database import get_db
 from app.common.dependencies import get_current_user
 from app.core.response import success_response
 from app.domain.order.service import OrderService
-from app.domain.order.schemas import OrderModifyRequest
+from app.domain.order.schemas import OrderModifyRequest, SellAllRequest
 
 router = APIRouter(prefix="/orders", tags=["Orders"])
 
@@ -28,6 +28,17 @@ async def list_cancelable_orders(
     """정정/취소 가능 주문 내역 조회"""
     result = await service.get_cancelable_orders(user_id, fk100, nk100)
     return success_response("주문 내역 조회", result)
+
+
+@router.post("/sell-all")
+async def sell_all(
+    request: SellAllRequest,
+    service: Annotated[OrderService, Depends(get_order_service)],
+    user_id: Annotated[str, Depends(get_current_user)]
+):
+    """전량 매도 주문"""
+    result = await service.sell_all(user_id, request)
+    return success_response("전량 매도 주문 완료", result)
 
 
 @router.patch("/{order_no}")

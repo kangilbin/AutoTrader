@@ -1,6 +1,6 @@
 {
   "version": "2.0",
-  "lastUpdated": "2026-05-09T12:30:21.521Z",
+  "lastUpdated": "2026-05-10T04:15:17.160Z",
   "activeFeatures": [
     "foreign-swing",
     "foreign-stock",
@@ -24,7 +24,8 @@
     "foreign-swing Gap 분석 결과 저장",
     "stock-data Gap 분석 완료",
     "swing-reg Gap 분석 완료",
-    "backtest"
+    "backtest",
+    "sell-all Gap 분석"
   ],
   "primaryFeature": "swing-trade",
   "features": {
@@ -161,9 +162,9 @@
       "documents": {},
       "timestamps": {
         "started": "2026-03-13T05:08:33.831Z",
-        "lastUpdated": "2026-04-02T12:19:22.676Z"
+        "lastUpdated": "2026-05-10T04:11:48.693Z"
       },
-      "lastFile": "/Users/apple/IdeaProjects/AutoTrader/app/domain/order/entity.py"
+      "lastFile": "/Users/apple/IdeaProjects/AutoTrader/app/domain/order/router.py"
     },
     "trading": {
       "phase": "do",
@@ -377,6 +378,20 @@
         "lastUpdated": "2026-05-06T12:24:58.998Z"
       },
       "lastFile": "/Users/apple/IdeaProjects/AutoTrader/app/domain/swing/backtest/backtest_service.py"
+    },
+    "sell-all Gap 분석": {
+      "phase": "act",
+      "phaseNumber": 5,
+      "matchRate": null,
+      "iterationCount": 0,
+      "requirements": [],
+      "documents": {},
+      "timestamps": {
+        "started": "2026-05-10T04:15:17.159Z",
+        "lastUpdated": "2026-05-10T04:15:17.160Z"
+      },
+      "previousPhase": "check",
+      "autoAdvanced": true
     }
   },
   "pipeline": {
@@ -387,7 +402,7 @@
   "session": {
     "startedAt": "2026-02-28T03:08:34.644Z",
     "onboardingCompleted": false,
-    "lastActivity": "2026-05-09T12:30:21.521Z"
+    "lastActivity": "2026-05-10T04:15:17.160Z"
   },
   "history": [
     {
@@ -3802,6 +3817,42 @@
       "timestamp": "2026-05-09T12:30:21.520Z",
       "feature": "swing",
       "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-10T04:11:02.496Z",
+      "feature": "order",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-10T04:11:11.566Z",
+      "feature": "order",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-10T04:11:29.999Z",
+      "feature": "order",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-10T04:11:38.727Z",
+      "feature": "order",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-10T04:11:48.693Z",
+      "feature": "order",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-10T04:15:17.160Z",
+      "feature": "sell-all Gap 분석",
+      "phase": "act",
       "action": "updated"
     }
   ]
