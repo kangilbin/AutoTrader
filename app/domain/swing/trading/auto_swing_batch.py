@@ -6,8 +6,8 @@ SIGNAL 상태:
 - 0: 대기 (포지션 없음)
 - 1: 1차 매수 완료 (부분 포지션)
 - 2: 2차 매수 완료 (전체 포지션)
-- 3: 장중 손절 완료 (즉시 전량 청산)
-- 4: 1차 매도 대기 (50% 매도 대기, 종가 확정 → 다음날 시초 실행)
+- 3: 1차 손절 매도 완료 (2차 매도 대기)
+- 4: 1차 매도 대기 (sell_ratio% 매도 대기, 종가 확정 → 다음날 시초 실행)
 - 5: 2차 매도 대기 (전량 매도 대기, 종가 확정 → 다음날 시초 실행)
 
 배치 스케줄:
@@ -20,7 +20,7 @@ import logging
 from datetime import datetime, timedelta
 import pandas as pd
 from decimal import Decimal
-
+from app.domain.swing.indicators import TechnicalIndicators
 from app.external.kis_api import get_target_price, get_inquire_price
 from app.common.database import Database
 from app.domain.swing.service import SwingService
@@ -86,10 +86,10 @@ async def process_single_swing(
     개별 스윙 매매 신호 처리 + 분할 매수/매도 실행
 
     SIGNAL 상태 머신:
-    - 0 + BUY신호 → 1차 매수 실행 → SIGNAL=1
-    - 1 + BUY유지 → 2차 매수 실행 → SIGNAL=2
-    - 1/2 + 절대손절(-3%) → 즉시 전량 매도 → SIGNAL=0
-    - 3 → 2차 매도 실행 → SIGNAL=0 (레거시, 장중 손절용)
+    - 0 + BUY신호 → 1차 매수 실행 (buy_ratio%) → SIGNAL=1
+    - 1 + BUY유지 → 2차 매수 실행 (100-buy_ratio%) → SIGNAL=2
+    - 1/2 + 손절신호 → 1차 매도 실행 (sell_ratio%) → SIGNAL=3
+    - 3 → 2차 매도 실행 (잔량 전부) → SIGNAL=0
     - 4/5 → 스킵 (morning_sell_job에서 처리)
 
     Args:
@@ -125,63 +125,61 @@ async def process_single_swing(
 
     # === 1. 데이터 수집 ===
 
-    # 1.1 지표 캐시 먼저 확인
-    cached_indicators = await strategy._get_cached_indicators(redis_client, st_code)
+    # 1.1 지표 캐시 확인 (필수)
+    cached_indicators = await strategy.get_cached_indicators(redis_client, st_code)
 
-    # 1.2 캐시 상태에 따라 주가 데이터 조회 결정
-    df = None
     if not cached_indicators:
-        # 캐시 미스: 전체 데이터 조회 (지표 계산용)
-        logger.debug(f"[{st_code}] 캐시 미스 - 주가 데이터 조회 (120일)")
-        start_date = datetime.now() - timedelta(days=120)
-        price_history = await stock_service.get_stock_history(st_code, start_date)
-
-        if not price_history:
-            logger.warning(f"[{st_code}] 주가 데이터 없음")
-            return
-
-        df = pd.DataFrame(price_history)
-    else:
-        logger.debug(f"[{st_code}] 캐시 히트 - 주가 데이터 조회 스킵")
-
-    # 1.3 현재가 조회
-    try:
-        current_price_data = await get_inquire_price("mgnt", st_code)
-
-        if not current_price_data:
-            logger.warning(f"[{st_code}] 현재가 조회 실패")
-            return
-
-        current_price = Decimal(str(current_price_data.get("stck_prpr", 0)))
-
-        if current_price == 0:
-            logger.warning(f"[{st_code}] 현재가가 0입니다")
-            return
-
-        # 당일 데이터로 DataFrame 업데이트 (df가 있는 경우만)
-        if df is not None:
-            today_data = {
-                "ST_CODE": st_code,
-                "STCK_BSOP_DATE": datetime.now().strftime('%Y%m%d'),
-                "STCK_OPRC": current_price_data.get("stck_oprc", current_price),
-                "STCK_HGPR": current_price_data.get("stck_hgpr", current_price),
-                "STCK_LWPR": current_price_data.get("stck_lwpr", current_price),
-                "STCK_CLPR": current_price,
-                "ACML_VOL": current_price_data.get("acml_vol", 0)
-            }
-
-            df = pd.concat([df, pd.DataFrame([today_data])], ignore_index=True)
-            df = df.drop_duplicates(subset=['STCK_BSOP_DATE'], keep='last')
-
-    except Exception as e:
-        logger.error(f"[{st_code}] 현재가 조회 실패: {e}")
+        logger.warning(f"[{st_code}] 캐시 미스 - 캐시 워밍업 필요 (day_collect_job 실행 확인)")
         return
 
+    logger.debug(f"[{st_code}] 캐시 히트 ✅")
+
+    # 1.3 현재가 조회
+    current_price_data = await get_inquire_price("mgnt", st_code)
+
+    if not current_price_data:
+        logger.warning(f"[{st_code}] 현재가 조회 실패")
+        return
+
+    current_price = Decimal(str(current_price_data.get("stck_prpr", 0))) # 현재가
+    acml_vol = int(current_price_data.get("acml_vol", 0))                # 누적 거래량
+
+    # 당일 데이터
+    today_data = {
+        "ST_CODE": st_code,
+        "STCK_BSOP_DATE": datetime.now().strftime('%Y%m%d'),
+        "STCK_OPRC": current_price_data.get("stck_oprc", current_price),
+        "STCK_HGPR": current_price_data.get("stck_hgpr", current_price),
+        "STCK_LWPR": current_price_data.get("stck_lwpr", current_price),
+        "STCK_CLPR": current_price,
+        "ACML_VOL": current_price_data.get("acml_vol", 0)
+    }
+
+
     # 1.4 외국인 순매수 데이터
-    frgn_ntby_qty = int(current_price_data.get("frgn_ntby_qty", 0))
-    acml_vol = int(current_price_data.get("acml_vol", 0))
-    prdy_vrss_vol_rate = float(current_price_data.get("prdy_vrss_vol_rate", 100))
-    prdy_ctrt = float(current_price_data.get("prdy_ctrt", 0))
+    frgn_ntby_qty = int(current_price_data.get("frgn_ntby_qty", 0))               # 외국인 순매수 수량
+    prdy_vrss_vol_rate = float(current_price_data.get("prdy_vrss_vol_rate", 100)) # 저일 대비 거래량 비율
+    prdy_ctrt = float(current_price_data.get("prdy_ctrt", 0))                     # 전일 대비율
+
+    # 1.5 실시간 지표 증분 계산
+    cached_indicators = TechnicalIndicators.enrich_cached_indicators_with_realtime(
+        cached_indicators=cached_indicators,
+        current_price=float(current_price),
+        current_volume=acml_vol,
+        current_high=float(today_data["STCK_HGPR"]),
+        current_low=float(today_data["STCK_LWPR"]),
+        ema_period=20,
+        atr_period=14
+    )
+    logger.debug(
+        f"[{st_code}] 실시간 지표 계산 완료: "
+        f"EMA20={cached_indicators.get('realtime_ema20', 0):.2f}, "
+        f"OBV_Z={cached_indicators.get('realtime_obv_z', 0):.2f}, "
+        f"ATR={cached_indicators.get('realtime_atr', 0):.2f}, "
+        f"ADX={cached_indicators.get('realtime_adx', 0):.1f}, "
+        f"+DI={cached_indicators.get('realtime_plus_di', 0):.1f}, "
+        f"-DI={cached_indicators.get('realtime_minus_di', 0):.1f}"
+    )
 
     # === 2. SIGNAL 상태별 처리 ===
 
@@ -194,7 +192,6 @@ async def process_single_swing(
         entry_result = await strategy.check_entry_signal(
             redis_client=redis_client,
             symbol=st_code,
-            df=df,
             current_price=current_price,
             frgn_ntby_qty=frgn_ntby_qty,
             acml_vol=acml_vol,
@@ -246,7 +243,6 @@ async def process_single_swing(
                 redis_client=redis_client,
                 position_id=swing_id,
                 symbol=st_code,
-                df=df,
                 current_price=current_price,
                 entry_price=Decimal(entry_price),
                 frgn_ntby_qty=frgn_ntby_qty,
@@ -261,19 +257,19 @@ async def process_single_swing(
                 )
 
                 if user_id:
-                    # 전량 매도
-                    order_result = await SwingOrderExecutor.execute_second_sell(
+                    # 1차 매도 (sell_ratio%)
+                    order_result = await SwingOrderExecutor.execute_first_sell(
                         user_id=user_id,
-                        st_code=st_code
+                        st_code=st_code,
+                        sell_ratio=sell_ratio
                     )
 
                     if order_result.get("success"):
-                        new_signal = 0  # 즉시 초기화
-                        entry_price = 0
-                        hold_qty = 0
-                        logger.info(f"[{st_code}] 손절 매도 완료 (전량 청산)")
+                        new_signal = 3  # 1차 매도 완료, 2차 매도 대기
+                        hold_qty = order_result.get("remaining", 0)
+                        logger.info(f"[{st_code}] 1차 손절 매도 완료 (sell_ratio={sell_ratio}%, 잔량={hold_qty}주)")
                     else:
-                        logger.error(f"[{st_code}] 손절 매도 실패: {order_result.get('reason')}")
+                        logger.error(f"[{st_code}] 1차 손절 매도 실패: {order_result.get('reason')}")
                 else:
                     logger.warning(f"[{st_code}] USER_ID 없음, 손절 주문 실행 불가")
 
@@ -285,7 +281,6 @@ async def process_single_swing(
                     redis_client=redis_client,
                     swing_id=swing_id,
                     symbol=st_code,
-                    df=df,
                     entry_price=Decimal(entry_price) if entry_price > 0 else current_price,
                     hold_qty=hold_qty,
                     current_price=current_price,
@@ -337,7 +332,6 @@ async def process_single_swing(
                 redis_client=redis_client,
                 position_id=swing_id,
                 symbol=st_code,
-                df=df,
                 current_price=current_price,
                 entry_price=Decimal(entry_price),
                 frgn_ntby_qty=frgn_ntby_qty,
@@ -352,19 +346,19 @@ async def process_single_swing(
                 )
 
                 if user_id:
-                    # 전량 매도
-                    order_result = await SwingOrderExecutor.execute_second_sell(
+                    # 1차 매도 (sell_ratio%)
+                    order_result = await SwingOrderExecutor.execute_first_sell(
                         user_id=user_id,
-                        st_code=st_code
+                        st_code=st_code,
+                        sell_ratio=sell_ratio
                     )
 
                     if order_result.get("success"):
-                        new_signal = 0  # 즉시 초기화
-                        entry_price = 0
-                        hold_qty = 0
-                        logger.info(f"[{st_code}] 손절 매도 완료 (전량 청산)")
+                        new_signal = 3  # 1차 매도 완료, 2차 매도 대기
+                        hold_qty = order_result.get("remaining", 0)
+                        logger.info(f"[{st_code}] 1차 손절 매도 완료 (sell_ratio={sell_ratio}%, 잔량={hold_qty}주)")
                     else:
-                        logger.error(f"[{st_code}] 손절 매도 실패: {order_result.get('reason')}")
+                        logger.error(f"[{st_code}] 1차 손절 매도 실패: {order_result.get('reason')}")
                 else:
                     logger.warning(f"[{st_code}] USER_ID 없음, 손절 주문 실행 불가")
             else:
@@ -374,10 +368,10 @@ async def process_single_swing(
             logger.debug(f"[{st_code}] 보유 유지 (2차 매수 상태, 매도 신호는 종가 배치에서 확인)")
 
     # ------------------------------------------
-    # SIGNAL 3: 1차 매도 완료 - 2차 매도 실행
+    # SIGNAL 3: 1차 손절 매도 완료 - 2차 매도 실행 (잔량 전량)
     # ------------------------------------------
     elif current_signal == 3:
-        logger.info(f"[{st_code}] 2차 매도 실행 (잔량 전부: {hold_qty}주)")
+        logger.info(f"[{st_code}] 2차 손절 매도 실행 (잔량 전부: {hold_qty}주)")
 
         if user_id:
             order_result = await SwingOrderExecutor.execute_second_sell(
@@ -390,9 +384,9 @@ async def process_single_swing(
                 # 포지션 청산 후 평단가/보유수량 초기화
                 entry_price = 0
                 hold_qty = 0
-                logger.info(f"[{st_code}] 2차 매도 완료, 사이클 종료 (포지션 청산)")
+                logger.info(f"[{st_code}] 2차 손절 매도 완료, 사이클 종료 (포지션 청산)")
             else:
-                logger.error(f"[{st_code}] 2차 매도 실패: {order_result.get('reason')}")
+                logger.error(f"[{st_code}] 2차 손절 매도 실패: {order_result.get('reason')}")
         else:
             logger.warning(f"[{st_code}] USER_ID 없음, 주문 실행 불가")
 
