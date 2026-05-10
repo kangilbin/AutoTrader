@@ -45,7 +45,6 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
         for i in range(2, len(eval_df)):
             row = eval_df.iloc[i]
             prev_row = eval_df.iloc[i-1]
-            prev_prev_row = eval_df.iloc[i-2]
             current_date = row["STCK_BSOP_DATE"]
 
             # === 1단계: 포지션 보유 시 매도 조건 체크 ===
@@ -53,8 +52,8 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
                 peak_price = max(peak_price, row["STCK_HGPR"])
 
                 # [손절] EMA-ATR (SIGNAL 2에서는 본전 방어)
-                if pd.notna(row["ema_20"]) and pd.notna(row["atr"]) and row["atr"] > 0:
-                    ema_atr_stop = row["ema_20"] - (row["atr"] * self.ATR_MULTIPLIER)
+                if pd.notna(row["ema20"]) and pd.notna(row["atr"]) and row["atr"] > 0:
+                    ema_atr_stop = row["ema20"] - (row["atr"] * self.ATR_MULTIPLIER)
                     if signal == 2 and entry_price > 0:
                         ema_atr_stop = max(ema_atr_stop, entry_price)
 
@@ -75,25 +74,25 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
                         drawdown_pct = round((peak_price - row["STCK_LWPR"]) / peak_price * 100, 1)
 
                         if signal == 1:
-                            # 1차 익절: 50% 매도
+                            # 1차 익절: 50% 매도 (trailing stop 트리거 가격으로 체결)
                             sell_qty = hold_qty // 2
                             if sell_qty > 0:
                                 current_capital = self._execute_partial_sell(
-                                    trades, current_date, row["STCK_CLPR"], sell_qty,
+                                    trades, current_date, stop_price, sell_qty,
                                     current_capital,
                                     ["1차익절", f"고점대비 -{drawdown_pct}%"]
                                 )
                                 hold_qty -= sell_qty
                                 signal = 2
-                                peak_price = row["STCK_CLPR"]  # PEAK 리셋
+                                peak_price = stop_price  # PEAK 리셋
                                 continue
 
                         elif signal == 2:
-                            # 2차 익절: OBV 게이트 확인
+                            # 2차 익절: OBV 게이트 확인 (trailing stop 트리거 가격으로 체결)
                             obv_z = row.get("obv_z", 0)
                             if pd.notna(obv_z) and obv_z < self.OBV_Z_SELL_THRESHOLD:
                                 current_capital = self._execute_sell(
-                                    trades, current_date, row["STCK_CLPR"],
+                                    trades, current_date, stop_price,
                                     current_capital,
                                     ["2차익절", f"고점대비 -{drawdown_pct}%", f"OBV z={obv_z:.2f}"]
                                 )
@@ -102,12 +101,16 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
 
             # === 2단계: 포지션 미보유 시 매수 (리스크 기반 포지션 사이징) ===
             if signal == 0 and current_capital > 0:
-                matched, signal_reasons = self._check_entry_conditions(row, prev_row, prev_prev_row)
+                matched, signal_reasons, signal_price = self._check_entry_conditions(row, prev_row)
 
                 if matched:
-                    buy_price = row["STCK_CLPR"]
+                    # 신호 가격이 당일 [저가, 고가] 범위 안이면 해당 가격으로 체결
+                    if signal_price > 0 and row["STCK_LWPR"] <= signal_price <= row["STCK_HGPR"]:
+                        buy_price = signal_price
+                    else:
+                        buy_price = row["STCK_CLPR"]
                     atr = row.get("atr", 0)
-                    ema = row.get("ema_20", 0)
+                    ema = row.get("ema20", 0)
 
                     # Qty = min(배정금 × ENTRY_PCT / 현재가, 손실제한 수량)
                     entry_qty = int(current_capital * self.ENTRY_PCT / buy_price)
@@ -133,7 +136,7 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
 
         # 최종 청산 및 결과 포맷팅
         final_capital = self._liquidate_final_position(trades, eval_df, current_capital)
-        result = self._format_result(prices_df, params, trades, final_capital)
+        result = self._format_result(prices_df, params, trades, final_capital, eval_df)
         return result
 
     def _calculate_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -147,57 +150,53 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
             obv_lookback=self.OBV_LOOKBACK
         )
 
-    def _check_entry_conditions(self, row: pd.Series, prev_row: pd.Series = None, i_minus_2: pd.Series = None) -> Tuple[bool, List[str]]:
+    def _check_entry_conditions(self, row: pd.Series, prev_row: pd.Series = None) -> Tuple[bool, List[str], float]:
         """1차 매수 진입: 시나리오 A(눌림목 매집) + 시나리오 B(추세 추종 돌파)"""
-        required_cols = ["ema_20", "obv_z", "plus_di", "minus_di", "daily_return", "adx", "atr"]
+        required_cols = ["ema20", "obv_z", "plus_di", "minus_di", "daily_return", "adx", "atr"]
         if any(pd.isna(row[col]) for col in required_cols):
-            return False, []
+            return False, [], 0.0
 
         if prev_row is None:
-            return False, []
+            return False, [], 0.0
 
         current_price = row["STCK_CLPR"]
+
+        if row["STCK_BSOP_DATE"] == pd.to_datetime("2025-05-28"):
+            print(f"current_price: {row}")
 
         # === 공통 필터 ===
         surge_filtered = abs(row["daily_return"]) <= self.MAX_SURGE_RATIO
         if not surge_filtered:
-            return False, []
-
-        # 전일 EMA20 상승 필터 (prev_row = 어제, 어제 ema_20 vs 전전일 ema_20 비교)
-        if i_minus_2 is not None and not pd.isna(i_minus_2.get("ema_20")):
-            if not (prev_row["ema_20"] > i_minus_2["ema_20"]):
-                return False, []
-        else:
-            return False, []
+            return False, [], 0.0
 
         # === 시나리오 A: 눌림목 매집 진입 ===
-        accum_lower = row["ema_20"] + (row["atr"] * self.ACCUM_ENTRY_ATR_LOWER)
-        accum_upper = row["ema_20"] + (row["atr"] * self.ACCUM_ENTRY_ATR_UPPER)
+        accum_lower = row["ema20"] + (row["atr"] * self.ACCUM_ENTRY_ATR_LOWER)
+        accum_upper = row["ema20"] + (row["atr"] * self.ACCUM_ENTRY_ATR_UPPER)
 
 
         if accum_lower <= current_price <= accum_upper:
             obv_accumulating = (row["obv_z"] > self.ACCUM_ENTRY_OBV_MIN) and (row["obv_z"] > prev_row["obv_z"])
             adx_mid_range = self.ACCUM_ENTRY_ADX_MIN <= row["adx"] <= self.ACCUM_ENTRY_ADX_MAX
-            ema_rising = row["ema_20"] > prev_row["ema_20"]
             trend_direction = row["plus_di"] > row["minus_di"]
 
-            if obv_accumulating and adx_mid_range and ema_rising and trend_direction:
-                return True, ["눌림목매집", "EMA근접", "OBV양호", "추세상승"]
+            if obv_accumulating and adx_mid_range and trend_direction:
+                signal_price = row["ema20"]
+                return True, ["눌림목매집", "EMA근접", "OBV양호", "추세상승"], signal_price
 
         # === 시나리오 B: 추세 추종 EMA 돌파 진입 ===
-        ema_rising = row["ema_20"] > prev_row["ema_20"]
-        price_above_ema = current_price > row["ema_20"]
-        within_gap_limit = current_price <= row["ema_20"] * self.BREAKOUT_ENTRY_GAP_MAX
+        price_above_ema = current_price > row["ema20"]
+        within_gap_limit = current_price <= row["ema20"] * self.BREAKOUT_ENTRY_GAP_MAX
 
-        if ema_rising and price_above_ema and within_gap_limit:
+        if price_above_ema and within_gap_limit:
             trend_direction = row["plus_di"] > row["minus_di"]
             adx_sufficient = row["adx"] > self.BREAKOUT_ENTRY_ADX_MIN  # 최소 추세 강도
             obv_positive = row["obv_z"] > self.BREAKOUT_ENTRY_OBV_MIN
 
             if trend_direction and adx_sufficient and obv_positive:
-                return True, ["EMA돌파", "상향돌파", "추세확인", "거래량동반"]
+                signal_price = row["ema20"]
+                return True, ["EMA돌파", "상향돌파", "추세확인", "거래량동반"], signal_price
 
-        return False, []
+        return False, [], 0.0
 
     def _prepare_data(self, df: pd.DataFrame) -> pd.DataFrame:
         if "STCK_BSOP_DATE" in df.columns:

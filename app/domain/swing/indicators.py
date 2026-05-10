@@ -415,13 +415,13 @@ class TechnicalIndicators:
         # EMA (단기 20, 장기 120)
         ema = cls.calculate_ema(close, ema_short)
         if ema is not None:
-            df["ema_20"] = ema
+            df["ema20"] = ema
             # 괴리율
             df["gap_ratio"] = (close - ema) / ema
 
         ema_long = cls.calculate_ema(close, ema_long)
         if ema_long is not None:
-            df["ema_120"] = ema_long
+            df["ema120"] = ema_long
 
         # ATR
         atr = cls.calculate_atr(high, low, close, atr_period)
@@ -481,9 +481,9 @@ class TechnicalIndicators:
             obv_lookback: OBV z-score 계산 기간 (기본값: 7)
 
         Returns:
-            지표가 추가된 DataFrame (ema_20, ema_120, atr, adx, plus_di, minus_di, obv, obv_z, gap_ratio, daily_return)
+            지표가 추가된 DataFrame (ema20, ema120, atr, adx, plus_di, minus_di, obv, obv_z, gap_ratio, daily_return)
         """
-        # 기본 지표 계산 (ema_20, ema_120, atr, adx, dmi, obv, obv_z 포함)
+        # 기본 지표 계산 (ema20, ema120, atr, adx, dmi, obv, obv_z 포함)
         df = cls.prepare_indicators_from_df(
             df,
             ema_short=ema_short,

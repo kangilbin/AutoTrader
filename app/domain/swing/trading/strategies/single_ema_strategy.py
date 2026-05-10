@@ -73,11 +73,6 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
                 'low': data['low'],
                 'date': data['date'],
                 'avg_daily_amount': data['avg_daily_amount'],
-                # 전전일 DI (2차 방어선 게이트용)
-                'prev_ema20': data.get('prev_ema20'),
-                'prev_plus_di': data.get('prev_plus_di'),
-                'prev_minus_di': data.get('prev_minus_di'),
-                'prev_obv_z': data.get('prev_obv_z'),
             }
         except Exception as e:
             logger.warning(f"[{symbol}] 캐시 조회 실패: {e}")
@@ -269,14 +264,12 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
 
         # 캐시에서 전일 데이터 추출
         yesterday_ema20 = cached_indicators.get('ema20')       # 전일 EMA20 (종가 기준)
-        prev_ema20 = cached_indicators.get('prev_ema20')       # 전전일 EMA20
         yesterday_obv_z = cached_indicators.get('obv_z')       # 전일 OBV z-score
 
         # === 공통 필터 ===
         surge_filtered = abs(prdy_ctrt) / 100 <= cls.MAX_SURGE_RATIO
-        ema20_rising = (yesterday_ema20 is not None and prev_ema20 is not None and yesterday_ema20 > prev_ema20)
 
-        if not (surge_filtered and ema20_rising):
+        if not surge_filtered:
             # 공통 필터 미충족 → 연속성 리셋
             new_state = {'curr_signal': False, 'consecutive_count': 0, 'last_update': datetime.now().isoformat()}
             await redis_client.setex(f"entry:{swing_id}", cls.ENTRY_STATE_TTL, json.dumps(new_state))
@@ -291,19 +284,17 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
             if accum_lower <= curr_price <= accum_upper:
                 obv_accumulating = (realtime_obv_z > cls.ACCUM_ENTRY_OBV_MIN) and (yesterday_obv_z is not None and realtime_obv_z > yesterday_obv_z)
                 adx_mid_range = cls.ACCUM_ENTRY_ADX_MIN <= realtime_adx <= cls.ACCUM_ENTRY_ADX_MAX
-                ema_rising = (yesterday_ema20 is not None and realtime_ema20 > yesterday_ema20)
                 trend_direction = realtime_plus_di > realtime_minus_di  # 상승 추세 방향
 
-                scenario_a = obv_accumulating and adx_mid_range and ema_rising and trend_direction
+                scenario_a = obv_accumulating and adx_mid_range and trend_direction
 
         # === 시나리오 B: 추세 추종 EMA 돌파 진입 ===
         scenario_b = False
         if yesterday_ema20 is not None:
-            ema_rising = realtime_ema20 > yesterday_ema20
             price_above_ema = curr_price > realtime_ema20
             within_gap_limit = curr_price <= realtime_ema20 * cls.BREAKOUT_ENTRY_GAP_MAX
 
-            if ema_rising and price_above_ema and within_gap_limit:
+            if price_above_ema and within_gap_limit:
                 trend_direction = realtime_plus_di > realtime_minus_di
                 adx_sufficient = realtime_adx > cls.BREAKOUT_ENTRY_ADX_MIN  # 최소 추세 강도
                 obv_positive = realtime_obv_z > cls.BREAKOUT_ENTRY_OBV_MIN

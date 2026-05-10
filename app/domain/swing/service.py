@@ -46,13 +46,13 @@ class SwingService:
             balance_data = await get_stock_balance(user_id, self.db)
 
         output2 = balance_data["output2"]
-        total_capital = int(output2.get("tot_evlu_amt", 0))
+        cash = int(output2.get("dnca_tot_amt", 0))
 
         allocated = int(await self.repo.get_total_init_amount(account_no, overseas, exclude_swing_id))
-        available_capital = total_capital - allocated
+        available_capital = cash - allocated
 
         return {
-            "total_capital": total_capital,
+            "total_capital": cash,
             "allocated": allocated,
             "available_capital": available_capital,
         }
@@ -332,13 +332,12 @@ class SwingService:
         """활성화된 해외 스윙 목록 조회"""
         return await self.repo.find_active_overseas_swings()
 
-    async def _calculate_indicators(self, mrkt_code: str, st_code: str, include_prev: bool = False) -> dict | None:
+    async def _calculate_indicators(self, mrkt_code: str, st_code: str) -> dict | None:
         """지표 계산 공통 로직
 
         Args:
             mrkt_code: 시장 코드
             st_code: 종목 코드
-            include_prev: 전전일 데이터 포함 여부
 
         Returns:
             지표 데이터 dict 또는 None (데이터 부족/검증 실패 시)
@@ -369,7 +368,7 @@ class SwingService:
             return None
 
         yesterday = indicators.iloc[-1]
-        required_cols = ['ema_20', 'adx', 'plus_di', 'minus_di', 'atr', 'obv', 'obv_z']
+        required_cols = ['ema20', 'adx', 'plus_di', 'minus_di', 'atr', 'obv', 'obv_z']
         if not all(col in yesterday.index for col in required_cols):
             logger.warning(f"[{st_code}] 필수 지표 누락")
             return None
@@ -388,7 +387,7 @@ class SwingService:
         minus_dm14 = (float(yesterday['minus_di']) * atr) / 100
 
         indicators_data = {
-            "ema20": float(yesterday['ema_20']),
+            "ema20": float(yesterday['ema20']),
             "adx": float(yesterday['adx']),
             "plus_dm14": plus_dm14,
             "minus_dm14": minus_dm14,
@@ -403,15 +402,6 @@ class SwingService:
             "date": yesterday['STCK_BSOP_DATE'],
             "avg_daily_amount": avg_daily_amount,
         }
-
-        if include_prev and len(indicators) >= 2:
-            prev_prev = indicators.iloc[-2]
-            indicators_data.update({
-                "prev_ema20": float(prev_prev['ema_20']) if not pd.isna(prev_prev['ema_20']) else None,
-                "prev_plus_di": float(prev_prev['plus_di']) if not pd.isna(prev_prev['plus_di']) else None,
-                "prev_minus_di": float(prev_prev['minus_di']) if not pd.isna(prev_prev['minus_di']) else None,
-                "prev_obv_z": float(prev_prev['obv_z']) if not pd.isna(prev_prev['obv_z']) else None,
-            })
 
         return indicators_data
 
@@ -480,7 +470,7 @@ class SwingService:
             # 2. 각 종목별 지표 계산 및 캐싱
             for mrkt_code, st_code in active_codes:
                 try:
-                    indicators_data = await self._calculate_indicators(mrkt_code, st_code, include_prev=True)
+                    indicators_data = await self._calculate_indicators(mrkt_code, st_code)
                     if not indicators_data:
                         fail_count += 1
                         continue

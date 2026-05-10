@@ -57,7 +57,8 @@ class BacktestStrategy(ABC):
             prices_df: pd.DataFrame,
             params: Dict,
             trades: List[Dict],
-            final_capital: float
+            final_capital: float,
+            eval_df: pd.DataFrame = None
     ) -> Dict:
         """
         백테스트 결과 포맷팅 (공통 로직)
@@ -67,6 +68,7 @@ class BacktestStrategy(ABC):
             params: 파라미터
             trades: 거래 내역
             final_capital: 최종 자본금
+            eval_df: 지표 계산된 평가 기간 DataFrame (차트 데이터용)
 
         Returns:
             포맷팅된 결과 딕셔너리
@@ -74,7 +76,7 @@ class BacktestStrategy(ABC):
         initial_capital = params["init_amount"]
         total_return = ((final_capital - initial_capital) / initial_capital) * 100
 
-        return {
+        result = {
             "strategy_name": self.name,
             "start_date": params["eval_start"].strftime("%Y-%m-%d"),
             "end_date": str(prices_df["STCK_BSOP_DATE"].max()),
@@ -88,3 +90,15 @@ class BacktestStrategy(ABC):
             },
             "trades": trades,
         }
+
+        if eval_df is not None and "ema20" in eval_df.columns:
+            chart_df = eval_df.copy()
+            chart_df["STCK_BSOP_DATE"] = chart_df["STCK_BSOP_DATE"].dt.strftime("%Y%m%d")
+            result["price_history"] = chart_df[
+                ["STCK_BSOP_DATE", "STCK_OPRC", "STCK_HGPR", "STCK_LWPR", "STCK_CLPR", "ACML_VOL"]
+            ].to_dict(orient="records")
+            result["ema20_history"] = chart_df[["STCK_BSOP_DATE", "ema20"]].assign(
+                ema20=chart_df["ema20"].round(2).where(chart_df["ema20"].notna(), None)
+            ).to_dict(orient="records")
+
+        return result
