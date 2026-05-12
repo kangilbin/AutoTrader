@@ -86,8 +86,6 @@ class TradingStrategy(ABC):
     @abstractmethod
     async def check_second_buy_signal(
         cls,
-        swing_repository,
-        stock_repository,
         redis_client,
         swing_id: int,
         symbol: str,

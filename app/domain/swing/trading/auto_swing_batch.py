@@ -55,10 +55,8 @@ async def trade_job():
             try:
                 await process_single_swing(
                     swing,
-                    stock_service,
                     swing_service,
                     redis_client,
-                    db
                 )
             except Exception as e:
                 logger.error(
@@ -77,10 +75,8 @@ async def trade_job():
 
 async def process_single_swing(
     swing,
-    stock_service: StockService,
     swing_service: SwingService,
-    redis_client,
-    db
+    redis_client
 ):
     """
     개별 스윙 매매 신호 처리 + 분할 매수/매도 실행
@@ -94,10 +90,8 @@ async def process_single_swing(
 
     Args:
         swing: SWING_TRADE 레코드 (Raw SQL result with USER_ID, API_KEY, SECRET_KEY)
-        stock_service: StockService 인스턴스
         swing_service: SwingService 인스턴스
         redis_client: Redis 클라이언트
-        db: Database session
     """
     swing_id = swing.SWING_ID
     st_code = swing.ST_CODE
@@ -110,7 +104,7 @@ async def process_single_swing(
     entry_price = int(swing.ENTRY_PRICE) if hasattr(swing, 'ENTRY_PRICE') and swing.ENTRY_PRICE else 0
     hold_qty = swing.HOLD_QTY if hasattr(swing, 'HOLD_QTY') and swing.HOLD_QTY else 0
 
-    # SIGNAL 4/5는 morning_sell_job에서 처리 → 스킵
+    # SIGNAL 4 or 5는 morning_sell_job에서 처리 → 스킵
     if current_signal in (4, 5):
         logger.debug(f"[{st_code}] 매도 대기 상태(SIGNAL={current_signal}), trade_job에서 스킵")
         return
@@ -119,7 +113,7 @@ async def process_single_swing(
     strategy = TradingStrategyFactory.get_strategy(swing_type)
 
     logger.info(
-        f"[{st_code}] 처리 시작 (SWING_TYPE={swing_type}, SIGNAL={current_signal}, "
+        f"[{swing_id} - 코드: {st_code}] 처리 시작 (SWING_TYPE={swing_type}, SIGNAL={current_signal}, "
         f"ENTRY_PRICE={entry_price:,}원, HOLD_QTY={hold_qty}주, 전략={strategy.__name__})"
     )
 
@@ -129,34 +123,23 @@ async def process_single_swing(
     cached_indicators = await strategy.get_cached_indicators(redis_client, st_code)
 
     if not cached_indicators:
-        logger.warning(f"[{st_code}] 캐시 미스 - 캐시 워밍업 필요 (day_collect_job 실행 확인)")
+        logger.warning(f"[{st_code}] 등록된 캐시 정보가 없습니다.")
         return
 
-    logger.debug(f"[{st_code}] 캐시 히트 ✅")
-
-    # 1.3 현재가 조회
+    # 1.2 현재가 조회
     current_price_data = await get_inquire_price("mgnt", st_code)
 
     if not current_price_data:
         logger.warning(f"[{st_code}] 현재가 조회 실패")
         return
 
-    current_price = Decimal(str(current_price_data.get("stck_prpr", 0))) # 현재가
-    acml_vol = int(current_price_data.get("acml_vol", 0))                # 누적 거래량
-
-    # 당일 데이터
-    today_data = {
-        "ST_CODE": st_code,
-        "STCK_BSOP_DATE": datetime.now().strftime('%Y%m%d'),
-        "STCK_OPRC": current_price_data.get("stck_oprc", current_price),
-        "STCK_HGPR": current_price_data.get("stck_hgpr", current_price),
-        "STCK_LWPR": current_price_data.get("stck_lwpr", current_price),
-        "STCK_CLPR": current_price,
-        "ACML_VOL": current_price_data.get("acml_vol", 0)
-    }
+    current_price = Decimal(str(current_price_data.get("stck_prpr", 0)))             # 현재가
+    current_high = Decimal(str(current_price_data.get("stck_hgpr", current_price)))  # 금일 고가
+    current_low = Decimal(str(current_price_data.get("stck_lwpr", current_price)))   # 금일 저가
+    acml_vol = int(current_price_data.get("acml_vol", 0))                            # 누적 거래량
 
 
-    # 1.4 외국인 순매수 데이터
+    # 1.3 외국인 순매수 데이터
     frgn_ntby_qty = int(current_price_data.get("frgn_ntby_qty", 0))               # 외국인 순매수 수량
     prdy_vrss_vol_rate = float(current_price_data.get("prdy_vrss_vol_rate", 100)) # 저일 대비 거래량 비율
     prdy_ctrt = float(current_price_data.get("prdy_ctrt", 0))                     # 전일 대비율
@@ -166,8 +149,8 @@ async def process_single_swing(
         cached_indicators=cached_indicators,
         current_price=float(current_price),
         current_volume=acml_vol,
-        current_high=float(today_data["STCK_HGPR"]),
-        current_low=float(today_data["STCK_LWPR"]),
+        current_high=float(current_high),
+        current_low=float(current_low),
         ema_period=20,
         atr_period=14
     )
@@ -276,8 +259,6 @@ async def process_single_swing(
             else:
                 # 매도 신호 없으면 2차 매수 조건 확인
                 entry_result = await strategy.check_second_buy_signal(
-                    swing_repository=swing_service.repo,
-                    stock_repository=stock_service.repo,
                     redis_client=redis_client,
                     swing_id=swing_id,
                     symbol=st_code,
@@ -393,24 +374,17 @@ async def process_single_swing(
     # === 3. SIGNAL 상태 업데이트 (평단가, 보유수량 포함) ===
 
     if new_signal != current_signal:
-        try:
-            update_data = {
-                "SIGNAL": new_signal,
-                "ENTRY_PRICE": entry_price if entry_price > 0 else None,
-                "HOLD_QTY": hold_qty,
-                "MOD_DT": datetime.now()
-            }
-            await swing_service.update_swing(swing_id, update_data)
-            await db.commit()
-            logger.info(
-                f"[{st_code}] 상태 업데이트: SIGNAL={current_signal}→{new_signal}, "
-                f"ENTRY_PRICE={entry_price:,}원, HOLD_QTY={hold_qty}주"
-            )
-        except Exception as e:
-            await db.rollback()
-            logger.error(f"[{st_code}] 상태 업데이트 실패: {e}", exc_info=True)
-
-    logger.info(f"[{st_code}] 처리 완료")
+        update_data = {
+            "SIGNAL": new_signal,
+            "ENTRY_PRICE": entry_price if entry_price > 0 else None,
+            "HOLD_QTY": hold_qty,
+            "MOD_DT": datetime.now()
+        }
+        await swing_service.update_swing(swing_id, update_data)
+        logger.info(
+            f"[{swing_id} - 코드: {st_code}] 상태 업데이트: SIGNAL={current_signal}→{new_signal}, "
+            f"ENTRY_PRICE={entry_price:,}원, HOLD_QTY={hold_qty}주"
+        )
 
 
 async def day_collect_job():
@@ -498,7 +472,7 @@ async def ema_cache_warmup_job():
     - 실행 시점: 매일 08:30 (장 시작 전)
     - 대상: SWING_TRADE.USE_YN = 'Y'인 종목
     - 작업: 과거 3년 데이터로 지표 계산 → Redis 저장
-    - 저장 지표: EMA20, ADX, +DI, -DI (오늘/어제 2일치)
+    - 저장 지표: EMA20, ADX, +DI, -DI, ATR, OBV-Z
     """
     db = await Database.get_session()
 
