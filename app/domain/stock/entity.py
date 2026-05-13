@@ -10,6 +10,7 @@ from decimal import Decimal
 @dataclass
 class Stock:
     """종목 도메인 엔티티"""
+    market_type: str
     st_code: str
     sd_code: str = ""
     name: str = ""

@@ -9,6 +9,7 @@ from decimal import Decimal
 
 class StockResponse(BaseModel):
     """종목 정보 응답"""
+    MARKET_TYPE: str
     ST_CODE: str
     SD_CODE: Optional[str] = None
     ST_NM: Optional[str] = None
