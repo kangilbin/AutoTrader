@@ -1,6 +1,6 @@
 {
   "version": "2.0",
-  "lastUpdated": "2026-05-10T11:50:17.787Z",
+  "lastUpdated": "2026-05-14T13:02:39.424Z",
   "activeFeatures": [
     "foreign-swing",
     "foreign-stock",
@@ -111,9 +111,9 @@
       },
       "timestamps": {
         "started": "2026-02-28T03:35:36.461Z",
-        "lastUpdated": "2026-05-10T11:49:07.223Z"
+        "lastUpdated": "2026-05-14T13:02:39.424Z"
       },
-      "lastFile": "/Users/apple/IdeaProjects/AutoTrader/app/domain/swing/backtest/strategies/base_strategy.py"
+      "lastFile": "/Users/apple/IdeaProjects/AutoTrader/app/domain/swing/backtest/strategies/single_ema_backtest_strategy.py"
     },
     "swing": {
       "phase": "do",
@@ -124,7 +124,7 @@
       "documents": {},
       "timestamps": {
         "started": "2026-02-28T03:36:02.099Z",
-        "lastUpdated": "2026-05-10T11:50:17.787Z"
+        "lastUpdated": "2026-05-14T13:02:02.415Z"
       },
       "lastFile": "/Users/apple/IdeaProjects/AutoTrader/app/domain/swing/indicators.py"
     },
@@ -176,7 +176,7 @@
       "documents": {},
       "timestamps": {
         "started": "2026-03-13T05:32:59.682Z",
-        "lastUpdated": "2026-05-07T12:57:39.063Z"
+        "lastUpdated": "2026-05-13T12:04:22.846Z"
       },
       "lastFile": "/Users/apple/IdeaProjects/AutoTrader/app/domain/swing/trading/auto_swing_batch.py"
     },
@@ -417,7 +417,7 @@
   "session": {
     "startedAt": "2026-02-28T03:08:34.644Z",
     "onboardingCompleted": false,
-    "lastActivity": "2026-05-10T11:50:17.787Z"
+    "lastActivity": "2026-05-14T13:02:39.424Z"
   },
   "history": [
     {
@@ -4119,6 +4119,204 @@
     {
       "timestamp": "2026-05-10T11:50:17.787Z",
       "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-13T12:02:37.802Z",
+      "feature": "strategies",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-13T12:02:47.396Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-13T12:03:07.925Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-13T12:03:23.488Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-13T12:03:50.176Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-13T12:04:05.126Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-13T12:04:22.846Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-14T12:06:24.737Z",
+      "feature": "strategies",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-14T12:06:39.986Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-14T12:06:54.758Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-14T12:07:10.651Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-14T12:07:33.038Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-14T12:07:51.558Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-14T12:08:10.068Z",
+      "feature": "strategies",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-14T12:08:25.785Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-14T12:08:45.805Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-14T12:14:06.814Z",
+      "feature": "strategies",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-14T12:14:21.848Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-14T12:17:12.588Z",
+      "feature": "strategies",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-14T12:17:24.203Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-14T12:17:37.579Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-14T12:17:58.070Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-14T12:18:11.558Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-14T12:18:28.773Z",
+      "feature": "strategies",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-14T12:19:29.120Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-14T12:19:47.427Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-14T12:59:08.623Z",
+      "feature": "strategies",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-14T12:59:33.608Z",
+      "feature": "strategies",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-14T13:01:14.765Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-14T13:01:26.671Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-14T13:02:02.415Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-14T13:02:21.909Z",
+      "feature": "strategies",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-14T13:02:39.424Z",
+      "feature": "strategies",
       "phase": "do",
       "action": "updated"
     }

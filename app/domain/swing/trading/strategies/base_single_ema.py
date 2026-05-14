@@ -20,7 +20,8 @@ class BaseSingleEMAStrategy:
 
     # 매수 공통 조건
     OBV_Z_BUY_THRESHOLD = 1.0
-    OBV_LOOKBACK = 7
+    OBV_LOOKBACK = 7                 # 매수용 OBV z-score 기간 (단기 수급 변화 감지)
+    OBV_LOOKBACK_SELL = 14           # 2차 익절용 OBV z-score 기간 (추세 레벨 수급 이탈 감지)
     MAX_SURGE_RATIO = 0.05       # 전일 대비 최대 급등률 (5%)
 
     # 매수 [시나리오 A] 눌림목 매집 진입
@@ -53,4 +54,7 @@ class BaseSingleEMAStrategy:
 
     # 폴백 (ATR 무효 시 고정값)
     TRAILING_STOP_FALLBACK_PCT = 5.0
+
+    # 개장 초기 노이즈 보호 (Opening Guard)
+    OPENING_GUARD_MINUTES = 10            # 개장 후 10분간 PEAK 보호 & 익절 체크 스킵
 

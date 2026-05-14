@@ -21,8 +21,9 @@ SIGNAL 상태:
 import json
 import logging
 import asyncio
-from datetime import datetime
+from datetime import datetime, timedelta, time as dt_time
 from decimal import Decimal
+from zoneinfo import ZoneInfo
 from app.domain.swing.indicators import TechnicalIndicators
 from app.external.kis_api import get_target_price, get_inquire_price
 from app.external import foreign_api
@@ -36,6 +37,32 @@ from app.common.redis import Redis
 from app.domain.notification.service import PushNotificationService
 
 logger = logging.getLogger(__name__)
+
+# ===== 시장별 개장 시간 (로컬 타임존 기준) =====
+_MARKET_OPEN_CONFIG = {
+    "J":    {"open": dt_time(9, 0),   "tz": "Asia/Seoul"},
+    "NX":   {"open": dt_time(9, 0),   "tz": "Asia/Seoul"},
+    "UN":   {"open": dt_time(9, 0),   "tz": "Asia/Seoul"},
+    "NASD": {"open": dt_time(9, 30),  "tz": "America/New_York"},
+}
+
+
+def is_opening_guard(mrkt_code: str, guard_minutes: int = 10) -> bool:
+    """
+    개장 초기 보호 기간인지 판단
+
+    개장 직후 호가 불균형/시초가 오버슈팅으로 인한
+    장중고가 스파이크가 PEAK_PRICE를 오염시키는 것을 방지합니다.
+    """
+    config = _MARKET_OPEN_CONFIG.get(mrkt_code, _MARKET_OPEN_CONFIG["J"])
+    tz = ZoneInfo(config["tz"])
+    now = datetime.now(tz).time()
+
+    open_dt = datetime.combine(datetime.today(), config["open"])
+    guard_end = (open_dt + timedelta(minutes=guard_minutes)).time()
+
+    return config["open"] <= now < guard_end
+
 
 # ===== 동시 실행 제어 =====
 _SEMAPHORE = asyncio.Semaphore(5)  # 동시에 최대 5개 종목 처리
@@ -223,8 +250,11 @@ async def process_single_swing(
                 return
 
             # === 3. PEAK_PRICE 갱신 (Entity 메서드) ===
+            # 개장 초기 보호: 장중고가(스파이크 포함) 대신 현재가로 갱신
+            _in_opening_guard = is_opening_guard(mrkt_code, strategy.OPENING_GUARD_MINUTES)
             if swing.has_position():
-                swing.update_peak_price(int(current_high))
+                peak_source = int(current_price) if _in_opening_guard else int(current_high)
+                swing.update_peak_price(peak_source)
 
             # 변경 전 SIGNAL 저장 (알림용)
             prev_signal = swing.SIGNAL
@@ -242,7 +272,8 @@ async def process_single_swing(
                 await _handle_position(
                     swing, strategy, redis_client, db, user_id, st_code,
                     current_price, frgn_ntby_qty, acml_vol,
-                    cached_indicators, avg_daily_amount, mrkt_code
+                    cached_indicators, avg_daily_amount, mrkt_code,
+                    in_opening_guard=_in_opening_guard
                 )
 
             # === 5. 변경사항 저장 ===
@@ -373,7 +404,8 @@ async def _handle_waiting(
 async def _handle_position(
     swing, strategy, redis_client, db, user_id, st_code,
     current_price, frgn_ntby_qty, acml_vol,
-    cached_indicators, avg_daily_amount, mrkt_code=""
+    cached_indicators, avg_daily_amount, mrkt_code="",
+    in_opening_guard: bool = False
 ):
     """보유 상태 → 손절/1차 익절/2차 익절 확인"""
     entry_price = int(swing.ENTRY_PRICE) if swing.ENTRY_PRICE else 0
@@ -405,14 +437,18 @@ async def _handle_position(
         )
         return
 
-    # 2. 장중 trailing stop 익절 체크
-    ts_result = await strategy.check_trailing_stop_signal(
-        symbol=st_code,
-        current_price=current_price,
-        peak_price=int(swing.PEAK_PRICE) if swing.PEAK_PRICE else 0,
-        signal=swing.SIGNAL,
-        cached_indicators=cached_indicators
-    )
+    # 2. 장중 trailing stop 익절 체크 (개장 보호 기간 중 스킵)
+    if in_opening_guard:
+        ts_result = None
+        logger.debug(f"[{st_code}] 개장 보호 기간 — 익절 체크 스킵")
+    else:
+        ts_result = await strategy.check_trailing_stop_signal(
+            symbol=st_code,
+            current_price=current_price,
+            peak_price=int(swing.PEAK_PRICE) if swing.PEAK_PRICE else 0,
+            signal=swing.SIGNAL,
+            cached_indicators=cached_indicators
+        )
 
     if ts_result and ts_result.get("action") == "SELL_HALF":
         # 1차 익절: 50% 매도 (SIGNAL 1 → 2)

@@ -88,13 +88,13 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
                                 continue
 
                         elif signal == 2:
-                            # 2차 익절: OBV 게이트 확인 (trailing stop 트리거 가격으로 체결)
-                            obv_z = row.get("obv_z", 0)
-                            if pd.notna(obv_z) and obv_z < self.OBV_Z_SELL_THRESHOLD:
+                            # 2차 익절: OBV 게이트 확인 (14일 lookback, trailing stop 트리거 가격으로 체결)
+                            obv_z_sell = row.get("obv_z_sell", 0)
+                            if pd.notna(obv_z_sell) and obv_z_sell < self.OBV_Z_SELL_THRESHOLD:
                                 current_capital = self._execute_sell(
                                     trades, current_date, stop_price,
                                     current_capital,
-                                    ["2차익절", f"고점대비 -{drawdown_pct}%", f"OBV z={obv_z:.2f}"]
+                                    ["2차익절", f"고점대비 -{drawdown_pct}%", f"OBV z14={obv_z_sell:.2f}"]
                                 )
                                 signal, peak_price, entry_price, hold_qty = 0, 0.0, 0.0, 0
                                 continue
@@ -147,7 +147,8 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
             ema_long=120,
             atr_period=14,
             adx_period=14,
-            obv_lookback=self.OBV_LOOKBACK
+            obv_lookback=self.OBV_LOOKBACK,
+            obv_lookback_sell=self.OBV_LOOKBACK_SELL
         )
 
     def _check_entry_conditions(self, row: pd.Series, prev_row: pd.Series = None) -> Tuple[bool, List[str], float]:

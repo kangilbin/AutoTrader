@@ -130,7 +130,7 @@ class TechnicalIndicators:
         yesterday_close: float,
         current_price: float,
         current_volume: int,
-        recent_6_diffs: list
+        recent_diffs: list
     ) -> float:
         """
         캐시된 OBV 데이터를 활용한 실시간 OBV z-score 증분 계산
@@ -140,7 +140,7 @@ class TechnicalIndicators:
             yesterday_close: 어제 종가
             current_price: 현재가 (실시간)
             current_volume: 현재 누적 거래량
-            recent_6_diffs: 최근 6일의 OBV diff 배열
+            recent_diffs: 최근 (lookback-1)일의 OBV diff 배열
 
         Returns:
             오늘 실시간 OBV z-score
@@ -156,12 +156,12 @@ class TechnicalIndicators:
         # 2. 오늘 OBV diff
         today_diff = today_obv - yesterday_obv
 
-        # 3. 최근 7일 diff (6일 + 오늘)
-        recent_7_diffs = recent_6_diffs + [today_diff]
+        # 3. 최근 lookback일 diff (캐시된 N일 + 오늘)
+        all_diffs = recent_diffs + [today_diff]
 
         # 4. 롤링 평균 및 표준편차 (ddof=1: 배치 calculate_obv_zscore와 동일한 표본 표준편차)
-        mean = np.mean(recent_7_diffs)
-        std = np.std(recent_7_diffs, ddof=1)
+        mean = np.mean(all_diffs)
+        std = np.std(all_diffs, ddof=1)
 
         # 5. 0으로 나누는 것 방지
         epsilon = 1e-9
@@ -388,7 +388,8 @@ class TechnicalIndicators:
         ema_long: int = 120,
         atr_period: int = 14,
         adx_period: int = 14,
-        obv_lookback: int = 7
+        obv_lookback: int = 7,
+        obv_lookback_sell: int = 14
     ) -> pd.DataFrame:
         """
         DataFrame에 모든 지표 추가
@@ -440,10 +441,15 @@ class TechnicalIndicators:
         if obv is not None:
             df["obv"] = obv
 
-            # OBV z-score
+            # OBV z-score (매수용)
             obv_z = cls.calculate_obv_zscore(obv, obv_lookback)
             if obv_z is not None:
                 df["obv_z"] = obv_z
+
+            # OBV z-score (2차 익절용, 더 긴 lookback)
+            obv_z_sell = cls.calculate_obv_zscore(obv, obv_lookback_sell)
+            if obv_z_sell is not None:
+                df["obv_z_sell"] = obv_z_sell
 
         # 외국인 비율 (컬럼이 있는 경우)
         if "FRGN_NTBY_QTY" in df.columns:
@@ -465,7 +471,8 @@ class TechnicalIndicators:
         ema_long: int = 120,
         atr_period: int = 14,
         adx_period: int = 14,
-        obv_lookback: int = 7
+        obv_lookback: int = 7,
+        obv_lookback_sell: int = 14
     ) -> pd.DataFrame:
         """
         단일 EMA 전략용 전체 지표 계산 (백테스팅 + 실전 공통)
@@ -479,18 +486,20 @@ class TechnicalIndicators:
             atr_period: ATR 기간 (기본값: 14)
             adx_period: ADX/DMI 기간 (기본값: 14)
             obv_lookback: OBV z-score 계산 기간 (기본값: 7)
+            obv_lookback_sell: 2차 익절용 OBV z-score 계산 기간 (기본값: 14)
 
         Returns:
-            지표가 추가된 DataFrame (ema20, ema120, atr, adx, plus_di, minus_di, obv, obv_z, gap_ratio, daily_return)
+            지표가 추가된 DataFrame (ema20, ema120, atr, adx, plus_di, minus_di, obv, obv_z, obv_z_sell, gap_ratio, daily_return)
         """
-        # 기본 지표 계산 (ema20, ema120, atr, adx, dmi, obv, obv_z 포함)
+        # 기본 지표 계산 (ema20, ema120, atr, adx, dmi, obv, obv_z, obv_z_sell 포함)
         df = cls.prepare_indicators_from_df(
             df,
             ema_short=ema_short,
             ema_long=ema_long,
             atr_period=atr_period,
             adx_period=adx_period,
-            obv_lookback=obv_lookback
+            obv_lookback=obv_lookback,
+            obv_lookback_sell=obv_lookback_sell
         )
 
         # 일일 수익률 추가
@@ -556,12 +565,22 @@ class TechnicalIndicators:
             )
 
             # 2. 실시간 OBV z-score 증분 계산
+            # 매수용 (7일): 캐시된 diffs 중 마지막 6개 사용
+            # 2차 익절용 (14일): 캐시된 diffs 전체(13개) 사용
+            all_diffs = cached_indicators['obv_recent_diffs']
             realtime_obv_z = cls.calculate_realtime_obv_zscore(
                 yesterday_obv=cached_indicators['obv'],
                 yesterday_close=cached_indicators['close'],
                 current_price=current_price,
                 current_volume=current_volume,
-                recent_6_diffs=cached_indicators['obv_recent_diffs']
+                recent_diffs=all_diffs[-6:]
+            )
+            realtime_obv_z_sell = cls.calculate_realtime_obv_zscore(
+                yesterday_obv=cached_indicators['obv'],
+                yesterday_close=cached_indicators['close'],
+                current_price=current_price,
+                current_volume=current_volume,
+                recent_diffs=all_diffs
             )
 
             # 3. 실시간 ATR 증분 계산
@@ -592,6 +611,7 @@ class TechnicalIndicators:
             # 6. cached_indicators에 실시간 지표 추가
             cached_indicators['realtime_ema20'] = realtime_ema20
             cached_indicators['realtime_obv_z'] = realtime_obv_z
+            cached_indicators['realtime_obv_z_sell'] = realtime_obv_z_sell
             cached_indicators['realtime_atr'] = realtime_atr
             cached_indicators['realtime_adx'] = realtime_adx
             cached_indicators['realtime_plus_di'] = realtime_plus_di

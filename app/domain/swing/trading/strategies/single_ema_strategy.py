@@ -44,7 +44,7 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
                 'atr': 1200.0,     # 어제 ATR (중간값)
                 'obv': 1000000.0,  # 어제 OBV (중간값)
                 'obv_z': 1.5,
-                'obv_recent_diffs': [100, 200, -150, 300, 50, 120],
+                'obv_recent_diffs': [...],  # 최근 13일 OBV diff (매수 7일/익절 14일 공용)
                 'close': 51000.0,  # 어제 종가
                 'high': 52000.0,   # 어제 고가
                 'low': 50000.0,    # 어제 저가
@@ -190,13 +190,13 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
                     logger.debug(f"[{symbol}] 실시간 OBV z-score 재사용: {realtime_obv_z:.2f}")
                     return realtime_obv_z
 
-                # 1-2. 없으면 증분 계산
+                # 1-2. 없으면 증분 계산 (매수용 7일: 마지막 6개 diffs + 오늘)
                 yesterday_obv = cached_indicators['obv']
                 yesterday_close = cached_indicators['close']
-                recent_6_diffs = cached_indicators['obv_recent_diffs']
+                recent_diffs = cached_indicators['obv_recent_diffs'][-6:]
 
                 realtime_obv_z = TechnicalIndicators.calculate_realtime_obv_zscore(
-                    yesterday_obv, yesterday_close, current_price, current_volume, recent_6_diffs
+                    yesterday_obv, yesterday_close, current_price, current_volume, recent_diffs
                 )
                 logger.debug(
                     f"[{symbol}] OBV z-score 캐시 히트 - 증분 계산: {realtime_obv_z:.2f}"
@@ -435,14 +435,14 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
                 return {"action": "SELL_HALF", "reasons": [reason]}
 
             elif signal == 2:
-                realtime_obv_z = cached_indicators.get('realtime_obv_z', 0)
-                if realtime_obv_z < cls.OBV_Z_SELL_THRESHOLD:
-                    reason = f"2차익절(고점대비 -{drawdown_pct}%, OBV z={realtime_obv_z:.2f})"
+                obv_z_sell = cached_indicators.get('realtime_obv_z_sell', 0)
+                if obv_z_sell < cls.OBV_Z_SELL_THRESHOLD:
+                    reason = f"2차익절(고점대비 -{drawdown_pct}%, OBV z14={obv_z_sell:.2f})"
                     return {"action": "SELL_ALL", "reasons": [reason]}
                 else:
                     logger.info(
                         f"[{symbol}] 2차 익절 ATR 조건 충족이나 OBV 양호 "
-                        f"(z={realtime_obv_z:.2f} >= {cls.OBV_Z_SELL_THRESHOLD}), 추세 유지"
+                        f"(z14={obv_z_sell:.2f} >= {cls.OBV_Z_SELL_THRESHOLD}), 추세 유지"
                     )
                     return None
 

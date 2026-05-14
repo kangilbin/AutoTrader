@@ -115,7 +115,8 @@ Qty = min(
 |---------|-----|------|
 | **공통 지표** | | |
 | EMA_PERIOD | 20 | 단기 EMA 기간 |
-| OBV_LOOKBACK | 7 | OBV z-score 계산 기간 |
+| OBV_LOOKBACK | 7 | 매수용 OBV z-score 기간 |
+| OBV_LOOKBACK_SELL | 14 | 2차 익절용 OBV z-score 기간 |
 | **매수** | | |
 | MAX_SURGE_RATIO | 0.05 | 전일 대비 최대 급등률 (5%) |
 | **포지션 사이징** | | |

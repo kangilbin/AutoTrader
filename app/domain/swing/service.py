@@ -377,9 +377,10 @@ class SwingService:
             logger.warning(f"[{st_code}] 지표 값 NaN")
             return None
 
-        # OBV diff 최근 6일 추출 (NaN 필터링)
+        # OBV diff 최근 13일 추출 (NaN 필터링)
+        # 매수용 7일(6+오늘)과 2차 익절용 14일(13+오늘)을 모두 지원
         obv_diffs = indicators['obv'].diff()
-        recent_6_diffs = [float(x) for x in obv_diffs.iloc[-6:].tolist() if not pd.isna(x)]
+        recent_obv_diffs = [float(x) for x in obv_diffs.iloc[-13:].tolist() if not pd.isna(x)]
 
         # DM14 역산 (+DM14 = +DI × ATR / 100)
         atr = float(yesterday['atr'])
@@ -394,7 +395,7 @@ class SwingService:
             "atr": atr,
             "obv": float(yesterday['obv']),
             "obv_z": float(yesterday['obv_z']),
-            "obv_recent_diffs": recent_6_diffs,
+            "obv_recent_diffs": recent_obv_diffs,
             "close": float(yesterday['STCK_CLPR']),
             "open": float(yesterday['STCK_OPRC']),
             "high": float(yesterday['STCK_HGPR']),
