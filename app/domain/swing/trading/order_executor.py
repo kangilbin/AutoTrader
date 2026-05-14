@@ -58,11 +58,11 @@ class SwingOrderExecutor:
         qty = int(first_buy_amount / current_price)
 
         if qty <= 0:
-            logger.warning(f"[{st_code}] 매수 수량 0: 금액={first_buy_amount}, 현재가={current_price}")
+            logger.warning(f"[{user_id} - 주식: {st_code}] 매수 수량 0: 금액={first_buy_amount}, 현재가={current_price}")
             return {"success": False, "reason": "매수 수량 부족"}
 
         logger.info(
-            f"[{st_code}] 1차 매수 시도: "
+            f"[{user_id} - 주식: {st_code}] 1차 매수 시도: "
             f"금액={first_buy_amount:,.0f}원 ({buy_ratio}%), "
             f"수량={qty}주, 현재가={current_price:,.0f}원"
         )

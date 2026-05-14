@@ -7,7 +7,7 @@ from dateutil.relativedelta import relativedelta
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import SQLAlchemyError, IntegrityError
 from typing import List, Dict, Any
-from datetime import datetime
+from datetime import datetime, time
 from decimal import Decimal
 from app.domain.swing.indicators import TechnicalIndicators
 from app.domain.swing.repository import SwingRepository
@@ -320,8 +320,7 @@ class SwingService:
         Returns:
             캐싱 성공 여부
         """
-        from app.domain.swing.indicators import TechnicalIndicators
-        import json
+
 
         try:
             stock_service = StockService(self.db)
@@ -348,7 +347,7 @@ class SwingService:
 
             yesterday = indicators.iloc[-1]
 
-            required_cols = ['ema_20', 'adx', 'plus_di', 'minus_di', 'atr', 'obv', 'obv_z']
+            required_cols = ['ema_20', 'ema_120', 'adx', 'plus_di', 'minus_di', 'atr', 'obv', 'obv_z']
             if not all(col in yesterday.index for col in required_cols):
                 logger.warning(f"[{st_code}] 필수 지표 누락")
                 return False
@@ -366,8 +365,12 @@ class SwingService:
             plus_dm14 = (float(yesterday['plus_di']) * atr) / 100
             minus_dm14 = (float(yesterday['minus_di']) * atr) / 100
 
+            # 평탄화된 캐시 구조 (cache_single_indicators와 동일)
+            ema20 = float(yesterday['ema_20'])
+            ema120 = float(yesterday['ema_120'])
             indicators_data = {
-                "ema20": float(yesterday['ema_20']),
+                "ema20": ema20,
+                "ema120": ema120,
                 "adx": float(yesterday['adx']),
                 "plus_dm14": plus_dm14,      # 중간값 저장 (실시간 계산용)
                 "minus_dm14": minus_dm14,    # 중간값 저장 (실시간 계산용)
@@ -376,14 +379,18 @@ class SwingService:
                 "obv_z": float(yesterday['obv_z']),
                 "obv_recent_diffs": recent_6_diffs,
                 "close": yesterday['STCK_CLPR'],
-                "high": yesterday['STCK_HGPR'],  # 어제 고가 (DM 계산용)
-                "low": yesterday['STCK_LWPR'],   # 어제 저가 (DM 계산용)
+                "high": yesterday['STCK_HGPR'],  # 어제 고가
+                "low": yesterday['STCK_LWPR'],   # 어제 저가
                 "date": yesterday['STCK_BSOP_DATE']
             }
 
+            now = datetime.now()
+            target = datetime.combine(now.date(), time(16, 0))  # 오늘 오후 4시
+            ttl = max(int((target - now).total_seconds()), 60)  # 최소 60초 (방어 코드)
+
             await redis_client.setex(
                 f"indicators:{st_code}",
-                604800,
+                ttl,
                 json.dumps(indicators_data)
             )
 
@@ -445,7 +452,7 @@ class SwingService:
                         fail_count += 1
                         continue
 
-                    # DataFrame 생성 및 지표 계산
+                    # 지표 계산
                     df = pd.DataFrame(price_history)
                     indicators = TechnicalIndicators.prepare_indicators_from_df(df)
 
@@ -458,7 +465,7 @@ class SwingService:
                     yesterday = indicators.iloc[-1]
 
                     # 필수 지표 존재 여부 확인
-                    required_cols = ['ema_20', 'adx', 'plus_di', 'minus_di', 'atr', 'obv', 'obv_z']
+                    required_cols = ['ema_20', 'ema_120', 'adx', 'plus_di', 'minus_di', 'atr', 'obv', 'obv_z']
                     if not all(col in yesterday.index for col in required_cols):
                         logger.warning(f"[{st_code}] 필수 지표 누락")
                         fail_count += 1
@@ -481,8 +488,10 @@ class SwingService:
 
                     # 평탄화된 캐시 구조 (cache_single_indicators와 동일)
                     ema20 = float(yesterday['ema_20'])
+                    ema120 = float(yesterday['ema_120'])
                     indicators_data = {
                         "ema20": ema20,
+                        "ema120": ema120,
                         "adx": float(yesterday['adx']),
                         "plus_dm14": plus_dm14,      # 중간값 저장
                         "minus_dm14": minus_dm14,    # 중간값 저장
@@ -496,9 +505,13 @@ class SwingService:
                         "date": yesterday['STCK_BSOP_DATE']
                     }
 
+                    now = datetime.now()
+                    target = datetime.combine(now.date(), time(16, 0))  # 오늘 오후 4시
+                    ttl = max(int((target - now).total_seconds()), 60)  # 최소 60초 (방어 코드)
+
                     await redis_client.setex(
                         f"indicators:{st_code}",
-                        604800,
+                        ttl,
                         json.dumps(indicators_data)
                     )
 
