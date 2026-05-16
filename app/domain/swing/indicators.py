@@ -169,7 +169,7 @@ class TechnicalIndicators:
             std = epsilon
 
         # 6. z-score 계산
-        return (today_diff - mean) / std
+        return float((today_diff - mean) / std)
 
     @staticmethod
     def calculate_realtime_atr_from_cache(
@@ -190,7 +190,6 @@ class TechnicalIndicators:
             yesterday_close: 어제 종가
             current_high: 금일 고가 (실시간)
             current_low: 금일 저가 (실시간)
-            current_close: 현재가 (실시간)
             period: ATR 기간 (기본값: 14)
 
         Returns:

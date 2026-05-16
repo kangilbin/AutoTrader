@@ -5,7 +5,6 @@ from app.domain.swing.trading.auto_swing_batch import (
     trade_job,
     day_collect_job,
     ema_cache_warmup_job,
-    morning_sell_job
 )
 
 scheduler = AsyncIOScheduler()
@@ -30,8 +29,6 @@ async def schedule_start():
     )
 
     # 스윙 트레이딩 배치 작업: 평일 10시-14시55분, 5분마다 실행
-    # - 장중 매수 신호 확인 (SIGNAL 0 → 1, SIGNAL 1 → 2)
-    # - 절대 손절(-3%) 체크 (SIGNAL 1/2 → 0)
     scheduler.add_job(
         trade_job,
         CronTrigger(
