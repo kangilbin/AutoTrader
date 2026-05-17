@@ -133,3 +133,7 @@ class TradingStrategy(ABC):
             지표 캐시 정보
         """
         pass
+
+    @classmethod
+    async def update_eod_signals_to_db(cls, row, prev_row, current_eod_signals):
+        pass

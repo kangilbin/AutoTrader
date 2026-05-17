@@ -25,10 +25,8 @@
 1.  **1차 분할 매도 (50%):** 아래 3개 조건 중 **2개 이상** 충족 시
     -   EMA 종가 이탈
     -   추세 약화 (ADX/DMI 2일 연속 약세)
-    -   수급 이탈 (OBV z-score 또는 일일 외국인 순매수 비율)
-2.  **2차 전량 매도:** 1차 매도 후, 아래 조건 중 하나라도 충족 시
-    -   장 마감 시, 위 3개 조건이 **모두** 충족
-    -   1차 매도가 대비 -2% 추가 하락
+    -   수급 이탈 (OBV z-score)
+2.  **2차 전량 매도:** 1차 매도 후, 3개 조건이 **모두** 충족 시
 """
 import pandas as pd
 import talib as ta
@@ -37,59 +35,34 @@ import json
 import logging
 from typing import Dict, Optional
 from decimal import Decimal
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 from .base_trading_strategy import TradingStrategy
+from .base_single_ema import BaseSingleEMAStrategy
 from app.domain.swing.indicators import TechnicalIndicators
 
 logger = logging.getLogger(__name__)
 
 
-class SingleEMAStrategy(TradingStrategy):
+class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
     """단일 20EMA 매매 전략 (하이브리드 매도 로직)"""
 
     # 전략 이름
     name = "단일 20EMA 전략"
 
     # ========================================
-    # 전략 파라미터
+    # 실전 전용 파라미터
     # ========================================
-    EMA_PERIOD = 20
-
     # 매수 조건
-    FRGN_STRONG_THRESHOLD = 1.5
-    OBV_Z_BUY_THRESHOLD = 1.0
-    MAX_SURGE_RATIO = 0.05
-    MAX_GAP_RATIO = 0.05
-    CONSECUTIVE_REQUIRED = 2
+    FRGN_STRONG_THRESHOLD = 1.5     # 외국인 순매수 비율 최소값
+    CONSECUTIVE_REQUIRED = 2         # 연속 확인 횟수 (10분)
 
-    # 2차 매수 조건
-    # [시나리오 A] 추세 강화형 (EMA-ATR 가드레일)
-    TREND_BUY_ATR_LOWER = 0.3        # 하한: EMA + ATR × 0.3 (추세 가속 최소선)
-    TREND_BUY_ATR_UPPER = 2.0        # 상한: EMA + ATR × 2.0 (과열 방지선)
-    TREND_BUY_FRGN_THRESHOLD = 1.5   # 외국인 비율 최소값
-    TREND_BUY_OBV_THRESHOLD = 1.2    # OBV z-score 최소값
-    TREND_BUY_ADX_MIN = 25           # ADX 최소값 (강한 추세)
-
-    # [시나리오 B] 눌림목 반등 (EMA-ATR 가드레일)
-    PULLBACK_BUY_ATR_LOWER = -0.5    # 하한: EMA - ATR × 0.5 (조정 허용 하한)
-    PULLBACK_BUY_ATR_UPPER = 0.3     # 상한: EMA + ATR × 0.3 (조정 범위 상한)
-    PULLBACK_BUY_FRGN_MIN = 0.5      # 외국인 비율 최소값
-    PULLBACK_BUY_OBV_MIN = 0.5       # OBV z-score 최소값
-    PULLBACK_BUY_ADX_MIN = 18        # ADX 하한 (추세 유지)
-    PULLBACK_BUY_ADX_MAX = 23        # ADX 상한 (조정 구간)
-    PULLBACK_BUY_REBOUND_RATIO = 1.004  # 장중 저가 대비 반등 비율 (0.4%)
+    # 2차 매수 조건 (외국인 비율 추가)
+    TREND_BUY_FRGN_THRESHOLD = 1.5   # 외국인 비율 최소값 (추세 강화형)
+    PULLBACK_BUY_FRGN_MIN = 0.5      # 외국인 비율 최소값 (눌림목 반등)
+    PULLBACK_BUY_OBV_MIN = 0.5       # OBV z-score 최소값 (눌림목 반등, 베이스는 0.0)
 
     # 공통
     SECOND_BUY_TIME_MIN = 1200       # 1차 매수 후 최소 경과 시간 (초, 20분)
-
-    # 매도 조건 (이원화)
-    # [1차 방어선]
-    ATR_MULTIPLIER = 1.0
-    # [2차 방어선]
-    EOD_TREND_WEAK_DAYS = 2
-    EOD_SUPPLY_WEAK_FRGN_RATIO = 1.0
-    EOD_SUPPLY_WEAK_OBV_Z = -1.0
-    SECONDARY_SELL_ADDITIONAL_DROP = -0.02
 
 
     # ========================================
@@ -528,100 +501,37 @@ class SingleEMAStrategy(TradingStrategy):
         return {"action": "HOLD", "reason": "즉시 매도 조건 미충족"}
 
     @classmethod
-    async def check_eod_sell_signals(
+    async def update_eod_signals_to_db(
         cls,
-        redis_client,
-        position: Dict,
-        df_day: pd.DataFrame,
-        daily_frgn_ratio: float,
-        daily_obv_z: float
-    ) -> Optional[Dict]:
+        row,
+        prev_row,
+        current_eod_signals: str
+    ) -> str:
         """
-        [2차 방어선] 장 마감 매도 신호 체크 (교차 검증)
-        - day_collect_job (장 마감 후)에서 호출
+        종가 기준 EOD 신호를 DB에 저장할 JSON 생성
+
+        Args:
+            row: today 지표
+            prev_row: yesterday 지표
+            current_eod_signals: 현재 DB의 EOD_SIGNALS JSON
+
+        Returns:
+            업데이트된 EOD_SIGNALS JSON 문자열
         """
-        symbol = position['st_code']
-        position_id = position['id']
-        entry_price = float(position['avg_price'])
-        last_close = float(df_day.iloc[-1]['STCK_CLPR'])
 
-        # 0. 2차 전량 매도 조건 우선 체크 (1차 분할매도 상태일 때)
-        if position['status'] == 'SELL_PRIMARY':
-            first_sell_price = float(position['first_sell_price']) # DB에 1차 매도가 저장 필요
+        # 기존 신호 로드
+        signals = json.loads(current_eod_signals) if current_eod_signals else {}
+        current_date = date.today().isoformat()
 
-            # 2차-1: 추가 하락
-            additional_drop = (last_close - first_sell_price) / first_sell_price
-            if additional_drop <= cls.SECONDARY_SELL_ADDITIONAL_DROP:
-                return {"action": "SELL_ALL", "reason": f"2차매도(추가하락: {additional_drop*100:.2f}%)"}
+        # 3일 지난 신호 삭제
+        for signal_name, date_str in list(signals.items()):
+            signal_date = date.fromisoformat(date_str)
+            if (date.today() - signal_date).days >= 3:
+                del signals[signal_name]
 
-        # 1. 3가지 EOD 신호의 발생 여부를 체크하고 Redis에 기록
-        await cls._log_eod_signal(redis_client, 'ema_breach', position_id,
-            cls._check_ema_breach_eod(df_day), symbol)
-        await cls._log_eod_signal(redis_client, 'trend_weak', position_id,
-            cls._check_trend_weakness_eod(df_day), symbol)
-        await cls._log_eod_signal(redis_client, 'supply_weak', position_id,
-            cls._check_supply_weakness_eod(daily_frgn_ratio, daily_obv_z), symbol)
+        # EOD 신호 체크 및 갱신 (발생 시 저장, 미발생 시 해제)
+        if cls._check_ema_breach_eod(row): signals['ema_breach'] = current_date
+        if cls._check_trend_weakness_eod(row, prev_row): signals['trend_weak'] = current_date
+        if cls._check_supply_weakness_eod(row): signals['supply_weak'] = current_date
 
-        # 2. 시간 윈도우 내 유효한 신호 개수 확인
-        signal_keys = [f"eod_signal:{position_id}:{sig}" for sig in ['ema_breach', 'trend_weak', 'supply_weak']]
-        valid_signal_count = await redis_client.exists(*signal_keys)
-        
-        active_signals = [key.decode().split(':')[-1] for key in await redis_client.mget(signal_keys) if key]
-
-
-        logger.info(f"[{symbol}] EOD 신호 점검: {valid_signal_count}/3개 충족. (신호: {active_signals})")
-
-        # 3. 매도 결정
-        # 2차-2: 1차 매도 상태에서 모든 신호 충족 시
-        if position['status'] == 'SELL_PRIMARY' and valid_signal_count >= 3:
-            return {"action": "SELL_ALL", "reason": f"2차매도(모든 EOD 신호 충족)"}
-            
-        # 1차 분할 매도: 2개 이상 충족 시
-        if position['status'] == 'BUY_COMPLETE' and valid_signal_count >= 2:
-            return {"action": "SELL_PRIMARY", "reason": f"1차매도({valid_signal_count}/3 충족: {active_signals})"}
-
-        return {"action": "HOLD", "reason": f"EOD 매도 조건 미충족 ({valid_signal_count}/3)"}
-
-
-    @classmethod
-    async def _log_eod_signal(cls, redis_client, signal_name: str, position_id: int, is_triggered: bool, symbol: str):
-        """EOD 신호 발생 시 Redis에 TTL과 함께 기록"""
-        key = f"eod_signal:{position_id}:{signal_name}"
-        ttl = timedelta(days=cls.EOD_SIGNAL_WINDOW_DAYS).total_seconds()
-        
-        if is_triggered:
-            await redis_client.setex(key, int(ttl), "1")
-            logger.debug(f"[{symbol}] EOD 신호 '{signal_name}' 발생, Redis에 기록 (TTL: {cls.EOD_SIGNAL_WINDOW_DAYS}일)")
-        else:
-            # 신호가 발생하지 않은 경우, 과거 기록이 있다면 삭제 (연속성 조건이 아닌 경우)
-            # 추세 약화와 같이 연속성 조건이 필요한 경우 이 로직은 수정되어야 함
-            if signal_name != 'trend_weak':
-                 await redis_client.delete(key)
-
-
-    @classmethod
-    def _check_ema_breach_eod(cls, df_day: pd.DataFrame) -> bool:
-        """EOD 신호 1: 종가가 EMA 아래로 하회했는지 체크"""
-        last = df_day.iloc[-1]
-        return last['STCK_CLPR'] < last['ema_20']
-
-    @classmethod
-    def _check_trend_weakness_eod(cls, df_day: pd.DataFrame) -> bool:
-        """EOD 신호 2: ADX/DMI 추세가 2일 연속 약화되었는지 체크"""
-        if len(df_day) < cls.EOD_TREND_WEAK_DAYS:
-            return False
-        
-        last_two_days = df_day.tail(cls.EOD_TREND_WEAK_DAYS)
-        
-        for _, row in last_two_days.iterrows():
-            is_weak = row['adx'] < 20 and row['minus_di'] > row['plus_di']
-            if not is_weak:
-                return False # 하루라도 강세면 조건 미충족
-        return True # 2일 모두 약세
-
-    @classmethod
-    def _check_supply_weakness_eod(cls, daily_frgn_ratio: float, daily_obv_z: float) -> bool:
-        """EOD 신호 3: 일일 수급이 약화되었는지 체크 (OR 조건)"""
-        is_frgn_weak = daily_frgn_ratio < cls.EOD_SUPPLY_WEAK_FRGN_RATIO
-        is_obv_weak = daily_obv_z < cls.EOD_SUPPLY_WEAK_OBV_Z
-        return is_frgn_weak or is_obv_weak
+        return json.dumps(signals) if signals else None

@@ -99,6 +99,7 @@ class SwingModel(Base):
     SIGNAL = Column(Integer, nullable=False, default=0, comment='매매 신호 상태 (0:대기, 1:1차매수, 2:2차매수, 3:장중손절, 4:1차매도대기, 5:2차매도대기)')
     ENTRY_PRICE = Column(DECIMAL(15, 2), nullable=True, comment='평균 매수 단가')
     HOLD_QTY = Column(Integer, nullable=True, default=0, comment='보유 수량')
+    EOD_SIGNALS = Column(String(500), nullable=True, comment='EOD 매도 신호 JSON {"ema_breach":"2026-01-20","trend_weak":"2026-01-21","supply_weak":"2026-01-22"}')
     REG_DT = Column(DateTime, default=datetime.now, nullable=False, comment='등록일')
     MOD_DT = Column(DateTime, comment='수정일')
 
