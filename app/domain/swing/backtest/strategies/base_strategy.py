@@ -1,9 +1,41 @@
 """
 백테스트 전략의 추상 베이스 클래스
 """
+import math
 from abc import ABC, abstractmethod
 from typing import Dict, List
 import pandas as pd
+
+# 한국 주식 호가 단위표
+_TICK_TABLE = [
+    (2_000,    1),
+    (5_000,    5),
+    (20_000,   10),
+    (50_000,   50),
+    (200_000,  100),
+    (500_000,  500),
+    (float("inf"), 1_000),
+]
+
+
+def tick_size(price: float) -> int:
+    """가격대별 호가 단위 반환"""
+    for threshold, tick in _TICK_TABLE:
+        if price < threshold:
+            return tick
+    return 1_000
+
+
+def ceil_tick(price: float) -> float:
+    """매수용: 호가 단위 올림 (불리한 방향)"""
+    t = tick_size(price)
+    return math.ceil(price / t) * t
+
+
+def floor_tick(price: float) -> float:
+    """매도용: 호가 단위 내림 (불리한 방향)"""
+    t = tick_size(price)
+    return math.floor(price / t) * t
 
 
 class BacktestStrategy(ABC):

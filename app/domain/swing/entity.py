@@ -26,7 +26,7 @@ class SwingTrade(Base):
     INIT_AMOUNT = Column(DECIMAL(15, 2), nullable=False, comment='초기 투자금')
     CUR_AMOUNT = Column(DECIMAL(15, 2), nullable=False, comment='현재 투자금')
     SWING_TYPE = Column(CHAR(1), nullable=False, comment='스윙 타입 (A: 이평선, B: 일목균형표)')
-    SIGNAL = Column(Integer, nullable=False, default=0, comment='매매 신호 상태 (0:대기, 1:보유-익절전, 2:보유-익절후)')
+    SIGNAL = Column(Integer, nullable=False, default=0, comment='매매 신호 상태 (0:대기, 1:보유-익절전, 2:보유-익절후, 3:수급안정화대기)')
     ENTRY_PRICE = Column(DECIMAL(15, 2), nullable=True, comment='평균 매수 단가')
     HOLD_QTY = Column(Integer, nullable=True, default=0, comment='보유 수량')
     EOD_SIGNALS = Column(String(500), nullable=True, comment='EOD 매도 신호 JSON')
@@ -52,8 +52,12 @@ class SwingTrade(Base):
     # ==================== 상태 조회 ====================
 
     def is_waiting(self) -> bool:
-        """대기 상태 여부 (SIGNAL 0)"""
+        """매수 대기 상태 여부 (SIGNAL 0)"""
         return self.SIGNAL == 0
+
+    def is_cooling_down(self) -> bool:
+        """수급 안정화 대기 상태 여부 (SIGNAL 3)"""
+        return self.SIGNAL == 3
 
     def has_position(self) -> bool:
         """포지션 보유 여부 (SIGNAL 1 or 2)"""
@@ -84,12 +88,28 @@ class SwingTrade(Base):
         self.PEAK_PRICE = None  # PEAK 리셋 → 2차 익절을 위해 새로 추적
         self.MOD_DT = datetime.now()
 
-    def reset_cycle(self) -> None:
-        """사이클 종료 — 전량 매도 후 초기화 (SIGNAL -> 0)"""
-        self.SIGNAL = 0
+    def reset_cycle(self, obv_z: float = None) -> None:
+        """
+        사이클 종료 — 전량 매도 후 초기화
+
+        OBV z-score에 따라 다음 상태 결정:
+        - OBV z ≤ 0: 수급 이미 정리됨 → SIGNAL 0 (매수 대기)
+        - OBV z > 0: 수급 아직 살아있음 → SIGNAL 3 (수급 안정화 대기)
+        """
+        if obv_z is not None and obv_z > 0:
+            self.SIGNAL = 3
+        else:
+            self.SIGNAL = 0
         self.ENTRY_PRICE = None
         self.HOLD_QTY = 0
         self.PEAK_PRICE = None
+        self.MOD_DT = datetime.now()
+
+    def transition_to_waiting(self) -> None:
+        """수급 안정화 완료 (SIGNAL 3 → 0)"""
+        if self.SIGNAL != 3:
+            raise ValidationError(f"수급 안정화 전환은 SIGNAL 3에서만 가능합니다. 현재: {self.SIGNAL}")
+        self.SIGNAL = 0
         self.MOD_DT = datetime.now()
 
     def get_stop_loss_floor(self) -> int:

@@ -269,7 +269,19 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
         # === 공통 필터 ===
         surge_filtered = abs(prdy_ctrt) / 100 <= cls.MAX_SURGE_RATIO
 
-        if not surge_filtered:
+        # 전일 윗꼬리 긴 음봉 필터 (매도 압력 강한 날 다음 매수 차단)
+        prev_open = cached_indicators.get('open', 0)
+        prev_close = cached_indicators.get('close', 0)
+        prev_high = cached_indicators.get('high', 0)
+        bearish_shadow_filtered = True
+        if prev_open > 0 and prev_close < prev_open:  # 음봉
+            body = prev_open - prev_close
+            upper_shadow = prev_high - prev_open
+            if body > 0 and upper_shadow >= body * cls.BEARISH_UPPER_SHADOW_MULT:
+                bearish_shadow_filtered = False
+                logger.debug(f"[{symbol}] 전일 윗꼬리 음봉 필터 — 매수 차단 (꼬리={upper_shadow:.0f}, 몸통={body:.0f})")
+
+        if not surge_filtered or not bearish_shadow_filtered:
             # 공통 필터 미충족 → 연속성 리셋
             new_state = {'curr_signal': False, 'consecutive_count': 0, 'last_update': datetime.now().isoformat()}
             await redis_client.setex(f"entry:{swing_id}", cls.ENTRY_STATE_TTL, json.dumps(new_state))

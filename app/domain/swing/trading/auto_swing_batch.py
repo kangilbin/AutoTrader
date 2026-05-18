@@ -205,7 +205,8 @@ async def process_single_swing(
                 if partial_result.get("completed") or partial_result.get("aborted"):
                     new_signal = partial_result.get("signal_on_complete", swing.SIGNAL)
                     if new_signal == 0:
-                        swing.reset_cycle()
+                        obv_z = cached_indicators.get('realtime_obv_z', 0) if cached_indicators else 0
+                        swing.reset_cycle(obv_z=obv_z)
                     elif new_signal == 2 and swing.SIGNAL == 1:
                         # 1차 익절 분할 체결 완료
                         sold_qty = partial_result.get("qty", 0)
@@ -276,6 +277,9 @@ async def process_single_swing(
                     in_opening_guard=_in_opening_guard
                 )
 
+            elif swing.is_cooling_down():
+                _handle_cooling_down(swing, st_code, cached_indicators)
+
             # === 5. 변경사항 저장 ===
             await db.flush()
             await db.commit()
@@ -304,6 +308,16 @@ async def process_single_swing(
 
 
 # ==================== SIGNAL 핸들러 ====================
+
+
+def _handle_cooling_down(swing, st_code: str, cached_indicators: dict):
+    """수급 안정화 대기 (SIGNAL 3) → OBV z ≤ 0이면 매수 대기(SIGNAL 0)로 전환"""
+    obv_z = cached_indicators.get('realtime_obv_z', 0)
+    if obv_z <= 0:
+        swing.transition_to_waiting()
+        logger.info(f"[{st_code}] 수급 안정화 완료 (OBV z={obv_z:.2f} ≤ 0) → 매수 대기(SIGNAL 0)")
+    else:
+        logger.debug(f"[{st_code}] 수급 안정화 대기 중 (OBV z={obv_z:.2f} > 0)")
 
 
 async def _handle_waiting(
@@ -433,7 +447,8 @@ async def _handle_position(
             current_price, hold_qty, avg_daily_amount,
             exit_result.get("reasons", ["손절"]),
             f"[{user_id} - 주식: {st_code}] 손절 전량 매도 완료, 사이클 종료",
-            mrkt_code=mrkt_code
+            mrkt_code=mrkt_code,
+            cached_indicators=cached_indicators
         )
         return
 
@@ -464,13 +479,14 @@ async def _handle_position(
         return
 
     if ts_result and ts_result.get("action") == "SELL_ALL":
-        # 2차 익절: 잔량 전량 매도 (SIGNAL 2 → 0)
+        # 2차 익절: 잔량 전량 매도 (SIGNAL 2 → 0 or 3)
         await _execute_full_sell(
             swing, redis_client, db, user_id, st_code,
             current_price, hold_qty, avg_daily_amount,
             ts_result.get("reasons", ["2차 익절"]),
             f"[{user_id} - 주식: {st_code}] 2차 익절 전량 매도 완료, 사이클 종료",
-            mrkt_code=mrkt_code
+            mrkt_code=mrkt_code,
+            cached_indicators=cached_indicators
         )
 
 
@@ -534,9 +550,10 @@ async def _execute_partial_sell(
 async def _execute_full_sell(
     swing, redis_client, db, user_id, st_code,
     current_price, hold_qty, avg_daily_amount,
-    reasons, success_log_msg, mrkt_code=""
+    reasons, success_log_msg, mrkt_code="",
+    cached_indicators=None
 ):
-    """전량 매도 실행 → Entity reset_cycle()"""
+    """전량 매도 실행 → Entity reset_cycle(obv_z)"""
     if not user_id:
         logger.warning(f"[{st_code}] USER_ID 없음, 매도 주문 실행 불가")
         return
@@ -568,7 +585,8 @@ async def _execute_full_sell(
         swing.add_amount(sell_price * sold_qty_for_amount)
 
     if order_result.get("completed", True):
-        swing.reset_cycle()
+        obv_z = cached_indicators.get('realtime_obv_z', 0) if cached_indicators else 0
+        swing.reset_cycle(obv_z=obv_z)
     else:
         sold_qty = order_result.get("qty", 0)
         swing.update_hold_qty_partial(sold_qty)

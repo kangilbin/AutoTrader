@@ -51,7 +51,7 @@ signal = 1 (보유 - 1차 익절 전) ← peak_price = 매수가
 ```
 Qty = min(
     Capital × ENTRY_PCT / 신호가,              ← 기본: 배정금의 50% 투입
-    Capital × MAX_LOSS_PCT / (신호가 - 손절가)  ← 안전장치: 손절 시 배정금의 10% 이내 손실
+    Capital × MAX_LOSS_PCT / (신호가 - 손절가)  ← 리스크 제한: 손절 시 배정금의 3% 이내 손실
 )
 신호가 = EMA20 (저가 ≤ EMA20 ≤ 고가일 때), 범위 밖이면 종가 fallback
 손절가 = 진입일 EMA20 - ATR × 1.0
@@ -121,7 +121,7 @@ Qty = min(
 | MAX_SURGE_RATIO | 0.05 | 전일 대비 최대 급등률 (5%) |
 | **포지션 사이징** | | |
 | ENTRY_PCT | 0.5 | 매 사이클 배정금 대비 투입 비율 (50%) |
-| MAX_LOSS_PCT | 0.10 | 손절 시 배정금 대비 최대 손실률 (10%, 고변동성 안전장치) |
+| MAX_LOSS_PCT | 0.03 | 손절 시 배정금 대비 최대 손실률 (3%, 리스크 기반 수량 조절) |
 | **손절** | | |
 | ATR_MULTIPLIER | 1.0 | 손절 ATR 배수 (EMA - ATR×1.0) |
 | **익절** | | |
