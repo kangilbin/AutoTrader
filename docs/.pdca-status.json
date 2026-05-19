@@ -1,6 +1,6 @@
 {
   "version": "2.0",
-  "lastUpdated": "2026-05-16T06:33:12.980Z",
+  "lastUpdated": "2026-05-19T13:53:15.831Z",
   "activeFeatures": [
     "foreign-swing",
     "foreign-stock",
@@ -111,7 +111,7 @@
       },
       "timestamps": {
         "started": "2026-02-28T03:35:36.461Z",
-        "lastUpdated": "2026-05-16T06:33:12.980Z"
+        "lastUpdated": "2026-05-19T13:53:15.831Z"
       },
       "lastFile": "/Users/apple/IdeaProjects/AutoTrader/app/domain/swing/backtest/strategies/single_ema_backtest_strategy.py"
     },
@@ -124,7 +124,7 @@
       "documents": {},
       "timestamps": {
         "started": "2026-02-28T03:36:02.099Z",
-        "lastUpdated": "2026-05-15T13:52:45.429Z"
+        "lastUpdated": "2026-05-18T12:03:48.832Z"
       },
       "lastFile": "/Users/apple/IdeaProjects/AutoTrader/app/domain/swing/entity.py"
     },
@@ -176,7 +176,7 @@
       "documents": {},
       "timestamps": {
         "started": "2026-03-13T05:32:59.682Z",
-        "lastUpdated": "2026-05-15T13:55:30.861Z"
+        "lastUpdated": "2026-05-19T13:14:29.596Z"
       },
       "lastFile": "/Users/apple/IdeaProjects/AutoTrader/app/domain/swing/trading/auto_swing_batch.py"
     },
@@ -417,7 +417,7 @@
   "session": {
     "startedAt": "2026-02-28T03:08:34.644Z",
     "onboardingCompleted": false,
-    "lastActivity": "2026-05-16T06:33:12.980Z"
+    "lastActivity": "2026-05-19T13:53:15.831Z"
   },
   "history": [
     {
@@ -4688,6 +4688,114 @@
     },
     {
       "timestamp": "2026-05-16T06:33:12.980Z",
+      "feature": "strategies",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-18T11:51:38.312Z",
+      "feature": "strategies",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-18T12:03:21.442Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-18T12:03:33.975Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-18T12:03:48.832Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-18T12:04:06.853Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-18T12:04:18.337Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-18T12:04:39.249Z",
+      "feature": "strategies",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-18T12:05:04.652Z",
+      "feature": "strategies",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-18T12:05:18.843Z",
+      "feature": "strategies",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-18T12:05:32.817Z",
+      "feature": "strategies",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-18T12:06:13.859Z",
+      "feature": "strategies",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-19T13:13:36.155Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-19T13:14:01.705Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-19T13:14:16.318Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-19T13:14:29.596Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-19T13:14:40.736Z",
+      "feature": "strategies",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-19T13:15:01.238Z",
+      "feature": "strategies",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-19T13:53:15.831Z",
       "feature": "strategies",
       "phase": "do",
       "action": "updated"

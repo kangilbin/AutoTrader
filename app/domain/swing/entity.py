@@ -26,7 +26,7 @@ class SwingTrade(Base):
     INIT_AMOUNT = Column(DECIMAL(15, 2), nullable=False, comment='초기 투자금')
     CUR_AMOUNT = Column(DECIMAL(15, 2), nullable=False, comment='현재 투자금')
     SWING_TYPE = Column(CHAR(1), nullable=False, comment='스윙 타입 (A: 이평선, B: 일목균형표)')
-    SIGNAL = Column(Integer, nullable=False, default=0, comment='매매 신호 상태 (0:대기, 1:보유-익절전, 2:보유-익절후, 3:수급안정화대기)')
+    SIGNAL = Column(Integer, nullable=False, default=0, comment='매매 신호 상태 (0:대기, 1:보유-익절전, 2:보유-익절후, 3:수급이탈대기, 4:수급재유입대기)')
     ENTRY_PRICE = Column(DECIMAL(15, 2), nullable=True, comment='평균 매수 단가')
     HOLD_QTY = Column(Integer, nullable=True, default=0, comment='보유 수량')
     EOD_SIGNALS = Column(String(500), nullable=True, comment='EOD 매도 신호 JSON')
@@ -56,8 +56,8 @@ class SwingTrade(Base):
         return self.SIGNAL == 0
 
     def is_cooling_down(self) -> bool:
-        """수급 안정화 대기 상태 여부 (SIGNAL 3)"""
-        return self.SIGNAL == 3
+        """수급 안정화 대기 상태 여부 (SIGNAL 3 or 4)"""
+        return self.SIGNAL in (3, 4)
 
     def has_position(self) -> bool:
         """포지션 보유 여부 (SIGNAL 1 or 2)"""
@@ -105,10 +105,17 @@ class SwingTrade(Base):
         self.PEAK_PRICE = None
         self.MOD_DT = datetime.now()
 
-    def transition_to_waiting(self) -> None:
-        """수급 안정화 완료 (SIGNAL 3 → 0)"""
+    def transition_to_reentry_waiting(self) -> None:
+        """수급 이탈 확인 완료 (SIGNAL 3 → 4)"""
         if self.SIGNAL != 3:
-            raise ValidationError(f"수급 안정화 전환은 SIGNAL 3에서만 가능합니다. 현재: {self.SIGNAL}")
+            raise ValidationError(f"수급 재유입 대기 전환은 SIGNAL 3에서만 가능합니다. 현재: {self.SIGNAL}")
+        self.SIGNAL = 4
+        self.MOD_DT = datetime.now()
+
+    def transition_to_waiting(self) -> None:
+        """수급 재유입 확인 완료 (SIGNAL 4 → 0)"""
+        if self.SIGNAL != 4:
+            raise ValidationError(f"매수 대기 전환은 SIGNAL 4에서만 가능합니다. 현재: {self.SIGNAL}")
         self.SIGNAL = 0
         self.MOD_DT = datetime.now()
 

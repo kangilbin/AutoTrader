@@ -250,12 +250,9 @@ async def process_single_swing(
 
                 return
 
-            # === 3. PEAK_PRICE 갱신 (Entity 메서드) ===
-            # 개장 초기 보호: 장중고가(스파이크 포함) 대신 현재가로 갱신
-            _in_opening_guard = is_opening_guard(mrkt_code, strategy.OPENING_GUARD_MINUTES)
+            # === 3. PEAK_PRICE 갱신 (현재가 기준, 노이즈 방지) ===
             if swing.has_position():
-                peak_source = int(current_price) if _in_opening_guard else int(current_high)
-                swing.update_peak_price(peak_source)
+                swing.update_peak_price(int(current_price))
 
             # 변경 전 SIGNAL 저장 (알림용)
             prev_signal = swing.SIGNAL
@@ -273,12 +270,11 @@ async def process_single_swing(
                 await _handle_position(
                     swing, strategy, redis_client, db, user_id, st_code,
                     current_price, frgn_ntby_qty, acml_vol,
-                    cached_indicators, avg_daily_amount, mrkt_code,
-                    in_opening_guard=_in_opening_guard
+                    cached_indicators, avg_daily_amount, mrkt_code
                 )
 
             elif swing.is_cooling_down():
-                _handle_cooling_down(swing, st_code, cached_indicators)
+                _handle_cooling_down(swing, strategy, st_code, cached_indicators)
 
             # === 5. 변경사항 저장 ===
             await db.flush()
@@ -310,14 +306,28 @@ async def process_single_swing(
 # ==================== SIGNAL 핸들러 ====================
 
 
-def _handle_cooling_down(swing, st_code: str, cached_indicators: dict):
-    """수급 안정화 대기 (SIGNAL 3) → OBV z ≤ 0이면 매수 대기(SIGNAL 0)로 전환"""
+def _handle_cooling_down(swing, strategy, st_code: str, cached_indicators: dict):
+    """
+    수급 안정화 대기 (2단계)
+
+    SIGNAL 3 (수급 이탈 대기): OBV z < COOLDOWN_OBV_EXIT → SIGNAL 4
+    SIGNAL 4 (수급 재유입 대기): OBV z > COOLDOWN_OBV_REENTRY → SIGNAL 0
+    """
     obv_z = cached_indicators.get('realtime_obv_z', 0)
-    if obv_z <= 0:
-        swing.transition_to_waiting()
-        logger.info(f"[{st_code}] 수급 안정화 완료 (OBV z={obv_z:.2f} ≤ 0) → 매수 대기(SIGNAL 0)")
-    else:
-        logger.debug(f"[{st_code}] 수급 안정화 대기 중 (OBV z={obv_z:.2f} > 0)")
+
+    if swing.SIGNAL == 3:
+        if obv_z < strategy.COOLDOWN_OBV_EXIT:
+            swing.transition_to_reentry_waiting()
+            logger.info(f"[{st_code}] 수급 이탈 확인 (OBV z={obv_z:.2f} < {strategy.COOLDOWN_OBV_EXIT}) → 재유입 대기(SIGNAL 4)")
+        else:
+            logger.debug(f"[{st_code}] 수급 이탈 대기 중 (OBV z={obv_z:.2f})")
+
+    elif swing.SIGNAL == 4:
+        if obv_z > strategy.COOLDOWN_OBV_REENTRY:
+            swing.transition_to_waiting()
+            logger.info(f"[{st_code}] 수급 재유입 확인 (OBV z={obv_z:.2f} > {strategy.COOLDOWN_OBV_REENTRY}) → 매수 대기(SIGNAL 0)")
+        else:
+            logger.debug(f"[{st_code}] 수급 재유입 대기 중 (OBV z={obv_z:.2f})")
 
 
 async def _handle_waiting(
@@ -418,8 +428,7 @@ async def _handle_waiting(
 async def _handle_position(
     swing, strategy, redis_client, db, user_id, st_code,
     current_price, frgn_ntby_qty, acml_vol,
-    cached_indicators, avg_daily_amount, mrkt_code="",
-    in_opening_guard: bool = False
+    cached_indicators, avg_daily_amount, mrkt_code=""
 ):
     """보유 상태 → 손절/1차 익절/2차 익절 확인"""
     entry_price = int(swing.ENTRY_PRICE) if swing.ENTRY_PRICE else 0
@@ -452,17 +461,13 @@ async def _handle_position(
         )
         return
 
-    # 2. 장중 trailing stop 익절 체크 (개장 보호 기간 중 스킵)
-    if in_opening_guard:
-        ts_result = None
-        logger.debug(f"[{st_code}] 개장 보호 기간 — 익절 체크 스킵")
-    else:
-        ts_result = await strategy.check_trailing_stop_signal(
-            symbol=st_code,
-            current_price=current_price,
-            peak_price=int(swing.PEAK_PRICE) if swing.PEAK_PRICE else 0,
-            signal=swing.SIGNAL,
-            cached_indicators=cached_indicators
+    # 2. 장중 trailing stop 익절 체크
+    ts_result = await strategy.check_trailing_stop_signal(
+        symbol=st_code,
+        current_price=current_price,
+        peak_price=int(swing.PEAK_PRICE) if swing.PEAK_PRICE else 0,
+        signal=swing.SIGNAL,
+        cached_indicators=cached_indicators
         )
 
     if ts_result and ts_result.get("action") == "SELL_HALF":

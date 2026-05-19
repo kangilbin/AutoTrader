@@ -26,22 +26,30 @@ AutoTrader 스윙 매매 백테스팅 전략 모음입니다.
 | EMA 20 | 단기 추세 판단, 매수/매도 기준선 |
 | ADX / +DI / -DI | 추세 강도 및 방향 판단 |
 | ATR (14) | 변동성 기반 손절선, 가격 가드레일 |
-| OBV z-score | 거래량 기반 수급 강도 (7일 룩백) |
+| OBV z-score | 거래량 기반 수급 강도 (매수 7일 / 2차 익절 14일) |
 
 ### 포지션 상태 흐름
 
 ```
-signal = 0 (대기)
+signal = 0 (매수 대기)
     │ 매수 (리스크 기반 수량 계산)
     ▼
 signal = 1 (보유 - 1차 익절 전) ← peak_price = 매수가
-    │ 매일: peak_price = max(peak_price, 고가)
-    ├─ [손절] EMA-ATR ──────────→ signal = 0 (전량 매도)
+    │ 매일: peak_price = max(peak_price, 당일고가) — 매도 체크 전 갱신
+    ├─ [손절] entry - ATR ─────→ signal = 3 (전량 매도)
     │
     └─ [1차 익절] PEAK-ATR×2.0 → 50% 매도 → signal = 2
                                               │ peak_price 리셋
-                                              ├─ [손절] Max(EMA-ATR, 평단가) → signal = 0 (본전 방어)
-                                              └─ [2차 익절] PEAK-ATR×2.0 AND OBV-Z<-0.5 → signal = 0
+                                              ├─ [손절] Max(entry-ATR, 평단가) → signal = 3 (본전 방어)
+                                              └─ [2차 익절] PEAK-ATR×2.0 AND OBV-Z14<-0.5 → signal = 3
+
+signal = 3 (수급 이탈 대기)
+    │ OBV z < COOLDOWN_OBV_EXIT
+    ▼
+signal = 4 (수급 재유입 대기)
+    │ OBV z > COOLDOWN_OBV_REENTRY
+    ▼
+signal = 0 (매수 대기)
 ```
 
 ---
@@ -63,6 +71,8 @@ Qty = min(
 
 #### 공통 필터
 - **급등 필터**: 당일 변동률(절대값) ≤ 5% (급등/급락 종목 배제)
+- **갭 하락 필터**: 당일 시가 < 전일 저가 시 매수 차단
+- **윗꼬리 필터**: 전일 캔들 범위 > 종가×3% AND 윗꼬리 비율 ≥ 40% 시 매수 차단
 
 공통 필터 통과 후, **시나리오 A 또는 B** 중 하나 충족 시 진입 (신호가 기준: EMA20, 범위 밖이면 종가 fallback)
 
@@ -91,11 +101,11 @@ Qty = min(
 - 보유 물량의 **50%** 를 stop_price(고점 - ATR×2.0)에 매도하여 수익 확정
 - 매도 후 peak_price를 stop_price로 리셋
 
-#### [2차 익절] 잔량 전량 매도 (signal 2 → 0)
+#### [2차 익절] 잔량 전량 매도 (signal 2 → 3)
 
-- 저가 ≤ 고점(peak_price) - ATR×2.0 **AND** OBV z-score < -0.5
-- stop_price(고점 - ATR×2.0)에 잔량 전량 매도
-- OBV 양호 시 매도 안 함 → 추세 추적
+- 저가 ≤ 고점(peak_price) - ATR×2.0 **AND** OBV z-score(14일) < -0.5
+- stop_price(고점 - ATR×2.0)에 잔량 전량 매도 → SIGNAL 3 (수급 안정화 대기)
+- OBV(14일) 양호 시 매도 안 함 → 추세 추적
 
 ---
 
@@ -117,8 +127,10 @@ Qty = min(
 | EMA_PERIOD | 20 | 단기 EMA 기간 |
 | OBV_LOOKBACK | 7 | 매수용 OBV z-score 기간 |
 | OBV_LOOKBACK_SELL | 14 | 2차 익절용 OBV z-score 기간 |
-| **매수** | | |
+| **매수 필터** | | |
 | MAX_SURGE_RATIO | 0.05 | 전일 대비 최대 급등률 (5%) |
+| UPPER_SHADOW_RATIO_MAX | 0.4 | 전일 윗꼬리 비율 ≥ 40% 시 매수 차단 |
+| MIN_CANDLE_RANGE_PCT | 0.03 | 윗꼬리 필터 최소 캔들 범위 (종가 대비 3%) |
 | **포지션 사이징** | | |
 | ENTRY_PCT | 0.5 | 매 사이클 배정금 대비 투입 비율 (50%) |
 | MAX_LOSS_PCT | 0.03 | 손절 시 배정금 대비 최대 손실률 (3%, 리스크 기반 수량 조절) |
@@ -129,6 +141,9 @@ Qty = min(
 | FIRST_PROFIT_TAKE_RATIO | 0.5 | 1차 익절 매도 비율 (50%) |
 | OBV_Z_SELL_THRESHOLD | -0.5 | 2차 익절 OBV z-score 게이트 |
 | TRAILING_STOP_FALLBACK_PCT | 5.0 | ATR 무효 시 폴백 (%) |
+| **수급 안정화** | | |
+| COOLDOWN_OBV_EXIT | -0.5 | 수급 이탈 확인 기준 (obv_z < -0.5) |
+| COOLDOWN_OBV_REENTRY | 0.5 | 수급 재유입 확인 기준 (obv_z > 0.5) |
 
 ---
 
@@ -191,14 +206,17 @@ Qty = min(
 | 구분 | 실전 전략 (SingleEMAStrategy) | 백테스팅 전략 (SingleEMABacktestStrategy) |
 |------|-------------------------------|------------------------------------------|
 | **데이터** | 실시간 5분 간격 체크 | 일별 OHLCV 데이터 |
-| **1차 매수** | 시나리오 A(눌림목) + B(추세 추종), 연속 2회 | 동일 (연속 1회), 신호가(EMA20) 기준 체결 |
-| **2차 매수** | 통합 조건 (20분 경과 + 전일 양봉) | 동일 (전일 양봉) |
-| **포지션 사이징** | min(CUR_AMOUNT×ENTRY_PCT/Price, CUR_AMOUNT×MAX_LOSS_PCT/Risk) | 동일 |
-| **손절** | 실시간 현재가 기준 | 저가 ≤ 손절가 시 손절가로 체결 |
-| **1차 익절** | 현재가 ≤ PEAK - ATR×2.0 → 50% 매도 | 저가 ≤ stop_price 시 stop_price로 체결 |
-| **2차 익절** | ATR×2.0 + OBV-Z < -0.5 → 잔량 매도 | stop_price로 체결 (OBV 게이트 동일) |
-| **본전 방어** | SIGNAL 2: Max(EMA-ATR, 평단가) | 동일 |
-| **포지션 상태** | SIGNAL 0→1→2→0 | signal 0→1→2→0 |
+| **매수 공통 필터** | 급등 + 윗꼬리 + 갭하락 | 동일 |
+| **매수 시나리오** | A(눌림목 매집) + B(추세 추종 돌파) | 동일 |
+| **연속 확인** | 2회 (Redis, ~10분) | 1회 (일봉 한계) |
+| **포지션 사이징** | min(배정금×ENTRY_PCT, 손실제한) | 동일 |
+| **PEAK 추적** | max(PEAK, 현재가) — 5분마다 | max(PEAK, 당일고가) — 매도 전 갱신 |
+| **손절** | 동적 EMA-ATR (매 체크 재계산) | 고정 손절가 (매수 시 확정, 일봉 한계) |
+| **손절 후 SIGNAL** | OBV z 판단 → SIGNAL 0 or 3 | 항상 SIGNAL 3 (보수적) |
+| **1차 익절** | PEAK - ATR×2.0 → 50% 매도 | 동일 (체결가 < 매수가면 스킵) |
+| **2차 익절** | PEAK - ATR×2.0 + OBV-Z14 < -0.5 | 동일 |
+| **수급 안정화** | SIGNAL 3→4→0 (2단계) | 동일 |
+| **포지션 상태** | SIGNAL 0→1→2→3→4→0 | 동일 |
 | **주요 목적** | 장중 실시간 매매 | 과거 데이터 성능 검증 |
 
 ---
@@ -210,4 +228,4 @@ Qty = min(
 
 ---
 
-**마지막 업데이트**: 2026-05-10
+**마지막 업데이트**: 2026-05-19

@@ -50,6 +50,9 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
 
             # === 1단계: 포지션 보유 시 매도 조건 체크 ===
             if signal in (1, 2):
+                # PEAK 갱신 (매도 체크 전에 고가 반영)
+                peak_price = max(peak_price, row["STCK_HGPR"])
+
                 # [손절] 고정 손절 (entry - ATR×2.0, SIGNAL 2에서는 본전 방어)
                 if stop_loss > 0:
                     current_stop = max(stop_loss, entry_price) if signal == 2 else stop_loss
@@ -105,8 +108,6 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
                                 peak_price, entry_price, stop_loss, hold_qty = 0.0, 0.0, 0.0, 0
                                 continue
 
-                # 매도 미발생 시 당일 고가로 peak 업데이트
-                peak_price = max(peak_price, row["STCK_HGPR"])
 
             # === 2단계: 수급 안정화 대기 (SIGNAL 3) ===
             # OBV z ≤ 0 한번 찍은 뒤(signal 4), 다시 양수 전환해야 매수 가능
@@ -177,8 +178,6 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
 
     def _check_entry_conditions(self, row: pd.Series, prev_row: pd.Series = None) -> Tuple[bool, List[str], float]:
         """1차 매수 진입: 시나리오 A(눌림목 매집) + 시나리오 B(추세 추종 돌파)"""
-        if row["STCK_BSOP_DATE"] == pd.to_datetime("2025-06-09"):
-            print(f"row: {row}")
         required_cols = ["ema20", "obv_z", "plus_di", "minus_di", "daily_return", "adx", "atr"]
         if any(pd.isna(row[col]) for col in required_cols):
             return False, [], 0.0
@@ -205,7 +204,7 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
         prev_high = prev_row.get("STCK_HGPR", 0)
         prev_low = prev_row.get("STCK_LWPR", 0)
         candle_range = prev_high - prev_low
-        if candle_range > 0 and prev_close > 0 and candle_range / prev_close > 0.03:
+        if candle_range > 0 and prev_close > 0 and candle_range / prev_close > self.MIN_CANDLE_RANGE_PCT:
             upper_shadow = prev_high - max(prev_open, prev_close)
             upper_shadow_ratio = upper_shadow / candle_range
             if upper_shadow_ratio >= self.UPPER_SHADOW_RATIO_MAX:
@@ -217,7 +216,7 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
 
 
         if accum_lower <= current_price <= accum_upper:
-            obv_accumulating = row["obv_z"] > self.ACCUM_ENTRY_OBV_MIN
+            obv_accumulating = (row["obv_z"] > self.ACCUM_ENTRY_OBV_MIN) and (prev_row["obv_z"] is not None and row["obv_z"] > prev_row["obv_z"])
             adx_mid_range = self.ACCUM_ENTRY_ADX_MIN <= row["adx"] <= self.ACCUM_ENTRY_ADX_MAX
             trend_direction = row["plus_di"] > row["minus_di"]
 

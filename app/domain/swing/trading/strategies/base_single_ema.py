@@ -24,6 +24,7 @@ class BaseSingleEMAStrategy:
     OBV_LOOKBACK_SELL = 14           # 2차 익절용 OBV z-score 기간 (추세 레벨 수급 이탈 감지)
     MAX_SURGE_RATIO = 0.05       # 전일 대비 최대 급등률 (5%)
     UPPER_SHADOW_RATIO_MAX = 0.4     # 전일 윗꼬리가 캔들 범위의 40% 이상이면 매수 차단
+    MIN_CANDLE_RANGE_PCT = 0.03      # 윗꼬리 필터 최소 캔들 범위 (종가 대비 3%)
 
     # 매수 [시나리오 A] 눌림목 매집 진입
     ACCUM_ENTRY_ATR_LOWER = -0.5     # 하한: EMA - ATR × 0.5
