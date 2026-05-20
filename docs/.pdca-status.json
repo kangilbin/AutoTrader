@@ -1,6 +1,6 @@
 {
   "version": "2.0",
-  "lastUpdated": "2026-05-19T13:53:15.831Z",
+  "lastUpdated": "2026-05-20T12:26:53.140Z",
   "activeFeatures": [
     "foreign-swing",
     "foreign-stock",
@@ -26,7 +26,8 @@
     "swing-reg Gap 분석 완료",
     "backtest",
     "sell-all Gap 분석",
-    "backtest-realistic-pricing"
+    "backtest-realistic-pricing",
+    "conviction-sizing Gap 분석"
   ],
   "primaryFeature": "swing-trade",
   "features": {
@@ -111,7 +112,7 @@
       },
       "timestamps": {
         "started": "2026-02-28T03:35:36.461Z",
-        "lastUpdated": "2026-05-19T13:53:15.831Z"
+        "lastUpdated": "2026-05-20T12:26:28.469Z"
       },
       "lastFile": "/Users/apple/IdeaProjects/AutoTrader/app/domain/swing/backtest/strategies/single_ema_backtest_strategy.py"
     },
@@ -176,7 +177,7 @@
       "documents": {},
       "timestamps": {
         "started": "2026-03-13T05:32:59.682Z",
-        "lastUpdated": "2026-05-19T13:14:29.596Z"
+        "lastUpdated": "2026-05-20T12:20:38.732Z"
       },
       "lastFile": "/Users/apple/IdeaProjects/AutoTrader/app/domain/swing/trading/auto_swing_batch.py"
     },
@@ -407,6 +408,20 @@
       },
       "previousPhase": "check",
       "autoAdvanced": true
+    },
+    "conviction-sizing Gap 분석": {
+      "phase": "act",
+      "phaseNumber": 5,
+      "matchRate": null,
+      "iterationCount": 0,
+      "requirements": [],
+      "documents": {},
+      "timestamps": {
+        "started": "2026-05-20T12:26:53.139Z",
+        "lastUpdated": "2026-05-20T12:26:53.140Z"
+      },
+      "previousPhase": "check",
+      "autoAdvanced": true
     }
   },
   "pipeline": {
@@ -417,7 +432,7 @@
   "session": {
     "startedAt": "2026-02-28T03:08:34.644Z",
     "onboardingCompleted": false,
-    "lastActivity": "2026-05-19T13:53:15.831Z"
+    "lastActivity": "2026-05-20T12:26:53.140Z"
   },
   "history": [
     {
@@ -4798,6 +4813,54 @@
       "timestamp": "2026-05-19T13:53:15.831Z",
       "feature": "strategies",
       "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-20T11:42:19.097Z",
+      "feature": "strategies",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-20T12:19:56.460Z",
+      "feature": "strategies",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-20T12:20:16.388Z",
+      "feature": "strategies",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-20T12:20:38.732Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-20T12:20:58.425Z",
+      "feature": "strategies",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-20T12:26:12.533Z",
+      "feature": "strategies",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-20T12:26:28.469Z",
+      "feature": "strategies",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-20T12:26:53.140Z",
+      "feature": "conviction-sizing Gap 분석",
+      "phase": "act",
       "action": "updated"
     }
   ]

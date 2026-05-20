@@ -1,7 +1,7 @@
 """
 단일 20EMA 백테스팅 전략 (Single EMA Backtest Strategy) — 2단계 분할 익절
 
-**매수:** 시나리오 A(눌림목) + B(돌파), 리스크 기반 포지션 사이징
+**매수:** 시나리오 A(눌림목) + B(돌파), Conviction 기반 포지션 사이징
 **손절:** EMA - ATR×2.0 (SIGNAL 2에서는 본전 방어)
 **1차 익절:** 고점 - ATR×2.0 → 50% 매도
 **2차 익절:** 고점 - ATR×2.0 AND OBV z-score < -0.5 → 잔량 전량 매도
@@ -123,7 +123,7 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
                     signal = 0  # 확실한 수급 재유입 확인, 매수 가능
                 continue
 
-            # === 3단계: 포지션 미보유 시 매수 (리스크 기반 포지션 사이징) ===
+            # === 3단계: 포지션 미보유 시 매수 (Conviction 기반 포지션 사이징) ===
             if signal == 0 and current_capital > 0:
                 matched, signal_reasons, signal_price = self._check_entry_conditions(row, prev_row)
 
@@ -134,24 +134,16 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
                     else:
                         buy_price = row["STCK_CLPR"]
                     atr = row.get("atr", 0)
-                    ema = row.get("ema20", 0)
 
-                    # Qty = min(배정금 × ENTRY_PCT / 현재가, 손실제한 수량)
-                    entry_qty = int(current_capital * self.ENTRY_PCT / buy_price)
+                    # Conviction 기반 포지션 사이징
+                    adx_val = row.get("adx", 0) if pd.notna(row.get("adx", 0)) else 0
+                    obv_z_val = row.get("obv_z", 0) if pd.notna(row.get("obv_z", 0)) else 0
+                    conviction = self.calc_conviction(adx_val, obv_z_val)
 
-                    if pd.notna(atr) and atr > 0 and pd.notna(ema) and buy_price > 0:
-                        stop_price = ema - atr * self.ATR_MULTIPLIER
-                        risk_per_share = buy_price - stop_price
-                        if risk_per_share > 0:
-                            loss_limit_qty = int(current_capital * self.MAX_LOSS_PCT / risk_per_share)
-                            buy_quantity = min(entry_qty, loss_limit_qty)
-                        else:
-                            buy_quantity = entry_qty
-                    else:
-                        buy_quantity = entry_qty
+                    buy_quantity = int(current_capital * self.MAX_ENTRY_PCT * conviction / buy_price)
 
                     if buy_quantity > 0:
-                        reasons = ["매수"] + signal_reasons
+                        reasons = ["매수"] + signal_reasons + [f"conviction={conviction:.2f}"]
                         current_capital = self._execute_buy(trades, current_date, buy_price, buy_quantity, current_capital, reasons)
                         signal = 1
                         peak_price = buy_price

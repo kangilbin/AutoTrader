@@ -356,24 +356,17 @@ async def _handle_waiting(
         logger.warning(f"[{st_code}] USER_ID 없음, 주문 실행 불가")
         return
 
-    # 포지션 사이징: min(배정금 × ENTRY_PCT, 손실제한 수량)
-    realtime_ema20 = cached_indicators.get('realtime_ema20', 0)
-    realtime_atr = cached_indicators.get('realtime_atr', 0)
+    # Conviction 기반 포지션 사이징
+    realtime_adx = cached_indicators.get('realtime_adx', 0)
+    realtime_obv_z = cached_indicators.get('realtime_obv_z', 0)
     equity = float(swing.CUR_AMOUNT)
     curr_price = float(current_price)
 
-    # 기본 수량: 배정금의 ENTRY_PCT만큼 투입
-    entry_qty = int(equity * strategy.ENTRY_PCT / curr_price) if curr_price > 0 else 0
+    conviction = strategy.calc_conviction(realtime_adx, realtime_obv_z)
+    target_qty = int(equity * strategy.MAX_ENTRY_PCT * conviction / curr_price) if curr_price > 0 else 0
 
-    # 안전장치: 손절 시 배정금의 MAX_LOSS_PCT 이내 손실로 제한
-    stop_price = realtime_ema20 - realtime_atr * strategy.ATR_MULTIPLIER
-    risk_per_share = curr_price - stop_price
-
-    if risk_per_share > 0 and curr_price > 0:
-        loss_limit_qty = int(equity * strategy.MAX_LOSS_PCT / risk_per_share)
-        target_qty = min(entry_qty, loss_limit_qty)
-    else:
-        target_qty = entry_qty
+    logger.info(f"[{st_code}] 포지션 사이징: conviction={conviction:.2f}, "
+                f"투입비={strategy.MAX_ENTRY_PCT * conviction:.1%}, 수량={target_qty}")
 
     target_amount = Decimal(str(target_qty)) * current_price if target_qty > 0 else Decimal(0)
 

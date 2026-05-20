@@ -38,10 +38,34 @@ class BaseSingleEMAStrategy:
     BREAKOUT_ENTRY_ADX_MIN = 15      # ADX 최소값 (최소 추세 강도)
     BREAKOUT_ENTRY_OBV_MIN = 0.0     # OBV z-score 최소값
 
-    # 포지션 사이징
-    # Qty = min(CUR_AMOUNT × ENTRY_PCT / 현재가, CUR_AMOUNT × MAX_LOSS_PCT / risk_per_share)
-    ENTRY_PCT = 0.5                  # 매 사이클 배정금 대비 투입 비율 (50%)
-    MAX_LOSS_PCT = 0.03              # 손절 시 배정금 대비 최대 손실률 (3%, 리스크 기반 수량 조절)
+    # 포지션 사이징 (Conviction Score 기반)
+    # Qty = int(CUR_AMOUNT × MAX_ENTRY_PCT × conviction / 현재가)
+    MAX_ENTRY_PCT = 0.8              # 최대 투입 비율 (배정금의 80%)
+    MIN_CONVICTION = 0.4             # 최소 확신도 (0.4 = 32% 투입)
+
+    # Conviction 가중치
+    CONVICTION_OBV_WEIGHT = 0.7      # OBV z-score 가중치 (70%)
+    CONVICTION_ADX_WEIGHT = 0.3      # ADX 가중치 (30%)
+
+    @classmethod
+    def calc_conviction(cls, adx: float, obv_z: float) -> float:
+        """
+        매수 신호 강도 기반 확신도 계산 (MIN_CONVICTION ~ 1.0)
+
+        - OBV z-score (70%): 수급 강도 → 추세 지속 가능성
+        - ADX (30%): 추세 강도 (25 이상은 과열 감점)
+        """
+        # OBV 점수: z=0→0.3, z=1.0→0.77, z=1.5+→1.0
+        obv_score = max(0.3, min(1.0, 0.3 + obv_z * 0.467))
+
+        # ADX 점수: 15→0.3, 25→1.0, 30+→감점
+        if adx <= 25:
+            adx_score = max(0.3, min(1.0, 0.3 + (adx - 15) * 0.07))
+        else:
+            adx_score = max(0.5, 1.0 - (adx - 25) * 0.04)
+
+        raw = obv_score * cls.CONVICTION_OBV_WEIGHT + adx_score * cls.CONVICTION_ADX_WEIGHT
+        return max(cls.MIN_CONVICTION, min(1.0, raw))
 
     # 매도 조건
     # [손절] EMA - ATR×N 이탈 시 즉시 전량 매도 (SIGNAL 2에서는 본전 방어 적용)

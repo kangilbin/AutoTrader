@@ -32,15 +32,15 @@ AutoTrader 스윙 매매 백테스팅 전략 모음입니다.
 
 ```
 signal = 0 (매수 대기)
-    │ 매수 (리스크 기반 수량 계산)
+    │ 매수 (Conviction 기반 수량 계산)
     ▼
 signal = 1 (보유 - 1차 익절 전) ← peak_price = 매수가
     │ 매일: peak_price = max(peak_price, 당일고가) — 매도 체크 전 갱신
-    ├─ [손절] entry - ATR ─────→ signal = 3 (전량 매도)
+    ├─ [손절] entry - ATR×2.0 ──→ signal = 3 (전량 매도)
     │
     └─ [1차 익절] PEAK-ATR×2.0 → 50% 매도 → signal = 2
                                               │ peak_price 리셋
-                                              ├─ [손절] Max(entry-ATR, 평단가) → signal = 3 (본전 방어)
+                                              ├─ [손절] Max(entry-ATR×2.0, 평단가) → signal = 3 (본전 방어)
                                               └─ [2차 익절] PEAK-ATR×2.0 AND OBV-Z14<-0.5 → signal = 3
 
 signal = 3 (수급 이탈 대기)
@@ -54,16 +54,36 @@ signal = 0 (매수 대기)
 
 ---
 
-### 포지션 사이징 (고정 비율 + 손실 안전장치)
+### 포지션 사이징 (Conviction Score 기반)
+
+매수 신호의 강도(Conviction Score)에 따라 투입 비율을 가변 조절합니다.
+강한 신호일수록 더 많이 투입하고, 애매한 신호일수록 줄입니다.
 
 ```
-Qty = min(
-    Capital × ENTRY_PCT / 신호가,              ← 기본: 배정금의 50% 투입
-    Capital × MAX_LOSS_PCT / (신호가 - 손절가)  ← 리스크 제한: 손절 시 배정금의 3% 이내 손실
-)
+Qty = int(Capital × MAX_ENTRY_PCT × Conviction / 신호가)
+
+MAX_ENTRY_PCT = 0.8 (최대 배정금의 80%)
+Conviction = 0.4 ~ 1.0 (신호 강도에 따라 가변)
 신호가 = EMA20 (저가 ≤ EMA20 ≤ 고가일 때), 범위 밖이면 종가 fallback
-손절가 = 진입일 EMA20 - ATR × 1.0
 ```
+
+#### Conviction Score 계산
+
+OBV z-score(70%)와 ADX(30%)의 가중 평균으로 산출합니다.
+
+| 요소 | 가중치 | 점수 매핑 | 근거 |
+|------|--------|----------|------|
+| OBV z-score | 70% | z=0→0.3, z=1.0→0.77, z=1.5+→1.0 | 수급 강도 → 추세 지속 가능성 |
+| ADX | 30% | 15→0.3, 25→1.0, 30+→0.8 (과열 감점) | 추세 강도 (과열 시 감점) |
+
+#### 신호 강도별 투입 예시
+
+| 신호 강도 | OBV z | ADX | Conviction | 투입비 |
+|----------|-------|-----|-----------|--------|
+| 약한 신호 (겨우 통과) | 0.1 | 16 | 0.40 | 32% |
+| 보통 신호 | 0.5 | 20 | 0.57 | 46% |
+| 강한 신호 | 1.0 | 24 | 0.82 | 66% |
+| 매우 강한 신호 | 1.5 | 25 | 1.00 | **80%** |
 
 ---
 
@@ -92,8 +112,8 @@ Qty = min(
 
 #### [손절] 즉시 매도 (일일 저가 기준)
 
-- **signal 1**: 저가 ≤ EMA20 - ATR×1.0 시 전량 매도
-- **signal 2**: 저가 ≤ Max(EMA20 - ATR×1.0, 평단가) 시 전량 매도 (**본전 방어**)
+- **signal 1**: 저가 ≤ EMA20 - ATR×2.0 시 전량 매도
+- **signal 2**: 저가 ≤ Max(EMA20 - ATR×2.0, 평단가) 시 전량 매도 (**본전 방어**)
 
 #### [1차 익절] 50% 매도 (signal 1 → 2)
 
@@ -132,10 +152,12 @@ Qty = min(
 | UPPER_SHADOW_RATIO_MAX | 0.4 | 전일 윗꼬리 비율 ≥ 40% 시 매수 차단 |
 | MIN_CANDLE_RANGE_PCT | 0.03 | 윗꼬리 필터 최소 캔들 범위 (종가 대비 3%) |
 | **포지션 사이징** | | |
-| ENTRY_PCT | 0.5 | 매 사이클 배정금 대비 투입 비율 (50%) |
-| MAX_LOSS_PCT | 0.03 | 손절 시 배정금 대비 최대 손실률 (3%, 리스크 기반 수량 조절) |
+| MAX_ENTRY_PCT | 0.8 | 최대 투입 비율 (배정금의 80%) |
+| MIN_CONVICTION | 0.4 | 최소 확신도 (0.4 = 32% 투입) |
+| CONVICTION_OBV_WEIGHT | 0.7 | Conviction 계산 시 OBV z-score 가중치 (70%) |
+| CONVICTION_ADX_WEIGHT | 0.3 | Conviction 계산 시 ADX 가중치 (30%) |
 | **손절** | | |
-| ATR_MULTIPLIER | 1.0 | 손절 ATR 배수 (EMA - ATR×1.0) |
+| ATR_MULTIPLIER | 2.0 | 손절 ATR 배수 (EMA - ATR×2.0) |
 | **익절** | | |
 | TRAILING_STOP_ATR_MULT | 2.0 | 고점 대비 ATR 배수 (PEAK - ATR×2.0) |
 | FIRST_PROFIT_TAKE_RATIO | 0.5 | 1차 익절 매도 비율 (50%) |
@@ -209,7 +231,7 @@ Qty = min(
 | **매수 공통 필터** | 급등 + 윗꼬리 + 갭하락 | 동일 |
 | **매수 시나리오** | A(눌림목 매집) + B(추세 추종 돌파) | 동일 |
 | **연속 확인** | 2회 (Redis, ~10분) | 1회 (일봉 한계) |
-| **포지션 사이징** | min(배정금×ENTRY_PCT, 손실제한) | 동일 |
+| **포지션 사이징** | 배정금×MAX_ENTRY_PCT×Conviction (실시간 ADX/OBV) | 동일 (전일 종가 기준 ADX/OBV) |
 | **PEAK 추적** | max(PEAK, 현재가) — 5분마다 | max(PEAK, 당일고가) — 매도 전 갱신 |
 | **손절** | 동적 EMA-ATR (매 체크 재계산) | 고정 손절가 (매수 시 확정, 일봉 한계) |
 | **손절 후 SIGNAL** | OBV z 판단 → SIGNAL 0 or 3 | 항상 SIGNAL 3 (보수적) |

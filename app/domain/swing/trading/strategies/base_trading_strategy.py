@@ -29,6 +29,8 @@ class TradingStrategy(ABC):
     """
 
     name: str = "기본 전략"
+    MAX_ENTRY_PCT: float
+    ATR_MULTIPLIER: float
 
     @classmethod
     @abstractmethod
