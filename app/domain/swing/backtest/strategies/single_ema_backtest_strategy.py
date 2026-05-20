@@ -50,8 +50,10 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
 
             # === 1단계: 포지션 보유 시 매도 조건 체크 ===
             if signal in (1, 2):
-                # PEAK 갱신 (매도 체크 전에 고가 반영)
-                peak_price = max(peak_price, row["STCK_HGPR"])
+                # PEAK 갱신: 전일 고가까지만 반영 (당일 고가는 다음 날 반영)
+                # 일봉에서는 고가/저가의 장중 순서를 알 수 없으므로,
+                # 같은 캔들에서 PEAK 갱신 후 익절이 동시에 발동하는 오류를 방지
+                peak_price = max(peak_price, prev_row["STCK_HGPR"])
 
                 # [손절] 고정 손절 (entry - ATR×2.0, SIGNAL 2에서는 본전 방어)
                 if stop_loss > 0:
@@ -148,7 +150,9 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
                         signal = 1
                         peak_price = buy_price
                         entry_price = buy_price
-                        stop_loss = floor_tick(buy_price - atr * self.ATR_MULTIPLIER) if pd.notna(atr) and atr > 0 else 0.0
+                        atr_stop = floor_tick(buy_price - atr * self.ATR_MULTIPLIER) if pd.notna(atr) and atr > 0 else 0.0
+                        max_stop = floor_tick(buy_price * (1 - self.MAX_STOP_LOSS_PCT / 100))
+                        stop_loss = max(atr_stop, max_stop) if atr_stop > 0 else 0.0
                         hold_qty = buy_quantity
 
         # 최종 청산 및 결과 포맷팅

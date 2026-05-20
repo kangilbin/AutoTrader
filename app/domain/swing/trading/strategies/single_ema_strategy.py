@@ -400,6 +400,11 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
 
         ema_atr_stop = realtime_ema20 - (realtime_atr * cls.ATR_MULTIPLIER)
 
+        # 최대 손절 캡: 매수가 대비 MAX_STOP_LOSS_PCT% 이상 벌어지지 않도록 제한
+        if entry_price > 0:
+            max_stop = entry_price * (1 - cls.MAX_STOP_LOSS_PCT / 100)
+            ema_atr_stop = max(ema_atr_stop, max_stop)
+
         # SIGNAL 2 (1차 익절 후): 본전 방어 — 손절 하한을 평단가로 올림
         if signal == 2 and entry_price > 0:
             ema_atr_stop = max(ema_atr_stop, entry_price)

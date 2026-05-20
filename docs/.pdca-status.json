@@ -1,6 +1,6 @@
 {
   "version": "2.0",
-  "lastUpdated": "2026-05-20T12:26:53.140Z",
+  "lastUpdated": "2026-05-20T12:46:48.842Z",
   "activeFeatures": [
     "foreign-swing",
     "foreign-stock",
@@ -112,7 +112,7 @@
       },
       "timestamps": {
         "started": "2026-02-28T03:35:36.461Z",
-        "lastUpdated": "2026-05-20T12:26:28.469Z"
+        "lastUpdated": "2026-05-20T12:46:48.842Z"
       },
       "lastFile": "/Users/apple/IdeaProjects/AutoTrader/app/domain/swing/backtest/strategies/single_ema_backtest_strategy.py"
     },
@@ -432,7 +432,7 @@
   "session": {
     "startedAt": "2026-02-28T03:08:34.644Z",
     "onboardingCompleted": false,
-    "lastActivity": "2026-05-20T12:26:53.140Z"
+    "lastActivity": "2026-05-20T12:46:48.842Z"
   },
   "history": [
     {
@@ -4861,6 +4861,30 @@
       "timestamp": "2026-05-20T12:26:53.140Z",
       "feature": "conviction-sizing Gap 분석",
       "phase": "act",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-20T12:42:17.516Z",
+      "feature": "strategies",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-20T12:42:33.097Z",
+      "feature": "strategies",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-20T12:42:49.355Z",
+      "feature": "strategies",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-20T12:46:48.842Z",
+      "feature": "strategies",
+      "phase": "do",
       "action": "updated"
     }
   ]

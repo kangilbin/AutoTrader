@@ -70,6 +70,7 @@ class BaseSingleEMAStrategy:
     # 매도 조건
     # [손절] EMA - ATR×N 이탈 시 즉시 전량 매도 (SIGNAL 2에서는 본전 방어 적용)
     ATR_MULTIPLIER = 2.0
+    MAX_STOP_LOSS_PCT = 7.0              # 최대 손절 허용 비율 (매수가 대비 7%)
 
     # [1차 익절] 고점 대비 ATR 하락 시 50% 매도 (SIGNAL 1 → 2)
     TRAILING_STOP_ATR_MULT = 2.0          # 고점 - ATR × 2.0

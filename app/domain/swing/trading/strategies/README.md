@@ -245,6 +245,7 @@ OBV z-score(70%)와 ADX(30%)의 가중 평균으로 산출합니다.
 | MIN_CANDLE_RANGE_PCT | 0.03 | 윗꼬리 필터 최소 캔들 범위 (종가 대비 3%) |
 | **손절** | | |
 | ATR_MULTIPLIER | 2.0 | 손절 ATR 배수 (EMA - ATR×2.0) |
+| MAX_STOP_LOSS_PCT | 7.0 | 최대 손절 허용 비율 (매수가 대비 7%) |
 | **익절** | | |
 | TRAILING_STOP_ATR_MULT | 2.0 | 고점 대비 ATR 배수 (PEAK - ATR×2.0) |
 | FIRST_PROFIT_TAKE_RATIO | 0.5 | 1차 익절 매도 비율 (50%) |
