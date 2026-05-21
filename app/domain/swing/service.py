@@ -253,6 +253,7 @@ class SwingService:
                         "EVLU_AMT": buy_item.get("evlu_amt"),
                         "EVLU_PFLS_RT": float(buy_item.get("evlu_pfls_rt", 0)),
                         "EVLU_PFLS_AMT": int(buy_item.get("evlu_pfls_amt", 0)),
+                        "PRPR": float(buy_item.get("prpr", 0)),
                     }
                     results.append(result_data)
                 else:
@@ -278,6 +279,7 @@ class SwingService:
                         "EVLU_AMT": evlu_amt,
                         "EVLU_PFLS_RT": rate,
                         "EVLU_PFLS_AMT": pfls_amt,
+                        "PRPR": float(buy_item.get("prpr", 0)),
                     }
                     results.append(result_data)
 
