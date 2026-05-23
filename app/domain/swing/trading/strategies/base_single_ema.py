@@ -22,18 +22,12 @@ class BaseSingleEMAStrategy:
     OBV_Z_BUY_THRESHOLD = 1.0
     OBV_LOOKBACK = 14                # 매수용 OBV z-score 기간
     OBV_LOOKBACK_SELL = 14           # 2차 익절용 OBV z-score 기간 (추세 레벨 수급 이탈 감지)
+    OBV_SHORT_LOOKBACK = 3           # 단기 OBV 누적 변화 기간 (14일 z-score 잔향 보완용)
     MAX_SURGE_RATIO = 0.05       # 전일 대비 최대 급등률 (5%)
     UPPER_SHADOW_RATIO_MAX = 0.4     # 전일 윗꼬리가 캔들 범위의 40% 이상이면 매수 차단
     MIN_CANDLE_RANGE_PCT = 0.03      # 윗꼬리 필터 최소 캔들 범위 (종가 대비 3%)
 
-    # 매수 [시나리오 A] 눌림목 매집 진입
-    ACCUM_ENTRY_ATR_LOWER = -0.5     # 하한: EMA - ATR × 0.5
-    ACCUM_ENTRY_ATR_UPPER = 0.5      # 상한: EMA + ATR × 0.5
-    ACCUM_ENTRY_ADX_MIN = 18         # ADX 하한 (약한 추세 배제)
-    ACCUM_ENTRY_ADX_MAX = 30         # ADX 상한
-    ACCUM_ENTRY_OBV_MIN = 0.0        # OBV z-score 최소값
-
-    # 매수 [시나리오 B] 추세 추종 EMA 돌파 진입
+    # 매수 [추세 추종 EMA 돌파 진입]
     BREAKOUT_ENTRY_GAP_MAX = 1.06    # EMA 괴리율 상한 (돌파 직후만)
     BREAKOUT_ENTRY_ADX_MIN = 15      # ADX 최소값 (최소 추세 강도)
     BREAKOUT_ENTRY_OBV_MIN = 0.0     # OBV z-score 최소값

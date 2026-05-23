@@ -363,10 +363,11 @@ class SwingService:
             (recent_20['ACML_VOL'].astype(float) * recent_20['STCK_CLPR'].astype(float)).mean()
         )
 
-        indicators = TechnicalIndicators.prepare_indicators_from_df(df)
+        # 백테스트와 동일하게 매수용 OBV z-score 14일 기준으로 통일
+        indicators = TechnicalIndicators.prepare_indicators_from_df(df, obv_lookback=14)
 
-        if len(indicators) < 8:
-            logger.warning(f"[{st_code}] 지표 데이터 부족 (8일 미만, OBV z-score 계산 불가)")
+        if len(indicators) < 15:
+            logger.warning(f"[{st_code}] 지표 데이터 부족 (15일 미만, OBV z-score 14일 계산 불가)")
             return None
 
         yesterday = indicators.iloc[-1]
@@ -380,7 +381,11 @@ class SwingService:
             return None
 
         # OBV diff 최근 13일 추출 (NaN 필터링)
-        # 매수용 7일(6+오늘)과 2차 익절용 14일(13+오늘)을 모두 지원
+        # 슬라이스 크기 13은 다음 사용처를 모두 커버:
+        #   - 매수용 OBV z-score 14일 (13개 과거 diff + 오늘 1개 = 14개)
+        #   - 2차 익절용 OBV z-score 14일 (동일)
+        #   - 단기 OBV 누적 변화 3일 (2개 과거 diff + 오늘 1개)
+        # ⚠️ 매수/익절 lookback을 14 초과로 늘리려면 이 슬라이스도 함께 키워야 함
         obv_diffs = indicators['obv'].diff()
         recent_obv_diffs = [float(x) for x in obv_diffs.iloc[-13:].tolist() if not pd.isna(x)]
 

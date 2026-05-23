@@ -1,13 +1,13 @@
 """
 단일 20EMA 백테스팅 전략 (Single EMA Backtest Strategy) — 2단계 분할 익절
 
-**매수:** 시나리오 A(눌림목) + B(돌파), Conviction 기반 포지션 사이징
+**매수:** EMA20 돌파 (추세 추종), Conviction 기반 포지션 사이징
 **손절:** EMA - ATR×2.0 (SIGNAL 2에서는 본전 방어)
 **1차 익절:** 고점 - ATR×2.0 → 50% 매도
 **2차 익절:** 고점 - ATR×2.0 AND OBV z-score < -0.5 → 잔량 전량 매도
 """
 import pandas as pd
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Tuple
 from .base_strategy import BacktestStrategy, ceil_tick, floor_tick
 from app.domain.swing.indicators import TechnicalIndicators
 from app.domain.swing.trading.strategies.base_single_ema import BaseSingleEMAStrategy
@@ -169,12 +169,13 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
             atr_period=14,
             adx_period=14,
             obv_lookback=self.OBV_LOOKBACK,
-            obv_lookback_sell=self.OBV_LOOKBACK_SELL
+            obv_lookback_sell=self.OBV_LOOKBACK_SELL,
+            obv_short_lookback=self.OBV_SHORT_LOOKBACK
         )
 
     def _check_entry_conditions(self, row: pd.Series, prev_row: pd.Series = None) -> Tuple[bool, List[str], float]:
-        """1차 매수 진입: 시나리오 A(눌림목 매집) + 시나리오 B(추세 추종 돌파)"""
-        required_cols = ["ema20", "obv_z", "plus_di", "minus_di", "daily_return", "adx", "atr"]
+        """1차 매수 진입: 추세 추종 EMA20 돌파"""
+        required_cols = ["ema20", "obv_z", "obv_short_diff", "plus_di", "minus_di", "daily_return", "adx", "atr"]
         if any(pd.isna(row[col]) for col in required_cols):
             return False, [], 0.0
 
@@ -206,21 +207,7 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
             if upper_shadow_ratio >= self.UPPER_SHADOW_RATIO_MAX:
                 return False, [], 0.0
 
-        # === 시나리오 A: 눌림목 매집 진입 ===
-        accum_lower = row["ema20"] + (row["atr"] * self.ACCUM_ENTRY_ATR_LOWER)
-        accum_upper = row["ema20"] + (row["atr"] * self.ACCUM_ENTRY_ATR_UPPER)
-
-
-        if accum_lower <= current_price <= accum_upper:
-            obv_accumulating = (row["obv_z"] > self.ACCUM_ENTRY_OBV_MIN) and (prev_row["obv_z"] is not None and row["obv_z"] > prev_row["obv_z"])
-            adx_mid_range = self.ACCUM_ENTRY_ADX_MIN <= row["adx"] <= self.ACCUM_ENTRY_ADX_MAX
-            trend_direction = row["plus_di"] > row["minus_di"]
-
-            if obv_accumulating and adx_mid_range and trend_direction:
-                signal_price = row["ema20"]
-                return True, ["눌림목매집", "EMA근접", "OBV양호", "추세상승"], signal_price
-
-        # === 시나리오 B: 추세 추종 EMA 돌파 진입 ===
+        # === 추세 추종 EMA 돌파 진입 ===
         price_above_ema = current_price > row["ema20"]
         within_gap_limit = current_price <= row["ema20"] * self.BREAKOUT_ENTRY_GAP_MAX
 
@@ -228,8 +215,10 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
             trend_direction = row["plus_di"] > row["minus_di"]
             adx_sufficient = row["adx"] > self.BREAKOUT_ENTRY_ADX_MIN  # 최소 추세 강도
             obv_positive = row["obv_z"] > self.BREAKOUT_ENTRY_OBV_MIN
+            # 14일 z-score 잔향으로 떨어지는 수급에서 매수되는 현상 차단
+            obv_short_rising = pd.notna(row.get("obv_short_diff")) and row["obv_short_diff"] > 0
 
-            if trend_direction and adx_sufficient and obv_positive:
+            if trend_direction and adx_sufficient and obv_positive and obv_short_rising:
                 signal_price = row["ema20"]
                 return True, ["EMA돌파", "상향돌파", "추세확인", "거래량동반"], signal_price
 

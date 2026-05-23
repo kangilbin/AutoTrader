@@ -33,6 +33,7 @@ from app.domain.stock.service import StockService
 from app.domain.trade_history import TradeHistoryService
 from .order_executor import SwingOrderExecutor
 from .trading_strategy_factory import TradingStrategyFactory
+from .strategies.base_single_ema import BaseSingleEMAStrategy
 from app.common.redis import Redis
 from app.domain.notification.service import PushNotificationService
 
@@ -166,15 +167,17 @@ async def process_single_swing(
                 prdy_vrss_vol_rate = float(current_price_data.get("prdy_vrss_vol_rate", 100))
                 prdy_ctrt = float(current_price_data.get("prdy_ctrt", 0))
 
-            # 실시간 지표 증분 계산
+            # 실시간 지표 증분 계산 (base 전략 상수와 동기화)
             cached_indicators = TechnicalIndicators.enrich_cached_indicators_with_realtime(
                 cached_indicators=cached_indicators,
                 current_price=float(current_price),
                 current_volume=acml_vol,
                 current_high=float(current_high),
                 current_low=float(current_low),
-                ema_period=20,
-                atr_period=14
+                ema_period=BaseSingleEMAStrategy.EMA_PERIOD,
+                atr_period=14,
+                obv_lookback=BaseSingleEMAStrategy.OBV_LOOKBACK,
+                obv_short_lookback=BaseSingleEMAStrategy.OBV_SHORT_LOOKBACK
             )
 
             avg_daily_amount = cached_indicators["avg_daily_amount"]

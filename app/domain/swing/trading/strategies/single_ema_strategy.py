@@ -256,7 +256,6 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
             realtime_adx = cached_indicators['realtime_adx']
             realtime_ema20 = cached_indicators['realtime_ema20']
             realtime_obv_z = cached_indicators['realtime_obv_z']
-            realtime_atr = cached_indicators['realtime_atr']
 
         except Exception as e:
             logger.error(f"[{symbol}] 매수 신호 지표 계산 실패: {e}", exc_info=True)
@@ -264,7 +263,6 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
 
         # 캐시에서 전일 데이터 추출
         yesterday_ema20 = cached_indicators.get('ema20')       # 전일 EMA20 (종가 기준)
-        yesterday_obv_z = cached_indicators.get('obv_z')       # 전일 OBV z-score
 
         # === 공통 필터 ===
         surge_filtered = abs(prdy_ctrt) / 100 <= cls.MAX_SURGE_RATIO
@@ -295,21 +293,8 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
             await redis_client.setex(f"entry:{swing_id}", cls.ENTRY_STATE_TTL, json.dumps(new_state))
             return None
 
-        # === 시나리오 A: 눌림목 매집 진입 ===
-        scenario_a = False
-        if realtime_atr > 0:
-            accum_lower = realtime_ema20 + (realtime_atr * cls.ACCUM_ENTRY_ATR_LOWER)
-            accum_upper = realtime_ema20 + (realtime_atr * cls.ACCUM_ENTRY_ATR_UPPER)
-
-            if accum_lower <= curr_price <= accum_upper:
-                obv_accumulating = (realtime_obv_z > cls.ACCUM_ENTRY_OBV_MIN) and (yesterday_obv_z is not None and realtime_obv_z > yesterday_obv_z)
-                adx_mid_range = cls.ACCUM_ENTRY_ADX_MIN <= realtime_adx <= cls.ACCUM_ENTRY_ADX_MAX
-                trend_direction = realtime_plus_di > realtime_minus_di  # 상승 추세 방향
-
-                scenario_a = obv_accumulating and adx_mid_range and trend_direction
-
-        # === 시나리오 B: 추세 추종 EMA 돌파 진입 ===
-        scenario_b = False
+        # === 추세 추종 EMA 돌파 진입 ===
+        current_signal = False
         if yesterday_ema20 is not None:
             price_above_ema = curr_price > realtime_ema20
             within_gap_limit = curr_price <= realtime_ema20 * cls.BREAKOUT_ENTRY_GAP_MAX
@@ -318,10 +303,12 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
                 trend_direction = realtime_plus_di > realtime_minus_di
                 adx_sufficient = realtime_adx > cls.BREAKOUT_ENTRY_ADX_MIN  # 최소 추세 강도
                 obv_positive = realtime_obv_z > cls.BREAKOUT_ENTRY_OBV_MIN
+                # 14일 z-score 잔향으로 떨어지는 수급에서 매수되는 현상 차단
+                # 길이 부족(NaN) 또는 누락(None) 시 모두 매수 차단 (안전 fail)
+                realtime_obv_short_diff = cached_indicators.get('realtime_obv_short_diff')
+                obv_short_rising = pd.notna(realtime_obv_short_diff) and realtime_obv_short_diff > 0
 
-                scenario_b = trend_direction and adx_sufficient and obv_positive
-
-        current_signal = scenario_a or scenario_b
+                current_signal = trend_direction and adx_sufficient and obv_positive and obv_short_rising
 
         # 연속성 체크 (Redis, swing_id별 분리)
         prev_state_key = f"entry:{swing_id}"
@@ -339,12 +326,10 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
         await redis_client.setex(prev_state_key, cls.ENTRY_STATE_TTL, json.dumps(new_state))
 
         if consecutive >= cls.CONSECUTIVE_REQUIRED:
-            scenario_name = "눌림목매집" if scenario_a else "EMA돌파"
-            logger.info(f"[{symbol}] 1차 매수 신호 발생 ({scenario_name}, 연속 {consecutive}회)")
-            return {'action': 'BUY', 'price': curr_price, 'reasons': ["1차 매수", scenario_name]}
+            logger.info(f"[{symbol}] 1차 매수 신호 발생 (EMA돌파, 연속 {consecutive}회)")
+            return {'action': 'BUY', 'price': curr_price, 'reasons': ["1차 매수", "EMA돌파"]}
         elif current_signal:
-            scenario_name = "눌림목매집" if scenario_a else "EMA돌파"
-            logger.info(f"[{symbol}] 매수 신호 대기 중 ({scenario_name}, {consecutive}/{cls.CONSECUTIVE_REQUIRED})")
+            logger.info(f"[{symbol}] 매수 신호 대기 중 (EMA돌파, {consecutive}/{cls.CONSECUTIVE_REQUIRED})")
 
         return None
 
