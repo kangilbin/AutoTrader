@@ -92,14 +92,14 @@ class SwingTrade(Base):
         """
         사이클 종료 — 전량 매도 후 초기화
 
-        OBV z-score에 따라 다음 상태 결정:
-        - OBV z ≤ 0: 수급 이미 정리됨 → SIGNAL 0 (매수 대기)
-        - OBV z > 0: 수급 아직 살아있음 → SIGNAL 3 (수급 안정화 대기)
+        무조건 SIGNAL 3 (수급 안정화 대기) 진입:
+        - 매도 직후엔 매수 진입 조건이 잔존 수급으로 즉시 충족될 위험이 있음
+        - 3 → 4 → 0 사이클로 *수급 이탈 확인 → 강한 재유입 확인*을 강제
+        - 백테스트와 동일한 보수적 흐름
+
+        obv_z 파라미터는 호출부 호환성 위해 유지 (사용 안 함)
         """
-        if obv_z is not None and obv_z > 0:
-            self.SIGNAL = 3
-        else:
-            self.SIGNAL = 0
+        self.SIGNAL = 3
         self.ENTRY_PRICE = None
         self.HOLD_QTY = 0
         self.PEAK_PRICE = None

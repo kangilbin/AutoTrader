@@ -370,36 +370,38 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
         signal: int = 1
     ) -> Optional[Dict]:
         """
-        [손절] 장중 즉시 매도 신호 체크
-        - SIGNAL 1: EMA - ATR×1.0 손절
-        - SIGNAL 2: Max(EMA - ATR×1.0, 평단가) 본전 방어
+        [손절] 장중 즉시 매도 신호 체크 (백테스트와 동일: 매수가 기준)
+
+        - SIGNAL 1: max(매수가 - ATR×2.0, 매수가 × (1 - MAX_STOP_LOSS_PCT))
+        - SIGNAL 2: 본전 방어 — 위 손절가와 평단가 중 더 높은 값
         """
         curr_price = float(current_price)
 
-        realtime_ema20 = cached_indicators['realtime_ema20']
         realtime_atr = cached_indicators['realtime_atr']
 
         if realtime_atr <= 0:
             logger.warning(f"[{symbol}] ATR이 0 이하, 손절 체크 스킵")
             return {"action": "HOLD", "reasons": []}
 
-        ema_atr_stop = realtime_ema20 - (realtime_atr * cls.ATR_MULTIPLIER)
+        if entry_price <= 0:
+            logger.warning(f"[{symbol}] ENTRY_PRICE 없음, 손절 체크 스킵")
+            return {"action": "HOLD", "reasons": []}
 
-        # 최대 손절 캡: 매수가 대비 MAX_STOP_LOSS_PCT% 이상 벌어지지 않도록 제한
-        if entry_price > 0:
-            max_stop = entry_price * (1 - cls.MAX_STOP_LOSS_PCT / 100)
-            ema_atr_stop = max(ema_atr_stop, max_stop)
+        # 백테스트와 동일: 매수가 기준 ATR×N 손절, MAX_STOP_LOSS_PCT 하한 cap
+        atr_stop = entry_price - realtime_atr * cls.ATR_MULTIPLIER
+        max_stop = entry_price * (1 - cls.MAX_STOP_LOSS_PCT / 100)
+        stop_loss = max(atr_stop, max_stop)
 
         # SIGNAL 2 (1차 익절 후): 본전 방어 — 손절 하한을 평단가로 올림
-        if signal == 2 and entry_price > 0:
-            ema_atr_stop = max(ema_atr_stop, entry_price)
+        if signal == 2:
+            stop_loss = max(stop_loss, entry_price)
 
-        if curr_price <= ema_atr_stop:
+        if curr_price <= stop_loss:
             reason_prefix = "손절" if signal == 1 else "손절(본전방어)"
-            logger.warning(f"[{symbol}] 🚨 {reason_prefix}: 현재가≤{ema_atr_stop:,.0f}")
+            logger.warning(f"[{symbol}] 🚨 {reason_prefix}: 현재가≤{stop_loss:,.0f}")
             return {
                 "action": "SELL",
-                "reasons": [reason_prefix, f"손절가: {ema_atr_stop:,.0f}원"]
+                "reasons": [reason_prefix, f"손절가: {stop_loss:,.0f}원"]
             }
 
         return {"action": "HOLD", "reasons": []}

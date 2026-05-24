@@ -1,6 +1,6 @@
 {
   "version": "2.0",
-  "lastUpdated": "2026-05-23T14:18:58.055Z",
+  "lastUpdated": "2026-05-24T11:24:15.282Z",
   "activeFeatures": [
     "foreign-swing",
     "foreign-stock",
@@ -112,9 +112,9 @@
       },
       "timestamps": {
         "started": "2026-02-28T03:35:36.461Z",
-        "lastUpdated": "2026-05-23T14:18:58.055Z"
+        "lastUpdated": "2026-05-24T09:57:29.570Z"
       },
-      "lastFile": "/Users/apple/IdeaProjects/AutoTrader/app/domain/swing/backtest/strategies/single_ema_backtest_strategy.py"
+      "lastFile": "/Users/apple/IdeaProjects/AutoTrader/app/domain/swing/trading/strategies/single_ema_strategy.py"
     },
     "swing": {
       "phase": "do",
@@ -125,9 +125,9 @@
       "documents": {},
       "timestamps": {
         "started": "2026-02-28T03:36:02.099Z",
-        "lastUpdated": "2026-05-23T14:17:43.149Z"
+        "lastUpdated": "2026-05-24T11:24:15.282Z"
       },
-      "lastFile": "/Users/apple/IdeaProjects/AutoTrader/app/domain/swing/service.py"
+      "lastFile": "/Users/apple/IdeaProjects/AutoTrader/app/domain/swing/entity.py"
     },
     "core": {
       "phase": "do",
@@ -432,7 +432,7 @@
   "session": {
     "startedAt": "2026-02-28T03:08:34.644Z",
     "onboardingCompleted": false,
-    "lastActivity": "2026-05-23T14:18:58.055Z"
+    "lastActivity": "2026-05-24T11:24:15.282Z"
   },
   "history": [
     {
@@ -5112,6 +5112,18 @@
     {
       "timestamp": "2026-05-23T14:18:58.055Z",
       "feature": "strategies",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-24T09:57:29.570Z",
+      "feature": "strategies",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-24T11:24:15.282Z",
+      "feature": "swing",
       "phase": "do",
       "action": "updated"
     }
