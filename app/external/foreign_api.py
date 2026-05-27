@@ -70,6 +70,107 @@ async def get_stock_balance(
     return {"output1": result, "output2": output2}
 
 
+async def get_present_balance(
+    user_id: str, db: AsyncSession,
+    natn_cd: str = "840",            # 840: 미국
+    tr_mket_cd: str = "00",          # 00: 전체 (NASD/NYSE/AMEX 통합)
+    wcrc_frcr_dvsn_cd: str = "02",   # 02: 외화(USD) 기준
+    inqr_dvsn_cd: str = "00",        # 00: 전체
+):
+    """해외 주식 체결기준 현재 잔고 조회 (CTRP6504R)
+
+    `get_stock_balance`(TTTS3012R)에는 외화 예수금/사용가능금액이 없어
+    가용 자본 산출이 불가능하다. 본 API는 외화사용가능금액(USD 현금)을
+    포함하므로 swing_mapping/get_available_capital 등에서 사용한다.
+
+    응답은 `get_stock_balance`와 동일한 (output1, output2) 형태로 정규화하여
+    호출부에서 시장별 분기 외 추가 변환을 최소화한다.
+
+    Returns:
+        {
+            "output1": [...],   # 보유 종목 (USD 기준, 정규화된 필드)
+            "output2": {...},   # 계좌 요약 (USD 가용 + 합계)
+        }
+    """
+    user_data, access_data = await _get_user_auth(user_id, db)
+
+    path = "uapi/overseas-stock/v1/trading/inquire-present-balance"
+    url = settings.DEV_API_URL if access_data.get("simulation_yn") == "Y" else settings.REAL_API_URL
+    api_url = f"{url}/{path}"
+
+    tr_id = "VTRP6504R" if access_data.get("simulation_yn") == "Y" else "CTRP6504R"
+
+    headers = kis_headers(access_data, tr_id=tr_id)
+    query = {
+        "CANO": user_data.get("ACCOUNT_NO")[:8],
+        "ACNT_PRDT_CD": user_data.get("ACCOUNT_NO")[-2:],
+        "WCRC_FRCR_DVSN_CD": wcrc_frcr_dvsn_cd,
+        "NATN_CD": natn_cd,
+        "TR_MKET_CD": tr_mket_cd,
+        "INQR_DVSN_CD": inqr_dvsn_cd,
+    }
+    response = await fetch("GET", api_url, "KIS", params=query, headers=headers)
+    body = response["body"]
+
+    # 보유 종목 정규화 — mapping_swing이 기대하는 키 이름으로 변환 (USD 기준)
+    output1 = [
+        {
+            "pdno": item.get("pdno"),
+            "prdt_name": item.get("prdt_name"),
+            "hldg_qty": item.get("ccld_qty_smtl1", "0"),
+            "ord_psbl_qty": item.get("ord_psbl_qty1", "0"),
+            "pchs_avg_pric": item.get("avg_unpr3", "0"),
+            "pchs_amt": item.get("frcr_pchs_amt", "0"),
+            "evlu_amt": item.get("frcr_evlu_amt2", "0"),
+            "evlu_pfls_amt": item.get("evlu_pfls_amt2", "0"),
+            "evlu_pfls_rt": item.get("evlu_pfls_rt1", "0"),
+            "prpr": item.get("ovrs_now_pric1", "0"),
+            "ovrs_excg_cd": item.get("ovrs_excg_cd"),
+        }
+        for item in (body.get("output1") or [])
+    ]
+
+    # 통화별 잔고(output2)에서 거래통화(USD) 1건 추출
+    crcy_code = "USD" if natn_cd == "840" else None
+    currency_row = next(
+        (
+            row for row in (body.get("output2") or [])
+            if not crcy_code or row.get("crcy_cd") == crcy_code
+        ),
+        {},
+    )
+
+    # 종합 요약(output3)
+    summary = body.get("output3") or {}
+
+    # USD 기준 종목별 합계 — 종합 요약은 원화 환산이므로 USD 합계는 output1에서 직접 산출
+    def _to_float(value) -> float:
+        try:
+            return float(value or 0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    pchs_total = sum(_to_float(item["pchs_amt"]) for item in output1)
+    evlu_total = sum(_to_float(item["evlu_amt"]) for item in output1)
+    pfls_total = sum(_to_float(item["evlu_pfls_amt"]) for item in output1)
+
+    # mapping_swing summary가 기대하는 키로 매핑 (USD 단위)
+    output2 = {
+        "dnca_tot_amt": currency_row.get("frcr_dncl_amt_2") or summary.get("frcr_use_psbl_amt", "0"),
+        "tot_evlu_amt": f"{evlu_total:.2f}",
+        "pchs_amt_smtl_amt": f"{pchs_total:.2f}",
+        "evlu_pfls_smtl_amt": f"{pfls_total:.2f}",
+        # 부가 정보 (필요 시 호출부에서 활용)
+        "frcr_use_psbl_amt": summary.get("frcr_use_psbl_amt", "0"),
+        "frcr_drwg_psbl_amt": currency_row.get("frcr_drwg_psbl_amt_1", "0"),
+        "tot_asst_amt_krw": summary.get("tot_asst_amt", "0"),
+        "frcr_evlu_tota_krw": summary.get("frcr_evlu_tota", "0"),
+        "exrt": currency_row.get("frst_bltn_exrt", "0"),
+    }
+
+    return {"output1": output1, "output2": output2}
+
+
 # ============================================================
 # 주문
 # ============================================================

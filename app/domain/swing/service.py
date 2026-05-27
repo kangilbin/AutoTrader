@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import SQLAlchemyError, IntegrityError
 from typing import List, Dict, Any
 from datetime import datetime, time
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from app.domain.swing.indicators import TechnicalIndicators
 from app.domain.swing.repository import SwingRepository
 from app.domain.swing.entity import SwingTrade, EmaOption
@@ -41,12 +41,13 @@ class SwingService:
         overseas = mrkt_code == "NASD"
 
         if overseas:
-            balance_data = await foreign_api.get_stock_balance(user_id, self.db)
+            # 체결기준 현재 잔고 API — USD 가용 자본(frcr_dncl_amt_2)을 dnca_tot_amt로 매핑
+            balance_data = await foreign_api.get_present_balance(user_id, self.db)
         else:
             balance_data = await get_stock_balance(user_id, self.db)
 
         output2 = balance_data["output2"]
-        cash = int(output2.get("dnca_tot_amt", 0))
+        cash = int(float(output2.get("dnca_tot_amt", 0) or 0))
 
         allocated = int(await self.repo.get_total_init_amount(account_no, overseas, exclude_swing_id))
         available_capital = cash - allocated
@@ -195,9 +196,28 @@ class SwingService:
     async def mapping_swing(self, user_id: str, account_no: str, mrkt_code: str = "J") -> dict:
         """스윙 목록과 보유 주식 매핑"""
         try:
+            # 통화별 정밀도: KRW=정수, USD=소수점 2자리 (센트)
+            overseas = mrkt_code == "NASD"
+
+            def _to_amount(value):
+                """문자열/숫자를 출력용 금액으로 변환 (KRW=int, USD=float 2자리)"""
+                try:
+                    f = float(value or 0)
+                except (TypeError, ValueError):
+                    return 0.0 if overseas else 0
+                return round(f, 2) if overseas else int(f)
+
+            def _to_decimal(value) -> Decimal:
+                """산술용 Decimal (Decimal + 문자열 호환)"""
+                try:
+                    return Decimal(str(value or 0))
+                except (TypeError, ValueError, InvalidOperation):
+                    return Decimal(0)
+
             swing_list = await self.repo.find_all_by_account_no(account_no, mrkt_code)
-            if mrkt_code == "NASD":
-                balance_data = await foreign_api.get_stock_balance(user_id, self.db)
+            if overseas:
+                # 체결기준 현재 잔고 API — USD 가용 자본 + 보유 종목(USD 정규화) 제공
+                balance_data = await foreign_api.get_present_balance(user_id, self.db)
             else:
                 balance_data = await get_stock_balance(user_id, self.db)
             buy_list = balance_data["output1"]
@@ -216,8 +236,8 @@ class SwingService:
 
                 if st_code not in swing_dict:
                     # 새 스윙 등록 — 매입금액을 초기 투자금으로 설정
-                    item_mrkt_code = mrkt_code if mrkt_code == "NASD" else buy_item.get("mrkt_code", "J")
-                    pchs_amt = Decimal(buy_item.get("pchs_amt", 0))
+                    item_mrkt_code = mrkt_code if overseas else buy_item.get("mrkt_code", "J")
+                    pchs_amt = _to_decimal(buy_item.get("pchs_amt", 0))
                     try:
                         async with self.db.begin_nested():
                             swing = SwingTrade.create(
@@ -228,8 +248,8 @@ class SwingService:
                                 swing_type='S'
                             )
                             swing.CUR_AMOUNT = Decimal(0)  # 이미 매수 완료 상태
-                            swing.ENTRY_PRICE = Decimal(buy_item.get("pchs_avg_pric", 0))
-                            swing.HOLD_QTY = int(buy_item.get("hldg_qty", 0))
+                            swing.ENTRY_PRICE = _to_decimal(buy_item.get("pchs_avg_pric", 0))
+                            swing.HOLD_QTY = int(float(buy_item.get("hldg_qty", 0) or 0))
                             swing.USE_YN = 'N'
                             db_swing = await self.repo.save(swing)
                     except IntegrityError:
@@ -250,36 +270,37 @@ class SwingService:
                         **swing_result,
                         "ST_NM": buy_item.get("prdt_name"),
                         "HLDG_QTY": buy_item.get("hldg_qty"),
-                        "EVLU_AMT": buy_item.get("evlu_amt"),
-                        "EVLU_PFLS_RT": float(buy_item.get("evlu_pfls_rt", 0)),
-                        "EVLU_PFLS_AMT": int(buy_item.get("evlu_pfls_amt", 0)),
-                        "PRPR": float(buy_item.get("prpr", 0)),
+                        "EVLU_AMT": _to_amount(buy_item.get("evlu_amt", 0)),
+                        "EVLU_PFLS_RT": float(buy_item.get("evlu_pfls_rt", 0) or 0),
+                        "EVLU_PFLS_AMT": _to_amount(buy_item.get("evlu_pfls_amt", 0)),
+                        "PRPR": float(buy_item.get("prpr", 0) or 0),
                     }
                     results.append(result_data)
                 else:
                     # 기존 데이터 merge
                     data = swing_dict[st_code]
-                    evlu_amt = int(buy_item.get("evlu_amt", 0))
+                    evlu_amt_dec = _to_decimal(buy_item.get("evlu_amt", 0))
 
                     if data["INIT_AMOUNT"]:
                         # INIT_AMOUNT > 0: 자체 계산 (서비스에서 등록/매매한 종목)
                         init_amount = data["INIT_AMOUNT"]
-                        total_asset = data["CUR_AMOUNT"] + evlu_amt
-                        rate = float((total_asset - init_amount) / init_amount * 100)
-                        pfls_amt = total_asset - init_amount
+                        total_asset = data["CUR_AMOUNT"] + evlu_amt_dec
+                        rate = float((total_asset - init_amount) / init_amount * 100) if init_amount else 0.0
+                        pfls_amt_dec = total_asset - init_amount
+                        pfls_amt = _to_amount(pfls_amt_dec)
                     else:
                         # INIT_AMOUNT = 0: KIS API 값 사용 (외부 매수 자동 등록 종목)
-                        rate = float(buy_item.get("evlu_pfls_rt", 0))
-                        pfls_amt = int(buy_item.get("evlu_pfls_amt", 0))
+                        rate = float(buy_item.get("evlu_pfls_rt", 0) or 0)
+                        pfls_amt = _to_amount(buy_item.get("evlu_pfls_amt", 0))
 
                     result_data = {
                         **data,
                         "ST_NM": buy_item.get("prdt_name"),
                         "HLDG_QTY": buy_item.get("hldg_qty"),
-                        "EVLU_AMT": evlu_amt,
+                        "EVLU_AMT": _to_amount(evlu_amt_dec),
                         "EVLU_PFLS_RT": rate,
                         "EVLU_PFLS_AMT": pfls_amt,
-                        "PRPR": float(buy_item.get("prpr", 0)),
+                        "PRPR": float(buy_item.get("prpr", 0) or 0),
                     }
                     results.append(result_data)
 
@@ -289,10 +310,10 @@ class SwingService:
                     if swing["INIT_AMOUNT"]:
                         init_amount = swing["INIT_AMOUNT"]
                         rate = float((swing["CUR_AMOUNT"] - init_amount) / init_amount * 100)
-                        pfls_amt = swing["CUR_AMOUNT"] - init_amount
+                        pfls_amt = _to_amount(swing["CUR_AMOUNT"] - init_amount)
                     else:
                         rate = 0.0
-                        pfls_amt = 0
+                        pfls_amt = 0.0 if overseas else 0
                     result_data = {
                         **swing,
                         "EVLU_PFLS_RT": rate,
@@ -303,16 +324,18 @@ class SwingService:
             await self.db.commit()
 
             # output2에서 계좌 요약 정보 매핑
-            pchs_amt = int(output2.get("pchs_amt_smtl_amt", 0))
-            evlu_pfls = int(output2.get("evlu_pfls_smtl_amt", 0))
-            profit_rate = round(evlu_pfls / pchs_amt * 100, 2) if pchs_amt else 0.0
+            total_eval = _to_amount(output2.get("tot_evlu_amt", 0))  # 현재 총평가금(현금 포함)
+            evlu_pfls = _to_amount(output2.get("evlu_pfls_smtl_amt", 0))
+            # 투자전 원금 = 총평가금 - 평가손익. 현금은 손익이 0이라 상쇄되므로 현금 포함 총원금이 됨
+            principal = total_eval - evlu_pfls
+            profit_rate = round(evlu_pfls / principal * 100, 2) if principal else 0.0
 
             summary = {
-                "TOTAL_INVESTMENT_AMOUNT": int(output2.get("tot_evlu_amt", 0)),
-                "TOTAL_PRINCIPAL": pchs_amt,
+                "TOTAL_INVESTMENT_AMOUNT": total_eval,
+                "TOTAL_PRINCIPAL": principal,
                 "TOTAL_PROFIT": evlu_pfls,
                 "TOTAL_PROFIT_RATE": profit_rate,
-                "CASH_ASSET": int(output2.get("dnca_tot_amt", 0)),
+                "CASH_ASSET": _to_amount(output2.get("dnca_tot_amt", 0)),
             }
 
             return {"list": results, "summary": summary}

@@ -1,6 +1,6 @@
 {
   "version": "2.0",
-  "lastUpdated": "2026-05-24T11:24:15.282Z",
+  "lastUpdated": "2026-05-27T12:10:08.661Z",
   "activeFeatures": [
     "foreign-swing",
     "foreign-stock",
@@ -125,9 +125,9 @@
       "documents": {},
       "timestamps": {
         "started": "2026-02-28T03:36:02.099Z",
-        "lastUpdated": "2026-05-24T11:24:15.282Z"
+        "lastUpdated": "2026-05-27T12:10:08.661Z"
       },
-      "lastFile": "/Users/apple/IdeaProjects/AutoTrader/app/domain/swing/entity.py"
+      "lastFile": "/Users/apple/IdeaProjects/AutoTrader/app/domain/swing/service.py"
     },
     "core": {
       "phase": "do",
@@ -281,9 +281,9 @@
       "documents": {},
       "timestamps": {
         "started": "2026-03-13T16:07:44.994Z",
-        "lastUpdated": "2026-04-15T03:20:49.770Z"
+        "lastUpdated": "2026-05-26T13:15:27.812Z"
       },
-      "lastFile": "/Users/apple/IdeaProjects/AutoTrader/app/external/kis_api.py"
+      "lastFile": "/Users/apple/IdeaProjects/AutoTrader/app/external/foreign_api.py"
     },
     "notification": {
       "phase": "do",
@@ -432,7 +432,7 @@
   "session": {
     "startedAt": "2026-02-28T03:08:34.644Z",
     "onboardingCompleted": false,
-    "lastActivity": "2026-05-24T11:24:15.282Z"
+    "lastActivity": "2026-05-27T12:10:08.661Z"
   },
   "history": [
     {
@@ -5123,6 +5123,54 @@
     },
     {
       "timestamp": "2026-05-24T11:24:15.282Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-26T13:15:27.812Z",
+      "feature": "external",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-26T13:17:11.532Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-26T13:19:54.253Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-26T13:23:40.979Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-26T13:24:28.755Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-26T13:26:49.397Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-26T13:27:24.182Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-27T12:10:08.661Z",
       "feature": "swing",
       "phase": "do",
       "action": "updated"
