@@ -75,26 +75,19 @@ class OrderService:
         전량 매도 주문
 
         MRKT_CODE로 국내/해외 판별 후 해당 시장의 place_order_api 호출
-        - 국내: 시장가 매도 (unpr=0)
-        - 해외: 현재가 조회 후 지정가 매도 (현재가 * 0.995)
+        - 국내/해외 모두 시장가 매도 (unpr=0)
         """
         from app.external import kis_api, foreign_api
 
         is_overseas = request.MRKT_CODE == "NASD"
+        order = Order.create(
+            ord_dv="sell", itm_no=request.ST_CODE, qty=request.QTY,
+            excg_cd=request.MRKT_CODE if is_overseas else ""
+        )
 
         if is_overseas:
-            price_data = await foreign_api.get_inquire_price(user_id, request.ST_CODE, self.db)
-            current_price = float(price_data.get("last", 0))
-            order_price = int(current_price * 0.995 * 100) / 100
-            order = Order.create(
-                ord_dv="sell", itm_no=request.ST_CODE, qty=request.QTY,
-                unpr=order_price, excg_cd=request.MRKT_CODE
-            )
             result = await foreign_api.place_order_api(user_id, order, self.db)
         else:
-            order = Order.create(
-                ord_dv="sell", itm_no=request.ST_CODE, qty=request.QTY
-            )
             result = await kis_api.place_order_api(user_id, order, self.db)
 
         if not result or result.get("rt_cd") != "0":

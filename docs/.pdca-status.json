@@ -1,6 +1,6 @@
 {
   "version": "2.0",
-  "lastUpdated": "2026-05-27T12:10:08.661Z",
+  "lastUpdated": "2026-05-30T09:56:52.959Z",
   "activeFeatures": [
     "foreign-swing",
     "foreign-stock",
@@ -164,9 +164,9 @@
       "documents": {},
       "timestamps": {
         "started": "2026-03-13T05:08:33.831Z",
-        "lastUpdated": "2026-05-10T04:11:48.693Z"
+        "lastUpdated": "2026-05-30T09:54:40.358Z"
       },
-      "lastFile": "/Users/apple/IdeaProjects/AutoTrader/app/domain/order/router.py"
+      "lastFile": "/Users/apple/IdeaProjects/AutoTrader/app/domain/order/service.py"
     },
     "trading": {
       "phase": "do",
@@ -177,9 +177,9 @@
       "documents": {},
       "timestamps": {
         "started": "2026-03-13T05:32:59.682Z",
-        "lastUpdated": "2026-05-23T14:18:27.536Z"
+        "lastUpdated": "2026-05-30T09:56:52.959Z"
       },
-      "lastFile": "/Users/apple/IdeaProjects/AutoTrader/app/domain/swing/trading/auto_swing_batch.py"
+      "lastFile": "/Users/apple/IdeaProjects/AutoTrader/app/domain/swing/trading/order_executor.py"
     },
     "trade_history": {
       "phase": "do",
@@ -432,7 +432,7 @@
   "session": {
     "startedAt": "2026-02-28T03:08:34.644Z",
     "onboardingCompleted": false,
-    "lastActivity": "2026-05-27T12:10:08.661Z"
+    "lastActivity": "2026-05-30T09:56:52.959Z"
   },
   "history": [
     {
@@ -5172,6 +5172,48 @@
     {
       "timestamp": "2026-05-27T12:10:08.661Z",
       "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-30T09:43:09.527Z",
+      "feature": "order",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-30T09:44:30.227Z",
+      "feature": "order",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-30T09:54:40.358Z",
+      "feature": "order",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-30T09:55:33.665Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-30T09:55:53.699Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-30T09:56:17.668Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-05-30T09:56:52.959Z",
+      "feature": "trading",
       "phase": "do",
       "action": "updated"
     }

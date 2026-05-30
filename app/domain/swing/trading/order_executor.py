@@ -88,10 +88,8 @@ class SwingOrderExecutor:
             return {"success": False, "reason": "매수 수량 부족"}
 
         _overseas = mrkt_code == "NASD"
-        # 해외 주식: 지정가 주문 (시장가 제한) — 현재가 + 0.5% 슬리피지
-        order_unpr = int(float(current_price) * 1.005 * 100) / 100 if _overseas else 0
         order = Order.create(ord_dv="buy", itm_no=st_code, qty=qty,
-                             unpr=order_unpr, excg_cd=mrkt_code if _overseas else "")
+                             excg_cd=mrkt_code if _overseas else "")
 
         if _overseas:
             result = await foreign_api.place_order_api(user_id, order, db)
@@ -179,10 +177,8 @@ class SwingOrderExecutor:
         order_qty = target_qty if target_qty <= per_cycle_qty else per_cycle_qty
 
         _overseas = mrkt_code == "NASD"
-        # 해외 주식: 지정가 주문 — 현재가 - 0.5% 슬리피지
-        order_unpr = int(float(current_price) * 0.995 * 100) / 100 if _overseas else 0
         order = Order.create(ord_dv="sell", itm_no=st_code, qty=order_qty,
-                             unpr=order_unpr, excg_cd=mrkt_code if _overseas else "")
+                             excg_cd=mrkt_code if _overseas else "")
 
         if _overseas:
             result = await foreign_api.place_order_api(user_id, order, db)
@@ -306,9 +302,8 @@ class SwingOrderExecutor:
                         "clear_partial": True}
 
             _overseas = mrkt_code == "NASD"
-            order_unpr = int(float(current_price) * 1.005 * 100) / 100 if _overseas else 0
             order = Order.create(ord_dv="buy", itm_no=st_code, qty=order_qty,
-                                 unpr=order_unpr, excg_cd=mrkt_code if _overseas else "")
+                                 excg_cd=mrkt_code if _overseas else "")
             if _overseas:
                 result = await foreign_api.place_order_api(user_id, order, db)
             else:
@@ -381,9 +376,8 @@ class SwingOrderExecutor:
             order_qty = min(remaining_qty, per_cycle_qty)
 
             _overseas = mrkt_code == "NASD"
-            order_unpr = int(float(current_price) * 0.995 * 100) / 100 if _overseas else 0
             order = Order.create(ord_dv="sell", itm_no=st_code, qty=order_qty,
-                                 unpr=order_unpr, excg_cd=mrkt_code if _overseas else "")
+                                 excg_cd=mrkt_code if _overseas else "")
             if _overseas:
                 result = await foreign_api.place_order_api(user_id, order, db)
             else:
