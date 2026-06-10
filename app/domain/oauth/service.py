@@ -134,11 +134,11 @@ class OAuthService:
                 return {"status": "DEVICE_PENDING"}
 
             if device.get("ACTIVE_YN") != "Y":
-                # 디바이스가 등록되어 있지만 미승인 상태
+                # 이미 등록된 디바이스지만 아직 승인 대기 중
                 await self.db.commit()
 
-                logger.warning(f"디바이스 권한 없음: {user_id}, {device_id}")
-                return {"status": "DEVICE_DENIED"}
+                logger.info(f"디바이스 승인 대기 중: {user_id}, {device_id}")
+                return {"status": "DEVICE_PENDING"}
 
             # 4. 디바이스 승인됨 - 로그인 성공
             await self.db.commit()
@@ -149,13 +149,13 @@ class OAuthService:
             )
             refresh_token = create_refresh_token(user_id)
 
-            # Redis에 저장
+            # Redis에 저장 (OAuth 사용자는 PHONE이 없을 수 있어 None → 빈 문자열 변환)
             redis = await get_redis()
             await redis.hset(user_id, mapping={
                 "refresh_token": refresh_token,
-                "USER_NAME": user_name,
-                "EMAIL": email,
-                "PHONE": user_phone
+                "USER_NAME": user_name or "",
+                "EMAIL": email or "",
+                "PHONE": user_phone or ""
             })
             await redis.expire(user_id, int(settings.token_refresh_exp.total_seconds()))
 
