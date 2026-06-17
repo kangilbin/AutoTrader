@@ -28,7 +28,15 @@ async def get_stock_balance(
     excg_cd: str = "NASD", crcy_cd: str = "USD",
     fk200="", nk200="", result: Optional[List] = None,
 ):
-    """해외 주식 잔고 조회 (output1: 종목 리스트, output2: 계좌 요약)"""
+    """해외 주식 잔고 조회 (TTTS3012R) — 체결 즉시 반영되는 보유 종목
+
+    `get_present_balance`(CTRP6504R)는 체결기준이지만 당일 매수 체결 수량이
+    즉시 반영되지 않는 경우가 있어, 실시간 보유 수량/매입금액은 본 API를 사용한다.
+
+    output1은 `get_present_balance.output1`과 동일한 키 형태로 정규화하여
+    호출부에서 API 분기 없이 동일하게 처리할 수 있도록 한다.
+    output2는 외화 예수금이 없으므로 보유 종목 용도로만 사용한다.
+    """
     user_data, access_data = await _get_user_auth(user_id, db)
 
     path = "uapi/overseas-stock/v1/trading/inquire-balance"
@@ -67,7 +75,25 @@ async def get_stock_balance(
             result
         )
 
-    return {"output1": result, "output2": output2}
+    # 보유 종목 정규화 — get_present_balance.output1과 동일 키 사용
+    output1 = [
+        {
+            "pdno": item.get("ovrs_pdno"),
+            "prdt_name": item.get("ovrs_item_name"),
+            "hldg_qty": item.get("ovrs_cblc_qty", "0"),
+            "ord_psbl_qty": item.get("ord_psbl_qty", "0"),
+            "pchs_avg_pric": item.get("pchs_avg_pric", "0"),
+            "pchs_amt": item.get("frcr_pchs_amt1", "0"),
+            "evlu_amt": item.get("ovrs_stck_evlu_amt", "0"),
+            "evlu_pfls_amt": item.get("frcr_evlu_pfls_amt", "0"),
+            "evlu_pfls_rt": item.get("evlu_pfls_rt", "0"),
+            "prpr": item.get("now_pric2", "0"),
+            "ovrs_excg_cd": item.get("ovrs_excg_cd"),
+        }
+        for item in result
+    ]
+
+    return {"output1": output1, "output2": output2}
 
 
 async def get_present_balance(

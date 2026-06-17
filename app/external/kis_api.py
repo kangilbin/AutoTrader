@@ -25,49 +25,88 @@ settings = get_settings()
 # ============================================================
 
 
+_TOKEN_LOCK_TTL = 10  # 락 자동 해제 시간(초). 토큰 발급은 수 초 이내 완료
+_TOKEN_WAIT_INTERVAL = 0.2  # 락 대기 시 Redis 재조회 간격(초)
+_TOKEN_WAIT_MAX_ATTEMPTS = 50  # 최대 대기 시도 (0.2s * 50 = 10s)
+
+
+async def _read_cached_token(redis, user_id: str, api_key: str, secret_key: str) -> Optional[dict]:
+    """Redis에서 유효한 토큰 캐시 조회 (key 일치 확인)"""
+    access_data = await redis.hgetall(f"{user_id}_access_token")
+    if not access_data:
+        return None
+    if access_data.get("api_key") == api_key and access_data.get("secret_key") == secret_key:
+        return access_data
+    return None
+
+
 async def oauth_token(user_id: str, simulation_yn: str, api_key: str, secret_key: str):
     """
     한국 투자 증권 접근 토큰
     유효기간 24시 이며 (1일 1회 발급) 갱신발급 주기는 6시간(6시 이내는 기존 발급키 응답)
+
+    KIS는 동일 appkey로 1분에 1회만 토큰 발급 허용 (EGW00133)
+    동시 요청에서 중복 발급을 막기 위해 Redis 분산 락 사용
     """
     redis = await get_redis()
-    access_data = await redis.hgetall(f"{user_id}_access_token")
-    if access_data:
-        if access_data.get("api_key") == api_key and access_data.get("secret_key") == secret_key:
-            return access_data
+
+    cached = await _read_cached_token(redis, user_id, api_key, secret_key)
+    if cached:
+        return cached
+
+    # key 불일치로 stale 캐시인 경우 제거
+    await redis.delete(f"{user_id}_access_token")
+
+    lock_key = f"{user_id}_access_token:lock"
+    got_lock = await redis.set(lock_key, "1", nx=True, ex=_TOKEN_LOCK_TTL)
+
+    if not got_lock:
+        # 다른 요청이 발급 중. 발급 완료를 폴링으로 대기.
+        for _ in range(_TOKEN_WAIT_MAX_ATTEMPTS):
+            await asyncio.sleep(_TOKEN_WAIT_INTERVAL)
+            cached = await _read_cached_token(redis, user_id, api_key, secret_key)
+            if cached:
+                return cached
+        raise ExternalServiceError("KIS", "토큰 발급 대기 시간 초과")
+
+    try:
+        # 락 획득 후 한 번 더 캐시 확인 (락 대기 중 다른 워커가 발급했을 수 있음)
+        cached = await _read_cached_token(redis, user_id, api_key, secret_key)
+        if cached:
+            return cached
+
+        path = "oauth2/tokenP"
+        if simulation_yn == "Y":
+            api_url = settings.DEV_API_URL
         else:
-            await redis.delete(f"{user_id}_access_token")
+            api_url = settings.REAL_API_URL
 
-    path = "oauth2/tokenP"
-    if simulation_yn == "Y":
-        api_url = settings.DEV_API_URL
-    else:
-        api_url = settings.REAL_API_URL
+        url = f"{api_url}/{path}"
+        query = {
+            "grant_type": "client_credentials",
+            "appkey": api_key,
+            "appsecret": secret_key
+        }
 
-    url = f"{api_url}/{path}"
-    query = {
-        "grant_type": "client_credentials",
-        "appkey": api_key,
-        "appsecret": secret_key
-    }
+        response = await fetch("POST", url, "KIS", json=query)
+        body = response["body"]
+        access_token = body.get("access_token")
 
-    response = await fetch("POST", url, "KIS",json=query)
-    body = response["body"]
-    access_token = body.get("access_token")
+        if (not access_token) or (body.get("error_code")):
+            raise ExternalServiceError("KIS", kis_error_message(body, "토큰 발급 실패"))
 
-    if (not access_token) or (body.get("error_code")):
-        raise ExternalServiceError("KIS", kis_error_message(body, "토큰 발급 실패"))
-
-    data = {
-        "access_token": access_token,
-        "api_key": api_key,
-        "secret_key": secret_key,
-        "simulation_yn": simulation_yn
-    }
-    # Redis에 토큰 저장 만료기간(expires_in) 설정
-    await redis.hset(f"{user_id}_access_token", mapping=data)
-    await redis.expire(f"{user_id}_access_token", body.get("expires_in"))
-    return data
+        data = {
+            "access_token": access_token,
+            "api_key": api_key,
+            "secret_key": secret_key,
+            "simulation_yn": simulation_yn
+        }
+        # Redis에 토큰 저장 만료기간(expires_in) 설정
+        await redis.hset(f"{user_id}_access_token", mapping=data)
+        await redis.expire(f"{user_id}_access_token", body.get("expires_in"))
+        return data
+    finally:
+        await redis.delete(lock_key)
 
 
 async def _get_user_auth(user_id: str, db: AsyncSession):
@@ -665,3 +704,71 @@ async def get_volume_power_rank(user_id: str, db: AsyncSession, input_iscd: str 
     response = await fetch("GET", api_url, "KIS", params=query, headers=headers)
     body = response["body"]
     return body.get("output")
+
+
+# ============================================================
+# 예탁원정보 (KSD) - 액면교체/합병/분할 일정
+# ============================================================
+
+
+async def get_rev_split_schedule(
+    user_id: str, from_date: str, to_date: str, db: AsyncSession
+) -> dict:
+    """예탁원정보 액면교체일정 조회 (액면분할/병합)
+
+    Args:
+        user_id: KIS 토큰 컨텍스트 사용자
+        from_date: 조회 시작일 (YYYYMMDD)
+        to_date: 조회 종료일 (YYYYMMDD)
+        db: AsyncSession
+
+    Returns:
+        KIS 응답 body (output1 배열 포함)
+    """
+    user_data, access_data = await _get_user_auth(user_id, db)
+    url = settings.REAL_API_URL
+    path = "uapi/domestic-stock/v1/ksdinfo/rev-split"
+    api_url = f"{url}/{path}"
+
+    headers = kis_headers(access_data, tr_id="HHKDB669105C0")
+
+    params = {
+        "SHT_CD": "",
+        "CTS": "",
+        "F_DT": from_date,
+        "T_DT": to_date,
+        "MARKET_GB": "0",
+    }
+    response = await fetch("GET", api_url, "KIS", params=params, headers=headers)
+    return response["body"]
+
+
+async def get_merger_split_schedule(
+    user_id: str, from_date: str, to_date: str, db: AsyncSession
+) -> dict:
+    """예탁원정보 합병/분할일정 조회
+
+    Args:
+        user_id: KIS 토큰 컨텍스트 사용자
+        from_date: 조회 시작일 (YYYYMMDD)
+        to_date: 조회 종료일 (YYYYMMDD)
+        db: AsyncSession
+
+    Returns:
+        KIS 응답 body (output1 배열 포함)
+    """
+    user_data, access_data = await _get_user_auth(user_id, db)
+    url = settings.REAL_API_URL
+    path = "uapi/domestic-stock/v1/ksdinfo/merger-split"
+    api_url = f"{url}/{path}"
+
+    headers = kis_headers(access_data, tr_id="HHKDB669104C0")
+
+    params = {
+        "CTS": "",
+        "F_DT": from_date,
+        "T_DT": to_date,
+        "SHT_CD": "",
+    }
+    response = await fetch("GET", api_url, "KIS", params=params, headers=headers)
+    return response["body"]
