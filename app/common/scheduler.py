@@ -9,6 +9,7 @@ from app.domain.swing.trading.auto_swing_batch import (
     ema_cache_warmup_job,
     us_ema_cache_warmup_job,
 )
+from app.domain.stock.price_adjustment_batch import price_adjustment_reload_job
 
 scheduler = AsyncIOScheduler()
 
@@ -46,6 +47,13 @@ async def schedule_start():
     # - 당일 OHLCV 데이터 저장
     # - SIGNAL 1/2 → 종가 기준 EOD 매도 조건 신호 저장
     scheduler.add_job(day_collect_job, CronTrigger(minute='35', hour='15', day_of_week='0-4'))
+
+    # 수정주가 재적재: 평일 새벽 02:30 KST
+    # KSD 액면교체/합병/분할 일정 조회 → 효력일 도래 종목 3년치 재적재
+    scheduler.add_job(
+        price_adjustment_reload_job,
+        CronTrigger(minute='30', hour='2', day_of_week='mon-fri')
+    )
 
     # === 미국 장 스케줄 ===
     # 미국 동부시간(ET) 기준 설정 → 서머타임/겨울시간 자동 반영

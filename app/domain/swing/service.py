@@ -216,12 +216,15 @@ class SwingService:
 
             swing_list = await self.repo.find_all_by_account_no(account_no, mrkt_code)
             if overseas:
-                # 체결기준 현재 잔고 API — USD 가용 자본 + 보유 종목(USD 정규화) 제공
-                balance_data = await foreign_api.get_present_balance(user_id, self.db)
+                # 해외: 보유 종목은 TTTS3012R(체결 즉시 반영), USD 현금/요약은 CTRP6504R
+                holdings = await foreign_api.get_stock_balance(user_id, self.db)
+                cash_data = await foreign_api.get_present_balance(user_id, self.db)
+                buy_list = holdings["output1"]
+                output2 = cash_data["output2"]
             else:
                 balance_data = await get_stock_balance(user_id, self.db)
-            buy_list = balance_data["output1"]
-            output2 = balance_data["output2"]
+                buy_list = balance_data["output1"]
+                output2 = balance_data["output2"]
 
             swing_dict = {swing["ST_CODE"]: swing for swing in swing_list}
             buy_dict = {item.get("pdno"): item for item in buy_list if item.get("pdno")}

@@ -36,6 +36,9 @@ class Settings(BaseSettings):
     DEV_API_URL: str = "https://openapivts.koreainvestment.com:29443"
     REAL_API_URL: str = "https://openapi.koreainvestment.com:9443"
 
+    # 시스템 배치 잡 사용자 ID (KIS 토큰 발급 컨텍스트)
+    BATCH_USER_ID: Optional[str] = None
+
     # AES Encryption
     AES_SECRET_KEY: Optional[str] = None
 

@@ -49,7 +49,19 @@ async def fetch(method: str, url: str, service_name: str = "External API", **kwa
                 original_error=e
             )
         except httpx.HTTPStatusError as e:
-            error_msg = e.response.json().get('msg1', '')
+            try:
+                body = e.response.json()
+            except ValueError:
+                body = {}
+
+            # KIS 일반 API: msg1 / KIS OAuth: error_description, error_code
+            error_msg = (
+                body.get('error_description')
+                or body.get('error_code')
+                or body.get('msg1')
+                or e.response.text
+                or f"HTTP {e.response.status_code}"
+            )
 
             # 초당 거래건수 초과 시 재시도
             if RATE_LIMIT_MSG in error_msg and attempt < MAX_RATE_LIMIT_RETRIES:
