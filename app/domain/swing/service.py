@@ -41,13 +41,22 @@ class SwingService:
         overseas = mrkt_code == "NASD"
 
         if overseas:
-            # 체결기준 현재 잔고 API — USD 가용 자본(frcr_dncl_amt_2)을 dnca_tot_amt로 매핑
-            balance_data = await foreign_api.get_present_balance(user_id, self.db)
+            # 해외증거금 통화별조회 — 외화주문가능금액(ord_psbl_amt)을 가용자본으로 사용
+            margin = await foreign_api.get_foreign_margin(user_id, self.db)
+            if margin is None:
+                # 모의투자: 현금/주문가능 소스 없음 → 한도 추적 불가
+                allocated = int(await self.repo.get_total_init_amount(account_no, overseas, exclude_swing_id))
+                return {
+                    "total_capital": None,
+                    "allocated": allocated,
+                    "available_capital": None,
+                    "capital_tracking": False,
+                }
+            cash = int(float(margin.get("ord_psbl_amt", 0) or 0))
         else:
             balance_data = await get_stock_balance(user_id, self.db)
-
-        output2 = balance_data["output2"]
-        cash = int(float(output2.get("dnca_tot_amt", 0) or 0))
+            output2 = balance_data["output2"]
+            cash = int(float(output2.get("dnca_tot_amt", 0) or 0))
 
         allocated = int(await self.repo.get_total_init_amount(account_no, overseas, exclude_swing_id))
         available_capital = cash - allocated
@@ -56,6 +65,7 @@ class SwingService:
             "total_capital": cash,
             "allocated": allocated,
             "available_capital": available_capital,
+            "capital_tracking": True,
         }
 
     async def create_swing(self, user_id: str, request: SwingCreateRequest) -> dict:
@@ -148,7 +158,8 @@ class SwingService:
                     exclude_swing_id=exclude_id
                 )
                 check_amount = data.get("INIT_AMOUNT", int(swing.INIT_AMOUNT))
-                if check_amount > capital_info["available_capital"]:
+                # 모의투자 등 가용자본 추적 불가(available_capital=None) 시 한도 검증 생략
+                if capital_info.get("available_capital") is not None and check_amount > capital_info["available_capital"]:
                     raise BusinessRuleError(
                         f"투자 가능 금액을 초과했습니다. "
                         f"가용 자본: {capital_info['available_capital']:,}원, "
@@ -214,13 +225,29 @@ class SwingService:
                 except (TypeError, ValueError, InvalidOperation):
                     return Decimal(0)
 
+            cash_supported = True  # 모의투자(현금 소스 없음)면 False → CASH_ASSET 미지원
             swing_list = await self.repo.find_all_by_account_no(account_no, mrkt_code)
             if overseas:
-                # 해외: 보유 종목은 TTTS3012R(체결 즉시 반영), USD 현금/요약은 CTRP6504R
+                # 해외: 보유 종목은 TTTS3012R(체결 즉시 반영), USD 현금은 해외증거금 통화별조회
                 holdings = await foreign_api.get_stock_balance(user_id, self.db)
-                cash_data = await foreign_api.get_present_balance(user_id, self.db)
+                margin = await foreign_api.get_foreign_margin(user_id, self.db)
                 buy_list = holdings["output1"]
-                output2 = cash_data["output2"]
+                # 035에는 평가금액/손익이 없어 보유종목(TTTS3012R)을 합산해 summary용 output2를 구성
+                evlu_sum = sum((_to_decimal(i.get("evlu_amt")) for i in buy_list), Decimal(0))
+                pfls_sum = sum((_to_decimal(i.get("evlu_pfls_amt")) for i in buy_list), Decimal(0))
+                if margin is None:
+                    # 모의투자: 현금 소스 없음 → 총평가는 보유종목만, CASH_ASSET 미지원
+                    cash_amt = Decimal(0)
+                    cash_supported = False
+                    dnca_display = "0"
+                else:
+                    cash_amt = _to_decimal(margin.get("dnca_amt"))
+                    dnca_display = margin.get("dnca_amt", "0")
+                output2 = {
+                    "tot_evlu_amt": str(evlu_sum + cash_amt),  # 현금 포함 총평가 (모의는 현금 0)
+                    "evlu_pfls_smtl_amt": str(pfls_sum),
+                    "dnca_tot_amt": dnca_display,  # 외화예수금 → CASH_ASSET
+                }
             else:
                 balance_data = await get_stock_balance(user_id, self.db)
                 buy_list = balance_data["output1"]
@@ -338,7 +365,7 @@ class SwingService:
                 "TOTAL_PRINCIPAL": principal,
                 "TOTAL_PROFIT": evlu_pfls,
                 "TOTAL_PROFIT_RATE": profit_rate,
-                "CASH_ASSET": _to_amount(output2.get("dnca_tot_amt", 0)),
+                "CASH_ASSET": _to_amount(output2.get("dnca_tot_amt", 0)) if cash_supported else None,
             }
 
             return {"list": results, "summary": summary}
