@@ -7,7 +7,8 @@ from dateutil.relativedelta import relativedelta
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import SQLAlchemyError, IntegrityError
 from typing import List, Dict, Any
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
+from zoneinfo import ZoneInfo
 from decimal import Decimal, InvalidOperation
 from app.domain.swing.indicators import TechnicalIndicators
 from app.domain.swing.repository import SwingRepository
@@ -25,6 +26,35 @@ import json
 import pandas as pd
 
 logger = logging.getLogger(__name__)
+
+
+# ===== 시장별 캐시 만료 기준 시각 (해당 시장 마감 = 지표 갱신 경계) =====
+# J: 국내장(16:00 KST), NASD: 미국장(16:00 ET)
+_MARKET_CLOSE_CONFIG = {
+    "J":    {"close": time(16, 0), "tz": "Asia/Seoul"},
+    "NASD": {"close": time(16, 0), "tz": "America/New_York"},
+}
+_DEFAULT_CLOSE = _MARKET_CLOSE_CONFIG["J"]
+
+
+def market_cache_ttl(mrkt_code: str, min_ttl: int = 60) -> int:
+    """
+    해당 시장의 '다음 마감 시각'까지 남은 초를 반환 (서버 타임존 무관).
+
+    지표 캐시는 그 시장 마감 후 새 일봉 데이터로 갱신되므로,
+    캐시 수명을 시장별 마감 시각(16:00 현지)에 맞춘다.
+    ZoneInfo 기반 타임존-aware 계산이라 컨테이너가 UTC든 KST든
+    동일하게 동작한다. (기존 naive datetime.now() + 16:00 KST 고정 방식은
+    UTC 컨테이너에서 오작동했고, 밤에 도는 미국 워밍업은 음수→60초로 클램프되어
+    매매 시점엔 캐시가 사라지는 버그가 있었다.)
+    """
+    config = _MARKET_CLOSE_CONFIG.get(mrkt_code, _DEFAULT_CLOSE)
+    tz = ZoneInfo(config["tz"])
+    now = datetime.now(tz)
+    target = datetime.combine(now.date(), config["close"], tzinfo=tz)
+    if now >= target:
+        target += timedelta(days=1)
+    return max(int((target - now).total_seconds()), min_ttl)
 
 
 class SwingService:
@@ -474,9 +504,7 @@ class SwingService:
             if not indicators_data:
                 return False
 
-            now = datetime.now()
-            target = datetime.combine(now.date(), time(16, 0))
-            ttl = max(int((target - now).total_seconds()), 60)
+            ttl = market_cache_ttl(mrkt_code)
 
             await redis_client.setex(
                 f"indicators:{st_code}",
@@ -496,7 +524,7 @@ class SwingService:
             logger.error(f"[{st_code}] 지표 캐싱 실패: {e}")
             return False
 
-    async def warmup_ema_cache(self, redis_client, overseas_only: bool = False) -> Dict[str, Any]:
+    async def warmup_ema_cache(self, redis_client, scope: str = "all") -> Dict[str, Any]:
         """
         지표 캐시 워밍업 (애플리케이션 시작 시 또는 스케줄 배치)
 
@@ -506,13 +534,16 @@ class SwingService:
 
         Args:
             redis_client: Redis 클라이언트
-            overseas_only: 해외 종목만 워밍업 여부
+            scope: 워밍업 대상 시장
+                - "domestic": 국내(J 등 NASD 외)만
+                - "overseas": 미국(NASD)만
+                - "all": 전체 (기본값, 앱 시작 시 사용)
 
         Returns:
             워밍업 결과 (성공/실패 건수)
         """
 
-        logger.info("=== 지표 캐시 워밍업 시작 (EMA20, ADX, DI) ===")
+        logger.info(f"=== 지표 캐시 워밍업 시작 (scope={scope}) ===")
 
         success_count = 0
         fail_count = 0
@@ -520,8 +551,10 @@ class SwingService:
         try:
             # 1. 활성 종목 코드 조회
             active_codes = await self.repo.find_active_stock_codes()
-            if overseas_only:
+            if scope == "overseas":
                 active_codes = [(m, s) for m, s in active_codes if m == "NASD"]
+            elif scope == "domestic":
+                active_codes = [(m, s) for m, s in active_codes if m != "NASD"]
             logger.info(f"활성 종목 수: {len(active_codes)}개")
 
             if not active_codes:
@@ -536,9 +569,7 @@ class SwingService:
                         fail_count += 1
                         continue
 
-                    now = datetime.now()
-                    target = datetime.combine(now.date(), time(16, 0))
-                    ttl = max(int((target - now).total_seconds()), 60)
+                    ttl = market_cache_ttl(mrkt_code)
 
                     await redis_client.setex(
                         f"indicators:{st_code}",

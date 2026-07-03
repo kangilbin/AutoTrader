@@ -123,7 +123,7 @@ async def process_single_swing(
                 logger.warning(f"[SWING_ID={swing_id}] USER_ID가 없습니다. 계좌-인증키 연결을 확인하세요.")
                 return
 
-            # ORM 엔티티 로드 (Entity 비즈니스 로직 메서드 사용)
+
             swing = await swing_service.repo.find_by_id(swing_id)
             if not swing:
                 logger.warning(f"[{swing_id}] 스윙 엔티티 로드 실패")
@@ -829,7 +829,7 @@ async def us_ema_cache_warmup_job():
     try:
         redis_client = await Redis.get_connection()
         swing_service = SwingService(db)
-        result = await swing_service.warmup_ema_cache(redis_client, overseas_only=True)
+        result = await swing_service.warmup_ema_cache(redis_client, scope="overseas")
         logger.info(f"해외 지표 캐시 워밍업 결과: {result}")
     except Exception as e:
         logger.error(f"해외 지표 캐시 워밍업 실패: {e}", exc_info=True)
@@ -839,10 +839,10 @@ async def us_ema_cache_warmup_job():
 
 async def ema_cache_warmup_job():
     """
-    지표 캐시 워밍업 배치 (스케줄러에서 호출)
+    국내 지표 캐시 워밍업 배치 (스케줄러에서 호출)
 
-    - 실행 시점: 매일 08:30 (장 시작 전)
-    - 대상: SWING_TRADE.USE_YN = 'Y'인 종목
+    - 실행 시점: 매일 08:29 KST (국내장 시작 전)
+    - 대상: SWING_TRADE.USE_YN = 'Y'인 국내 종목 (미국은 us_ema_cache_warmup_job이 담당)
     - 작업: 과거 3년 데이터로 지표 계산 → Redis 저장
     - 저장 지표: EMA20, ADX, +DI, -DI, ATR, OBV-Z
     """
@@ -852,8 +852,8 @@ async def ema_cache_warmup_job():
         redis_client = await Redis.get_connection()
         swing_service = SwingService(db)
 
-        result = await swing_service.warmup_ema_cache(redis_client)
-        logger.info(f"지표 캐시 워밍업 결과: {result}")
+        result = await swing_service.warmup_ema_cache(redis_client, scope="domestic")
+        logger.info(f"국내 지표 캐시 워밍업 결과: {result}")
 
     except Exception as e:
         logger.error(f"지표 캐시 워밍업 실패: {e}", exc_info=True)

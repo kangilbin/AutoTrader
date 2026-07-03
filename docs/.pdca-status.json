@@ -1,6 +1,6 @@
 {
   "version": "2.0",
-  "lastUpdated": "2026-05-30T09:56:52.959Z",
+  "lastUpdated": "2026-07-03T15:49:14.218Z",
   "activeFeatures": [
     "foreign-swing",
     "foreign-stock",
@@ -27,10 +27,31 @@
     "backtest",
     "sell-all Gap 분석",
     "backtest-realistic-pricing",
-    "conviction-sizing Gap 분석"
+    "conviction-sizing Gap 분석",
+    "oauth",
+    "tmp",
+    "tests"
   ],
-  "primaryFeature": "swing-trade",
+  "primaryFeature": "foreign-margin-balance",
   "features": {
+    "foreign-margin-balance": {
+      "phase": "archived",
+      "phaseNumber": 6,
+      "matchRate": 98,
+      "iterationCount": 0,
+      "startedAt": "2026-06-24T00:00:00.000Z",
+      "archivedAt": "2026-06-24T00:00:00.000Z",
+      "archivedTo": "docs/archive/2026-06/foreign-margin-balance/"
+    },
+    "price-adjustment-reload": {
+      "phase": "archived",
+      "phaseNumber": 6,
+      "matchRate": 99,
+      "iterationCount": 0,
+      "startedAt": "2026-06-17T00:00:00.000Z",
+      "archivedAt": "2026-06-17T00:00:00.000Z",
+      "archivedTo": "docs/archive/2026-06/price-adjustment-reload/"
+    },
     "swing-trade": {
       "phase": "archived",
       "phaseNumber": 6,
@@ -125,7 +146,7 @@
       "documents": {},
       "timestamps": {
         "started": "2026-02-28T03:36:02.099Z",
-        "lastUpdated": "2026-05-27T12:10:08.661Z"
+        "lastUpdated": "2026-07-03T15:39:48.093Z"
       },
       "lastFile": "/Users/apple/IdeaProjects/AutoTrader/app/domain/swing/service.py"
     },
@@ -138,9 +159,9 @@
       "documents": {},
       "timestamps": {
         "started": "2026-03-09T12:43:59.614Z",
-        "lastUpdated": "2026-03-13T16:11:21.743Z"
+        "lastUpdated": "2026-06-17T12:40:43.612Z"
       },
-      "lastFile": "/Users/apple/IdeaProjects/AutoTrader/app/core/response.py"
+      "lastFile": "/Users/apple/IdeaProjects/AutoTrader/app/core/config.py"
     },
     "user": {
       "phase": "do",
@@ -177,9 +198,9 @@
       "documents": {},
       "timestamps": {
         "started": "2026-03-13T05:32:59.682Z",
-        "lastUpdated": "2026-05-30T09:56:52.959Z"
+        "lastUpdated": "2026-07-03T15:41:47.819Z"
       },
-      "lastFile": "/Users/apple/IdeaProjects/AutoTrader/app/domain/swing/trading/order_executor.py"
+      "lastFile": "/Users/apple/IdeaProjects/AutoTrader/app/domain/swing/trading/auto_swing_batch.py"
     },
     "trade_history": {
       "phase": "do",
@@ -216,7 +237,7 @@
       "documents": {},
       "timestamps": {
         "started": "2026-03-13T06:07:32.554Z",
-        "lastUpdated": "2026-04-11T14:50:13.142Z"
+        "lastUpdated": "2026-07-03T15:49:14.218Z"
       },
       "lastFile": "/Users/apple/IdeaProjects/AutoTrader/app/common/scheduler.py"
     },
@@ -255,9 +276,9 @@
       "documents": {},
       "timestamps": {
         "started": "2026-03-13T15:38:00.494Z",
-        "lastUpdated": "2026-04-14T23:49:00.153Z"
+        "lastUpdated": "2026-06-17T12:43:10.346Z"
       },
-      "lastFile": "/Users/apple/IdeaProjects/AutoTrader/app/domain/stock/stock_data_batch.py"
+      "lastFile": "/Users/apple/IdeaProjects/AutoTrader/app/domain/stock/price_adjustment_batch.py"
     },
     "device": {
       "phase": "do",
@@ -281,7 +302,7 @@
       "documents": {},
       "timestamps": {
         "started": "2026-03-13T16:07:44.994Z",
-        "lastUpdated": "2026-05-26T13:15:27.812Z"
+        "lastUpdated": "2026-06-24T12:30:55.945Z"
       },
       "lastFile": "/Users/apple/IdeaProjects/AutoTrader/app/external/foreign_api.py"
     },
@@ -377,7 +398,7 @@
       "documents": {},
       "timestamps": {
         "started": "2026-05-06T12:24:44.373Z",
-        "lastUpdated": "2026-05-10T11:45:56.831Z"
+        "lastUpdated": "2026-06-25T13:35:39.175Z"
       },
       "lastFile": "/Users/apple/IdeaProjects/AutoTrader/app/domain/swing/backtest/backtest_service.py"
     },
@@ -422,6 +443,45 @@
       },
       "previousPhase": "check",
       "autoAdvanced": true
+    },
+    "oauth": {
+      "phase": "do",
+      "phaseNumber": 3,
+      "matchRate": null,
+      "iterationCount": 0,
+      "requirements": [],
+      "documents": {},
+      "timestamps": {
+        "started": "2026-06-10T13:09:54.516Z",
+        "lastUpdated": "2026-06-10T13:13:58.183Z"
+      },
+      "lastFile": "/Users/apple/IdeaProjects/AutoTrader/app/domain/oauth/service.py"
+    },
+    "tmp": {
+      "phase": "do",
+      "phaseNumber": 3,
+      "matchRate": null,
+      "iterationCount": 0,
+      "requirements": [],
+      "documents": {},
+      "timestamps": {
+        "started": "2026-06-17T13:00:04.284Z",
+        "lastUpdated": "2026-06-17T14:15:06.881Z"
+      },
+      "lastFile": "/Users/apple/IdeaProjects/AutoTrader/tmp/compare_foreign_balance.py"
+    },
+    "tests": {
+      "phase": "do",
+      "phaseNumber": 3,
+      "matchRate": null,
+      "iterationCount": 0,
+      "requirements": [],
+      "documents": {},
+      "timestamps": {
+        "started": "2026-06-17T13:52:18.332Z",
+        "lastUpdated": "2026-06-24T11:22:48.688Z"
+      },
+      "lastFile": "/Users/apple/IdeaProjects/AutoTrader/tests/test_swing_entity.py"
     }
   },
   "pipeline": {
@@ -432,7 +492,7 @@
   "session": {
     "startedAt": "2026-02-28T03:08:34.644Z",
     "onboardingCompleted": false,
-    "lastActivity": "2026-05-30T09:56:52.959Z"
+    "lastActivity": "2026-07-03T15:49:14.218Z"
   },
   "history": [
     {
@@ -5214,6 +5274,252 @@
     {
       "timestamp": "2026-05-30T09:56:52.959Z",
       "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-06-10T13:09:54.516Z",
+      "feature": "oauth",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-06-10T13:10:53.898Z",
+      "feature": "oauth",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-06-10T13:13:58.183Z",
+      "feature": "oauth",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-06-17T11:41:37.383Z",
+      "feature": "external",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-06-17T11:44:46.280Z",
+      "feature": "external",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-06-17T12:40:43.612Z",
+      "feature": "core",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-06-17T12:42:18.250Z",
+      "feature": "external",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-06-17T12:43:10.346Z",
+      "feature": "stock",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-06-17T12:45:21.965Z",
+      "feature": "AutoTrader",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-06-17T12:45:41.288Z",
+      "feature": "AutoTrader",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-06-17T13:00:04.284Z",
+      "feature": "tmp",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-06-17T13:42:16.852Z",
+      "feature": "tmp",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-06-17T13:44:28.651Z",
+      "feature": "tmp",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-06-17T13:45:39.808Z",
+      "feature": "tmp",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-06-17T13:52:18.332Z",
+      "feature": "tests",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-06-17T13:53:44.827Z",
+      "feature": "tests",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-06-17T14:15:06.881Z",
+      "feature": "tmp",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-06-17T14:28:58.991Z",
+      "feature": "external",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-06-17T14:30:25.001Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-06-24T11:22:48.688Z",
+      "feature": "tests",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-06-24T12:00:54.796Z",
+      "feature": "external",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-06-24T12:04:05.224Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-06-24T12:06:54.395Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-06-24T12:14:24.372Z",
+      "feature": "external",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-06-24T12:15:06.974Z",
+      "feature": "external",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-06-24T12:16:03.898Z",
+      "feature": "external",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-06-24T12:30:55.945Z",
+      "feature": "external",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-06-24T12:31:36.627Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-06-24T12:32:34.554Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-06-24T12:33:31.331Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-06-24T12:33:42.929Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-06-25T13:35:39.175Z",
+      "feature": "backtest",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-03T15:34:26.244Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-03T15:35:56.045Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-03T15:37:13.347Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-03T15:37:35.623Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-03T15:37:47.290Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-03T15:39:48.093Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-03T15:41:26.228Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-03T15:41:47.819Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-03T15:49:14.218Z",
+      "feature": "AutoTrader",
       "phase": "do",
       "action": "updated"
     }

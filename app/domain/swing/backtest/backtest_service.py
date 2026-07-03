@@ -70,7 +70,7 @@ async def run_backtest(db: AsyncSession, swing_data: SwingCreateRequest) -> dict
 
     end_date = datetime.now()
     start_date = end_date - relativedelta(years=3)
-    eval_start = end_date - relativedelta(years=1)
+    eval_start = end_date - relativedelta(years=2)
 
     # 주가 데이터 조회
     stock_service = StockService(db)

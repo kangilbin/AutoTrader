@@ -11,7 +11,10 @@ from app.domain.swing.trading.auto_swing_batch import (
 )
 from app.domain.stock.price_adjustment_batch import price_adjustment_reload_job
 
-scheduler = AsyncIOScheduler()
+# 기본 타임존을 KST로 명시 → 국내 잡(timezone 미지정)이 KST에 확정 앵커됨.
+# 컨테이너 런타임 TZ(UTC 등)에 의존하지 않도록 방어.
+# 미국 잡은 CronTrigger(timezone=us_tz)가 트리거 단위로 오버라이드하므로 무관.
+scheduler = AsyncIOScheduler(timezone='Asia/Seoul')
 
 
 async def schedule_start():
@@ -71,8 +74,8 @@ async def schedule_start():
     scheduler.add_job(
         us_trade_job,
         CronTrigger(
-            minute='*/5',
-            hour='11-15',
+            minute='*/1',
+            hour='10-15',
             day_of_week='mon-fri',
             timezone=us_tz
         )

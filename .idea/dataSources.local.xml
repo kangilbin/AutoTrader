@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="dataSourceStorageLocal" created-in="PY-252.25557.178">
+    <data-source name="서버DB" uuid="e565c0c2-5637-40dd-9494-4e03443f8876">
+      <database-info product="MariaDB" version="11.7.2-MariaDB-ubu2404" jdbc-version="4.2" driver-name="MariaDB Connector/J" driver-version="3.3.3" dbms="MARIADB" exact-version="11.7.2" exact-driver-version="3.3">
+        <extra-name-characters>#@</extra-name-characters>
+        <identifier-quote-string>`</identifier-quote-string>
+      </database-info>
+      <case-sensitivity plain-identifiers="exact" quoted-identifiers="exact" />
+      <secret-storage>master_key</secret-storage>
+      <user-name>kang</user-name>
+      <schema-mapping>
+        <introspection-scope>
+          <node kind="schema" qname="AUTO_TRADER" />
+        </introspection-scope>
+      </schema-mapping>
+    </data-source>
+  </component>
+</project>
