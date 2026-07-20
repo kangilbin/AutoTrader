@@ -294,13 +294,18 @@ async def check_order_execution(
 # ============================================================
 
 async def get_inquire_price(user_id: str, code: str, db: AsyncSession):
-    """해외 주식 현재가 조회"""
+    """해외 주식 현재가상세 조회 (HHDFS76200200)
+
+    현재체결가(HHDFS00000300)와 달리 open/high/low 를 함께 제공하여
+    실시간 지표(ATR 등) 계산에 필요한 당일 고가/저가를 얻을 수 있다.
+    단, 현지통화 등락률 필드는 없으므로 (last-base)/base 로 계산해 사용한다.
+    """
     user_data, access_data = await _get_user_auth(user_id, db)
     url = settings.DEV_API_URL if access_data.get("simulation_yn") == "Y" else settings.REAL_API_URL
-    path = "uapi/overseas-price/v1/quotations/price"
+    path = "uapi/overseas-price/v1/quotations/price-detail"
     api_url = f"{url}/{path}"
 
-    headers = kis_headers(access_data, tr_id="HHDFS00000300")
+    headers = kis_headers(access_data, tr_id="HHDFS76200200")
     query = {
         "AUTH": "",
         "EXCD": "NAS",

@@ -157,7 +157,10 @@ async def process_single_swing(
                 acml_vol = int(current_price_data.get("tvol", 0))
                 frgn_ntby_qty = 0  # 해외 시 외국인 순매수 미제공
                 prdy_vrss_vol_rate = 100.0  # 해외 시 미제공, 기본값
-                prdy_ctrt = float(current_price_data.get("rate", 0))
+                # 현재가상세(HHDFS76200200)엔 현지통화 등락률 필드가 없어
+                # 국장 prdy_ctrt(전일 대비율)와 동일하게 (last-base)/base 로 계산
+                base_price = float(current_price_data.get("base", 0))
+                prdy_ctrt = round((float(current_price) - base_price) / base_price * 100, 2) if base_price else 0.0
             else:
                 current_price = Decimal(str(current_price_data.get("stck_prpr", 0)))
                 current_high = Decimal(str(current_price_data.get("stck_hgpr", current_price)))
