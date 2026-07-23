@@ -4,7 +4,8 @@ Order Service - 비즈니스 로직
 import logging
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.order.entity import Order, ModifyOrder
+from app.core.market_code import is_overseas
+from app.core.order import Order, ModifyOrder
 from app.domain.order.schemas import OrderModifyRequest, SellAllRequest
 from app.exceptions import ExternalServiceError
 
@@ -79,13 +80,13 @@ class OrderService:
         """
         from app.external import kis_api, foreign_api
 
-        is_overseas = request.MRKT_CODE == "NASD"
+        overseas = is_overseas(request.MRKT_CODE)
         order = Order.create(
             ord_dv="sell", itm_no=request.ST_CODE, qty=request.QTY,
-            excg_cd=request.MRKT_CODE if is_overseas else ""
+            excg_cd=request.MRKT_CODE if overseas else ""
         )
 
-        if is_overseas:
+        if overseas:
             result = await foreign_api.place_order_api(user_id, order, self.db)
         else:
             result = await kis_api.place_order_api(user_id, order, self.db)

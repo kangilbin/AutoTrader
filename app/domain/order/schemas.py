@@ -19,6 +19,6 @@ class OrderModifyRequest(BaseModel):
 class SellAllRequest(BaseModel):
     """전량 매도 요청"""
     ST_CODE: str    # 종목코드
-    MRKT_CODE: str  # 시장구분코드 (J, NX, UN, NASD)
+    MRKT_CODE: str  # 시장구분코드 (J, NX, UN, NYS, NAS, AMS)
     QTY: int        # 매도 수량
 

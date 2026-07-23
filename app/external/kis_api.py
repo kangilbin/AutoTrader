@@ -13,7 +13,7 @@ from app.core.security import decrypt
 from app.external.headers import kis_headers, kis_error_message
 from app.external.http_client import fetch
 from app.common.redis import get_redis
-from app.domain.order.entity import Order, ModifyOrder
+from app.core.order import Order, ModifyOrder
 from app.domain.auth.repository import AuthRepository
 from typing import List, Optional
 
@@ -30,9 +30,15 @@ _TOKEN_WAIT_INTERVAL = 0.2  # 락 대기 시 Redis 재조회 간격(초)
 _TOKEN_WAIT_MAX_ATTEMPTS = 50  # 최대 대기 시도 (0.2s * 50 = 10s)
 
 
-async def _read_cached_token(redis, user_id: str, api_key: str, secret_key: str) -> Optional[dict]:
+def _token_cache_key(user_id: str, auth_id=None) -> str:
+    """토큰 캐시 키. 인증키(AUTH_ID)별로 슬롯을 분리해 모의/실전 토큰이 공존하도록 한다.
+    auth_id 미지정(mgnt 등)은 레거시 키 사용."""
+    return f"{user_id}_{auth_id}_access_token" if auth_id else f"{user_id}_access_token"
+
+
+async def _read_cached_token(redis, cache_key: str, api_key: str, secret_key: str) -> Optional[dict]:
     """Redis에서 유효한 토큰 캐시 조회 (key 일치 확인)"""
-    access_data = await redis.hgetall(f"{user_id}_access_token")
+    access_data = await redis.hgetall(cache_key)
     if not access_data:
         return None
     if access_data.get("api_key") == api_key and access_data.get("secret_key") == secret_key:
@@ -40,38 +46,42 @@ async def _read_cached_token(redis, user_id: str, api_key: str, secret_key: str)
     return None
 
 
-async def oauth_token(user_id: str, simulation_yn: str, api_key: str, secret_key: str):
+async def oauth_token(user_id: str, simulation_yn: str, api_key: str, secret_key: str, auth_id=None):
     """
     한국 투자 증권 접근 토큰
     유효기간 24시 이며 (1일 1회 발급) 갱신발급 주기는 6시간(6시 이내는 기존 발급키 응답)
 
     KIS는 동일 appkey로 1분에 1회만 토큰 발급 허용 (EGW00133)
     동시 요청에서 중복 발급을 막기 위해 Redis 분산 락 사용
+
+    auth_id별로 캐시 슬롯을 분리해, 모의/실전 계좌를 번갈아 선택해도
+    각 토큰이 공존하며 불필요한 재발급(→ 1분 제한 위반)을 방지한다.
     """
     redis = await get_redis()
+    cache_key = _token_cache_key(user_id, auth_id)
 
-    cached = await _read_cached_token(redis, user_id, api_key, secret_key)
+    cached = await _read_cached_token(redis, cache_key, api_key, secret_key)
     if cached:
         return cached
 
     # key 불일치로 stale 캐시인 경우 제거
-    await redis.delete(f"{user_id}_access_token")
+    await redis.delete(cache_key)
 
-    lock_key = f"{user_id}_access_token:lock"
+    lock_key = f"{cache_key}:lock"
     got_lock = await redis.set(lock_key, "1", nx=True, ex=_TOKEN_LOCK_TTL)
 
     if not got_lock:
         # 다른 요청이 발급 중. 발급 완료를 폴링으로 대기.
         for _ in range(_TOKEN_WAIT_MAX_ATTEMPTS):
             await asyncio.sleep(_TOKEN_WAIT_INTERVAL)
-            cached = await _read_cached_token(redis, user_id, api_key, secret_key)
+            cached = await _read_cached_token(redis, cache_key, api_key, secret_key)
             if cached:
                 return cached
         raise ExternalServiceError("KIS", "토큰 발급 대기 시간 초과")
 
     try:
         # 락 획득 후 한 번 더 캐시 확인 (락 대기 중 다른 워커가 발급했을 수 있음)
-        cached = await _read_cached_token(redis, user_id, api_key, secret_key)
+        cached = await _read_cached_token(redis, cache_key, api_key, secret_key)
         if cached:
             return cached
 
@@ -102,24 +112,26 @@ async def oauth_token(user_id: str, simulation_yn: str, api_key: str, secret_key
             "simulation_yn": simulation_yn
         }
         # Redis에 토큰 저장 만료기간(expires_in) 설정
-        await redis.hset(f"{user_id}_access_token", mapping=data)
-        await redis.expire(f"{user_id}_access_token", body.get("expires_in"))
+        await redis.hset(cache_key, mapping=data)
+        await redis.expire(cache_key, body.get("expires_in"))
         return data
     finally:
         await redis.delete(lock_key)
 
 
 async def _get_user_auth(user_id: str, db: AsyncSession):
-    """사용자 인증 정보 조회 (토큰 만료 시 DB에서 인증키 조회 후 재발급)"""
+    """사용자 인증 정보 조회 (선택된 인증키(AUTH_ID)별 토큰 캐시 사용, 만료 시 재발급)"""
     redis = await get_redis()
-    access_data = await redis.hgetall(f"{user_id}_access_token")
     user_data = await redis.hgetall(user_id)
 
-    if not access_data:
-        auth_id = user_data.get("AUTH_ID")
-        if not auth_id:
-            raise ExternalServiceError("KIS", "인증키가 선택되지 않았습니다. 인증키를 먼저 선택해주세요.")
+    auth_id = user_data.get("AUTH_ID")
+    if not auth_id:
+        raise ExternalServiceError("KIS", "인증키가 선택되지 않았습니다. 인증키를 먼저 선택해주세요.")
 
+    # 선택된 인증키 슬롯에서 토큰 조회 (모의/실전 전환해도 각자 캐시 유지)
+    access_data = await redis.hgetall(_token_cache_key(user_id, auth_id))
+
+    if not access_data:
         repo = AuthRepository(db)
         auth_data = await repo.find_by_id(user_id, int(auth_id))
         if not auth_data:
@@ -129,7 +141,8 @@ async def _get_user_auth(user_id: str, db: AsyncSession):
             user_id,
             auth_data["SIMULATION_YN"],
             decrypt(auth_data["API_KEY"]),
-            decrypt(auth_data["SECRET_KEY"])
+            decrypt(auth_data["SECRET_KEY"]),
+            auth_id=auth_id,
         )
 
     return user_data, access_data

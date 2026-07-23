@@ -25,7 +25,7 @@
 - **ddd-refactoring v2.0** (2026-03-14): 98% overall after Iteration 1 dead code cleanup
   - Dead code: 27/29 deleted, 2 justified deviations (order/entity.py dataclass, get_inquire_daily_ccld_obj)
   - get_inquire_daily_ccld_obj() NOT dead: used by check_order_execution() in kis_api.py L338
-  - order/entity.py dataclass NOT dead: used by kis_api.py + order_executor.py
+  - order/entity.py dataclass NOT dead: used by kis_api.py + order_executor.py [OUTDATED as of 2026-07-21: Order/ModifyOrder moved to app/core/order.py, order/entity.py deleted in us-market-expansion]
   - Design doc needs update: remove those 2 from deletion targets, add factory methods
   - Added: User.create_oauth_user(), Account.create(), Auth.create() factory methods (not in design)
 - **swing-order v1.0** (2026-03-15): 95% overall, Plan 6-col refined to 2-col (TOTAL_FEE, REALIZED_PNL)
@@ -33,6 +33,16 @@
   - Minor: _calculate_sell_pnl() has direct SQLAlchemy query (cross-domain pragmatic choice)
   - Plan doc outdated: still shows 6-column original, needs update to 2-column refined version
   - Implementation adds defensive checks not in plan (entry_price null, sell_qty>0)
+- **us-market-expansion v1.0** (2026-07-21): 100% overall (Design/Arch/Convention all 100%), 0 gaps
+  - US 3-exchange expansion NYS/NAS/AMS; canonical code = 시세계열 3-letter, KIS mapping ONLY at foreign_api boundary
+  - Order/ModifyOrder MOVED from order/entity.py to app/core/order.py; order/entity.py DELETED (fixes external->domain violation)
+  - == "NASD" fully replaced by is_overseas() across order/swing/stock/trading/batch (grep 0 residual)
+  - foreign_api: price funcs take excd param, trade funcs use to_ovrs_excg_cd(); new get_us_holdings() real=NASD 1x / sim=loop US_TRADE_EXCG merge output1
+  - Bug fixed: swing/repository.py find_active_domestic IN ('J','NX','UN') (was IN ('J','NAS') dead cond); overseas IN ('NYS','NAS','AMS')
+  - Allowed "NAS"/"NASD" strings: market_code.py mapping, foreign_api defaults+get_us_holdings, VALID_MRKT_CODES, repo SQL IN sets, market-hours dicts
+  - Known deviation (design-approved): kis_api.py:17 AuthRepository import (external->domain) explicitly out-of-scope per design.md:26
+  - Improvement candidate: ModifyOrder has no excg_cd field -> modify/cancel excg_cd defaults 'NAS'->NASD (NYS/AMS fixed to NASD)
+  - Out of scope (not scored): DB migration SWING_TRADE NASD->NAS (manual), mobile client (separate repo)
 
 ## Key Files
 - Design docs: `docs/02-design/features/ddd-refactoring.design.md`

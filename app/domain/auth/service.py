@@ -64,12 +64,13 @@ class AuthService:
             "AUTH_ID": str(auth_id),
         })
 
-        # OAuth 토큰 발급
+        # OAuth 토큰 발급 (선택한 인증키(auth_id) 슬롯에 저장 → 모의/실전 전환 시 공존)
         await oauth_token(
             user_id,
             auth_data["SIMULATION_YN"],
             decrypt(auth_data["API_KEY"]),
-            decrypt(auth_data["SECRET_KEY"])
+            decrypt(auth_data["SECRET_KEY"]),
+            auth_id=auth_id,
         )
 
         return AuthResponse.model_validate(auth_data).model_dump()

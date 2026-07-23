@@ -8,7 +8,7 @@ from decimal import Decimal
 from app.common.database import Base
 from app.exceptions import ValidationError
 
-VALID_MRKT_CODES = ('J', 'NX', 'UN', 'NASD')
+VALID_MRKT_CODES = ('J', 'NX', 'UN', 'NYS', 'NAS', 'AMS')
 
 
 class SwingTrade(Base):

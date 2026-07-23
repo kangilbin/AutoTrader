@@ -10,7 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.common.redis import get_redis
 from app.core.config import get_settings
-from app.domain.order.entity import Order, ModifyOrder
+from app.core.market_code import to_ovrs_excg_cd, US_TRADE_EXCG
+from app.core.order import Order, ModifyOrder
 from app.external.headers import kis_headers
 from app.external.http_client import fetch
 from app.external.kis_api import _get_user_auth, oauth_token
@@ -143,6 +144,34 @@ async def get_foreign_margin(
     }
 
 
+async def get_us_holdings(user_id: str, db: AsyncSession):
+    """미국 전 거래소 보유종목 조회 (output1 병합)
+
+    - 실전: OVRS_EXCG_CD="NASD"(미국전체) 1회 호출
+    - 모의: 미국전체 미지원 → NASD/NYSE/AMEX 순회 후 output1 병합
+
+    소비처(mapping_swing)는 output1만 사용(평가합계 재계산, 현금은 해외증거금 별도)하므로
+    output2는 빈 dict로 반환한다.
+    """
+    _, access_data = await _get_user_auth(user_id, db)
+    sim = access_data.get("simulation_yn") == "Y"
+
+    if not sim:
+        return await get_stock_balance(user_id, db, excg_cd="NASD")  # 미국전체 1회
+
+    merged: List = []
+    for i, excg in enumerate(US_TRADE_EXCG):  # ("NASD", "NYSE", "AMEX")
+        if i > 0:
+            await asyncio.sleep(0.3)  # 호출 사이 간격 — KIS 초당 거래건수 제한 회피
+        r = await get_stock_balance(user_id, db, excg_cd=excg)
+        for it in r["output1"]:
+            # 응답에 거래소코드가 없으면 조회한 거래소로 보정 (종목별 시장 구분 보존)
+            if not it.get("ovrs_excg_cd"):
+                it["ovrs_excg_cd"] = excg
+        merged.extend(r["output1"])
+    return {"output1": merged, "output2": {}}
+
+
 # ============================================================
 # 주문
 # ============================================================
@@ -166,7 +195,7 @@ async def place_order_api(user_id: str, order: Order, db: AsyncSession):
     query = {
         "CANO": user_data.get("ACCOUNT_NO")[:8],
         "ACNT_PRDT_CD": user_data.get("ACCOUNT_NO")[-2:],
-        "OVRS_EXCG_CD": order.excg_cd, # NASD
+        "OVRS_EXCG_CD": to_ovrs_excg_cd(order.excg_cd),  # 정식코드(NAS/NYS/AMS) → NASD/NYSE/AMEX
         "PDNO": order.itm_no,
         "ORD_QTY": str(order.qty),
         "OVRS_ORD_UNPR": str(order.unpr),
@@ -198,7 +227,7 @@ async def modify_or_cancel_order_api(user_id: str, order: ModifyOrder, db: Async
     query = {
         "CANO": user_data.get("ACCOUNT_NO")[:8],
         "ACNT_PRDT_CD": user_data.get("ACCOUNT_NO")[-2:],
-        "OVRS_EXCG_CD": order.excg_cd if hasattr(order, 'excg_cd') else "NASD",
+        "OVRS_EXCG_CD": to_ovrs_excg_cd(getattr(order, 'excg_cd', 'NAS')),
         "PDNO": order.pdno,
         "ORGN_ODNO": order.orgn_odno,
         "RVSE_CNCL_DVSN_CD": order.rvse_cncl_dvsn_cd,
@@ -214,8 +243,8 @@ async def modify_or_cancel_order_api(user_id: str, order: ModifyOrder, db: Async
 # 미체결 내역 조회
 # ============================================================
 
-async def get_inquire_daily_ccld_obj(user_id: str, db: AsyncSession, excg_cd: str = "NASD", fk200="", nk200=""):
-    """해외 주식 미체결 내역 조회"""
+async def get_inquire_daily_ccld_obj(user_id: str, db: AsyncSession, excg_cd: str = "NAS", fk200="", nk200=""):
+    """해외 주식 미체결 내역 조회 (excg_cd: 정식코드 NAS/NYS/AMS)"""
     user_data, access_data = await _get_user_auth(user_id, db)
     url = settings.REAL_API_URL
     tr_id = "TTTS3018R"
@@ -227,7 +256,7 @@ async def get_inquire_daily_ccld_obj(user_id: str, db: AsyncSession, excg_cd: st
     query = {
         "CANO": user_data.get("ACCOUNT_NO")[:8],
         "ACNT_PRDT_CD": user_data.get("ACCOUNT_NO")[-2:],
-        "OVRS_EXCG_CD": excg_cd,
+        "OVRS_EXCG_CD": to_ovrs_excg_cd(excg_cd),
         "SORT_SQN": "DS",
         "CTX_AREA_FK200": fk200,
         "CTX_AREA_NK200": nk200,
@@ -243,7 +272,7 @@ async def get_inquire_daily_ccld_obj(user_id: str, db: AsyncSession, excg_cd: st
 
 async def check_order_execution(
     user_id: str, order_no: str, db: AsyncSession,
-    excg_cd: str = "NASD",
+    excg_cd: str = "NAS",
     max_retry: int = 3, delay: float = 2.0
 ) -> Optional[dict]:
     """
@@ -293,9 +322,9 @@ async def check_order_execution(
 # 시세 조회
 # ============================================================
 
-async def get_inquire_price(user_id: str, code: str, db: AsyncSession):
-    """해외 주식 현재가상세 조회 (HHDFS76200200)
-
+async def get_inquire_price(user_id: str, code: str, db: AsyncSession, excd: str = "NAS"):
+    """해외 주식 현재가상세 조회 (HHDFS76200200) — excd: 정식코드 NYS/NAS/AMS
+ㅂ
     현재체결가(HHDFS00000300)와 달리 open/high/low 를 함께 제공하여
     실시간 지표(ATR 등) 계산에 필요한 당일 고가/저가를 얻을 수 있다.
     단, 현지통화 등락률 필드는 없으므로 (last-base)/base 로 계산해 사용한다.
@@ -308,7 +337,7 @@ async def get_inquire_price(user_id: str, code: str, db: AsyncSession):
     headers = kis_headers(access_data, tr_id="HHDFS76200200")
     query = {
         "AUTH": "",
-        "EXCD": "NAS",
+        "EXCD": excd,
         "SYMB": code,
     }
     response = await fetch("GET", api_url, "KIS", params=query, headers=headers)
@@ -343,8 +372,8 @@ async def get_target_price(code: str, excd: str = "NAS"):
     return output[0] if output else None
 
 
-async def get_stock_data(user_id: str, code: str, start_date: str, end_date: str, db: AsyncSession):
-    """해외 주식 기간별 데이터 조회"""
+async def get_stock_data(user_id: str, code: str, start_date: str, end_date: str, db: AsyncSession, excd: str = "NAS"):
+    """해외 주식 기간별 데이터 조회 (excd: 정식코드 NYS/NAS/AMS)"""
     user_data, access_data = await _get_user_auth(user_id, db)
     url = settings.DEV_API_URL if access_data.get("simulation_yn") == "Y" else settings.REAL_API_URL
     path = "uapi/overseas-price/v1/quotations/dailyprice"
@@ -354,7 +383,7 @@ async def get_stock_data(user_id: str, code: str, start_date: str, end_date: str
 
     params = {
         "AUTH": "",
-        "EXCD": "NAS",
+        "EXCD": excd,
         "SYMB": code,
         "GUBN": "0",
         "BYMD": end_date,
@@ -387,8 +416,8 @@ async def get_stock_data(user_id: str, code: str, start_date: str, end_date: str
     return body
 
 
-async def get_inquire_asking_price(user_id: str, code: str, db: AsyncSession):
-    """해외 주식 호가 조회"""
+async def get_inquire_asking_price(user_id: str, code: str, db: AsyncSession, excd: str = "NAS"):
+    """해외 주식 호가 조회 (excd: 정식코드 NYS/NAS/AMS)"""
     user_data, access_data = await _get_user_auth(user_id, db)
     url = settings.DEV_API_URL if access_data.get("simulation_yn") == "Y" else settings.REAL_API_URL
     path = "uapi/overseas-price/v1/quotations/inquire-asking-price"
@@ -397,7 +426,7 @@ async def get_inquire_asking_price(user_id: str, code: str, db: AsyncSession):
     headers = kis_headers(access_data, tr_id="HHDFS76200100")
     query = {
         "AUTH": "",
-        "EXCD": 'NAS',
+        "EXCD": excd,
         "SYMB": code,
     }
     response = await fetch("GET", api_url, "KIS", params=query, headers=headers)
@@ -430,8 +459,8 @@ async def get_fluctuation_rank(user_id: str, db: AsyncSession, rank_sort_cls_cod
     return body.get("output2")
 
 
-async def get_volume_rank(user_id: str, db: AsyncSession):
-    """해외주식 거래량 순위"""
+async def get_volume_rank(user_id: str, db: AsyncSession, excd: str = "NAS"):
+    """해외주식 거래량 순위 (excd: 정식코드 NYS/NAS/AMS)"""
     user_data, access_data = await _get_user_auth(user_id, db)
     path = "uapi/overseas-stock/v1/ranking/trade-vol"
     url = settings.REAL_API_URL
@@ -441,7 +470,7 @@ async def get_volume_rank(user_id: str, db: AsyncSession):
     query = {
         "KEYB": "",
         "AUTH": "",
-        "EXCD": "NAS",
+        "EXCD": excd,
         "NDAY": "0",
         "MINX": "4",
         "VOL_RANG": "4",

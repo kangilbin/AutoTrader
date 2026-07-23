@@ -7,6 +7,7 @@ from sqlalchemy.dialects.mysql import insert as mysql_insert
 from typing import Optional, List
 from datetime import datetime
 
+from app.core.market_code import US_MARKETS, is_overseas
 from app.domain.stock.entity import Stock, StockHistory
 from app.domain.stock.schemas import StockResponse, StockHistoryResponse
 import logging
@@ -27,9 +28,9 @@ class StockRepository:
             Stock.DEL_YN == 'N'
         )
         if overseas is True:
-            query = query.filter(Stock.MRKT_CODE == 'NASD')
+            query = query.filter(Stock.MRKT_CODE.in_(US_MARKETS))
         elif overseas is False:
-            query = query.filter(Stock.MRKT_CODE != 'NASD')
+            query = query.filter(Stock.MRKT_CODE.notin_(US_MARKETS))
         result = await self.db.execute(query)
         return result.scalars().all()
 
@@ -46,8 +47,18 @@ class StockRepository:
         return StockResponse.model_validate(db_stock).model_dump()
 
     async def search_by_initial(self, initial: str, mrkt_code: str = None) -> List[dict]:
-        """초성 검색"""
-        mrkt_filter = "AND MRKT_CODE = :mrkt_code" if mrkt_code else ""
+        """초성 검색
+
+        - 미국('US' 그룹 또는 개별 거래소코드): 미국 전체(NYS/NAS/AMS) 대상
+        - 국내(J 등): 해당 코드 정확일치
+        - 미지정: 전체 시장
+        """
+        if is_overseas(mrkt_code):
+            mrkt_filter = "AND MRKT_CODE IN ('NYS', 'NAS', 'AMS')"
+        elif mrkt_code:
+            mrkt_filter = "AND MRKT_CODE = :mrkt_code"
+        else:
+            mrkt_filter = ""
         query = text(f"""
             SELECT *
             FROM STOCK_INFO
@@ -64,7 +75,7 @@ class StockRepository:
             LIMIT 20
         """)
         params = {"initial": initial}
-        if mrkt_code:
+        if ":mrkt_code" in mrkt_filter:
             params["mrkt_code"] = mrkt_code
         rows = await self.db.execute(query, params)
         return [StockResponse.model_validate(row).model_dump() for row in rows]

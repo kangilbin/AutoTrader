@@ -8,7 +8,8 @@ import logging
 from decimal import Decimal
 from typing import Dict, Any
 
-from app.domain.order.entity import Order
+from app.core.market_code import is_overseas
+from app.core.order import Order
 from app.external import kis_api, foreign_api
 
 logger = logging.getLogger(__name__)
@@ -87,7 +88,7 @@ class SwingOrderExecutor:
         if qty <= 0:
             return {"success": False, "reason": "매수 수량 부족"}
 
-        _overseas = mrkt_code == "NASD"
+        _overseas = is_overseas(mrkt_code)
         order = Order.create(ord_dv="buy", itm_no=st_code, qty=qty,
                              excg_cd=mrkt_code if _overseas else "")
 
@@ -176,7 +177,7 @@ class SwingOrderExecutor:
         # 단일 주문 조건: 목표수량이 사이클 한도 이하
         order_qty = target_qty if target_qty <= per_cycle_qty else per_cycle_qty
 
-        _overseas = mrkt_code == "NASD"
+        _overseas = is_overseas(mrkt_code)
         order = Order.create(ord_dv="sell", itm_no=st_code, qty=order_qty,
                              excg_cd=mrkt_code if _overseas else "")
 
@@ -301,7 +302,7 @@ class SwingOrderExecutor:
                         "entry_price": current_entry_price, "hold_qty": current_hold_qty,
                         "clear_partial": True}
 
-            _overseas = mrkt_code == "NASD"
+            _overseas = is_overseas(mrkt_code)
             order = Order.create(ord_dv="buy", itm_no=st_code, qty=order_qty,
                                  excg_cd=mrkt_code if _overseas else "")
             if _overseas:
@@ -375,7 +376,7 @@ class SwingOrderExecutor:
             per_cycle_qty = max(1, int(per_cycle_amount / curr_price))
             order_qty = min(remaining_qty, per_cycle_qty)
 
-            _overseas = mrkt_code == "NASD"
+            _overseas = is_overseas(mrkt_code)
             order = Order.create(ord_dv="sell", itm_no=st_code, qty=order_qty,
                                  excg_cd=mrkt_code if _overseas else "")
             if _overseas:

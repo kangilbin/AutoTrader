@@ -33,7 +33,7 @@ async def register_swing(
 @router.get("/list")
 async def list_swing_mapping(
     account_no: str = Query(..., description="계좌번호"),
-    mrkt_code: str = Query("J", description="J:국내, NASD:나스닥"),
+    mrkt_code: str = Query("J", description="J:국내, NYS/NAS/AMS:미국"),
     service: Annotated[SwingService, Depends(get_swing_service)] = None,
     user_id: Annotated[str, Depends(get_current_user)] = None
 ):
@@ -45,7 +45,7 @@ async def list_swing_mapping(
 @router.get("/available-capital")
 async def get_available_capital(
     account_no: str = Query(..., description="계좌번호"),
-    mrkt_code: str = Query("J", description="시장코드 (J:국내, NASD:해외)"),
+    mrkt_code: str = Query("J", description="시장코드 (J:국내, NYS/NAS/AMS:미국)"),
     service: Annotated[SwingService, Depends(get_swing_service)] = None,
     user_id: Annotated[str, Depends(get_current_user)] = None
 ):

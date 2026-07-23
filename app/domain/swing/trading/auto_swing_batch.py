@@ -25,6 +25,7 @@ from datetime import datetime, timedelta, time as dt_time
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 from app.domain.swing.indicators import TechnicalIndicators
+from app.core.market_code import is_overseas
 from app.external.kis_api import get_target_price, get_inquire_price
 from app.external import foreign_api
 from app.common.database import Database
@@ -40,11 +41,14 @@ from app.domain.notification.service import PushNotificationService
 logger = logging.getLogger(__name__)
 
 # ===== 시장별 개장 시간 (로컬 타임존 기준) =====
+_US_OPEN = {"open": dt_time(9, 30), "tz": "America/New_York"}
 _MARKET_OPEN_CONFIG = {
-    "J":    {"open": dt_time(9, 0),   "tz": "Asia/Seoul"},
-    "NX":   {"open": dt_time(9, 0),   "tz": "Asia/Seoul"},
-    "UN":   {"open": dt_time(9, 0),   "tz": "Asia/Seoul"},
-    "NASD": {"open": dt_time(9, 30),  "tz": "America/New_York"},
+    "J":   {"open": dt_time(9, 0), "tz": "Asia/Seoul"},
+    "NX":  {"open": dt_time(9, 0), "tz": "Asia/Seoul"},
+    "UN":  {"open": dt_time(9, 0), "tz": "Asia/Seoul"},
+    "NYS": _US_OPEN,
+    "NAS": _US_OPEN,
+    "AMS": _US_OPEN,
 }
 
 
@@ -134,7 +138,7 @@ async def process_single_swing(
 
             # === 1. 데이터 수집 ===
             mrkt_code = swing.MRKT_CODE
-            _overseas = mrkt_code == "NASD"
+            _overseas = is_overseas(mrkt_code)
 
             cached_indicators = await strategy.get_cached_indicators(redis_client, st_code)
             if not cached_indicators:
@@ -142,7 +146,7 @@ async def process_single_swing(
                 return
 
             if _overseas:
-                current_price_data = await foreign_api.get_inquire_price(user_id, st_code, swing_service.db)
+                current_price_data = await foreign_api.get_inquire_price(user_id, st_code, swing_service.db, excd=mrkt_code)
             else:
                 response = await get_inquire_price(user_id, st_code, swing_service.db)
                 current_price_data = response.get("output", {}) if isinstance(response, dict) else response
@@ -696,11 +700,11 @@ async def collect_single_stock(stock, stock_service: StockService):
     async with _SEMAPHORE:
         code = stock.ST_CODE
         mrkt_code = stock.MRKT_CODE
-        _overseas = mrkt_code == "NASD"
+        _overseas = is_overseas(mrkt_code)
 
         try:
             if _overseas:
-                excd = "NAS"
+                excd = mrkt_code
                 response = await foreign_api.get_target_price(code, excd)
             else:
                 response = await get_target_price(code)

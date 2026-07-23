@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, delete, text, and_, func
 from typing import Optional, List
 from decimal import Decimal
+from app.core.market_code import is_overseas, US_MARKETS
 from app.domain.swing.entity import SwingTrade, EmaOption
 from app.domain.stock.entity import Stock
 from app.domain.swing.schemas import SwingResponse
@@ -51,10 +52,10 @@ class SwingRepository:
             .filter(SwingTrade.ACCOUNT_NO == account_no)
         )
         if mrkt_code:
-            if mrkt_code == "NASD":
-                query = query.filter(SwingTrade.MRKT_CODE == "NASD")
+            if is_overseas(mrkt_code):
+                query = query.filter(SwingTrade.MRKT_CODE.in_(US_MARKETS))
             else:
-                query = query.filter(SwingTrade.MRKT_CODE != "NASD")
+                query = query.filter(SwingTrade.MRKT_CODE.notin_(US_MARKETS))
         result = await self.db.execute(query)
         return [SwingResponse(**row).model_dump() for row in result.mappings().all()]
 
@@ -78,7 +79,7 @@ class SwingRepository:
             "FROM SWING_TRADE ST "
             "JOIN ACCOUNT A ON ST.ACCOUNT_NO = A.ACCOUNT_NO "
             "JOIN AUTH_KEY U ON A.USER_ID = U.USER_ID AND A.AUTH_ID = U.AUTH_ID "
-            "WHERE ST.USE_YN = 'Y' AND ST.MRKT_CODE IN ('J', 'NAS')"
+            "WHERE ST.USE_YN = 'Y' AND ST.MRKT_CODE IN ('J', 'NX', 'UN')"
         )
         result = await self.db.execute(query)
         return result.all()
@@ -90,7 +91,7 @@ class SwingRepository:
             "FROM SWING_TRADE ST "
             "JOIN ACCOUNT A ON ST.ACCOUNT_NO = A.ACCOUNT_NO "
             "JOIN AUTH_KEY U ON A.USER_ID = U.USER_ID AND A.AUTH_ID = U.AUTH_ID "
-            "WHERE ST.USE_YN = 'Y' AND ST.MRKT_CODE = 'NASD'"
+            "WHERE ST.USE_YN = 'Y' AND ST.MRKT_CODE IN ('NYS', 'NAS', 'AMS')"
         )
         result = await self.db.execute(query)
         return result.all()
@@ -145,9 +146,9 @@ class SwingRepository:
             SwingTrade.USE_YN == 'Y'
         )
         if overseas:
-            query = query.filter(SwingTrade.MRKT_CODE == "NASD")
+            query = query.filter(SwingTrade.MRKT_CODE.in_(US_MARKETS))
         else:
-            query = query.filter(SwingTrade.MRKT_CODE != "NASD")
+            query = query.filter(SwingTrade.MRKT_CODE.notin_(US_MARKETS))
 
         if exclude_swing_id is not None:
             query = query.filter(SwingTrade.SWING_ID != exclude_swing_id)

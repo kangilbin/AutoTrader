@@ -8,6 +8,7 @@ import asyncio
 import logging
 import time
 
+from app.core.market_code import is_overseas
 from app.external.kis_api import get_stock_data
 from app.external import foreign_api
 from app.common.database import Database
@@ -27,13 +28,13 @@ def is_market_open(mrkt_code: str) -> bool:
     미확정 데이터 적재를 방지한다.
 
     Args:
-        mrkt_code: 시장 코드 ("J"=국내, "NASD"=미국)
+        mrkt_code: 시장 코드 ("J"=국내, "NYS/NAS/AMS"=미국)
 
     Returns:
         True: 장 운영 중 (금일 데이터 적재 불가)
         False: 장 마감 후 (금일 데이터 적재 가능)
     """
-    if mrkt_code == "NASD":
+    if is_overseas(mrkt_code):
         us_tz = ZoneInfo("America/New_York")
         now_et = datetime.now(us_tz)
 
@@ -104,12 +105,12 @@ async def fetch_and_store_3_years_data(user_id: str, mrkt_code: str, st_code: st
             task_start_time = time.time()
             async with semaphore:
                 try:
-                    if mrkt_code == "NASD":
+                    if is_overseas(mrkt_code):
                         response = await foreign_api.get_stock_data(
                             user_id, st_code,
                             range_start.strftime('%Y%m%d'),
                             range_end.strftime('%Y%m%d'),
-                            db
+                            db, excd=mrkt_code
                         )
                     else:
                         response = await get_stock_data(

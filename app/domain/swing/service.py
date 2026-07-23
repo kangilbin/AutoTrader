@@ -17,6 +17,7 @@ from app.domain.swing.schemas import SwingCreateRequest, SwingResponse
 from app.domain.stock.service import StockService
 from app.domain.stock.stock_data_batch import fetch_and_store_3_years_data
 from app.exceptions import DatabaseError, NotFoundError, DuplicateError, BusinessRuleError
+from app.core.market_code import is_overseas, from_ovrs_excg_cd
 from app.external.kis_api import get_stock_balance
 from app.external import foreign_api
 from app.common.database import Database
@@ -29,10 +30,13 @@ logger = logging.getLogger(__name__)
 
 
 # ===== 시장별 캐시 만료 기준 시각 (해당 시장 마감 = 지표 갱신 경계) =====
-# J: 국내장(16:00 KST), NASD: 미국장(16:00 ET)
+# J: 국내장(16:00 KST), NYS/NAS/AMS: 미국장(16:00 ET, 3거래소 동일)
+_US_CLOSE = {"close": time(16, 0), "tz": "America/New_York"}
 _MARKET_CLOSE_CONFIG = {
-    "J":    {"close": time(16, 0), "tz": "Asia/Seoul"},
-    "NASD": {"close": time(16, 0), "tz": "America/New_York"},
+    "J":   {"close": time(16, 0), "tz": "Asia/Seoul"},
+    "NYS": _US_CLOSE,
+    "NAS": _US_CLOSE,
+    "AMS": _US_CLOSE,
 }
 _DEFAULT_CLOSE = _MARKET_CLOSE_CONFIG["J"]
 
@@ -68,7 +72,7 @@ class SwingService:
         self, user_id: str, account_no: str, mrkt_code: str, exclude_swing_id: int = None
     ) -> dict:
         """가용 자본 조회"""
-        overseas = mrkt_code == "NASD"
+        overseas = is_overseas(mrkt_code)
 
         if overseas:
             # 해외증거금 통화별조회 — 외화주문가능금액(ord_psbl_amt)을 가용자본으로 사용
@@ -238,7 +242,7 @@ class SwingService:
         """스윙 목록과 보유 주식 매핑"""
         try:
             # 통화별 정밀도: KRW=정수, USD=소수점 2자리 (센트)
-            overseas = mrkt_code == "NASD"
+            overseas = is_overseas(mrkt_code)
 
             def _to_amount(value):
                 """문자열/숫자를 출력용 금액으로 변환 (KRW=int, USD=float 2자리)"""
@@ -259,7 +263,7 @@ class SwingService:
             swing_list = await self.repo.find_all_by_account_no(account_no, mrkt_code)
             if overseas:
                 # 해외: 보유 종목은 TTTS3012R(체결 즉시 반영), USD 현금은 해외증거금 통화별조회
-                holdings = await foreign_api.get_stock_balance(user_id, self.db)
+                holdings = await foreign_api.get_us_holdings(user_id, self.db)
                 margin = await foreign_api.get_foreign_margin(user_id, self.db)
                 buy_list = holdings["output1"]
                 # 035에는 평가금액/손익이 없어 보유종목(TTTS3012R)을 합산해 summary용 output2를 구성
@@ -296,7 +300,12 @@ class SwingService:
 
                 if st_code not in swing_dict:
                     # 새 스윙 등록 — 매입금액을 초기 투자금으로 설정
-                    item_mrkt_code = mrkt_code if overseas else buy_item.get("mrkt_code", "J")
+                    # 해외: 요청값(mrkt_code='US' 그룹)이 아니라 종목의 실제 거래소(ovrs_excg_cd)를
+                    #       정식코드(NYS/NAS/AMS)로 역매핑해 저장
+                    if overseas:
+                        item_mrkt_code = from_ovrs_excg_cd(buy_item.get("ovrs_excg_cd") or "NASD")
+                    else:
+                        item_mrkt_code = buy_item.get("mrkt_code", "J")
                     pchs_amt = _to_decimal(buy_item.get("pchs_amt", 0))
                     try:
                         async with self.db.begin_nested():
@@ -318,8 +327,13 @@ class SwingService:
                             continue
 
                     # 주가 데이터 적재 여부 확인 후 백그라운드 적재
-                    stock_info = await stock_service.get_stock_info(item_mrkt_code, st_code)
-                    if stock_info.get("DATA_YN") != 'Y':
+                    # STOCK_INFO 미등록 보유종목은 적재만 건너뛰고 목록에는 표시
+                    try:
+                        stock_info = await stock_service.get_stock_info(item_mrkt_code, st_code)
+                    except NotFoundError:
+                        stock_info = None
+                        logger.warning(f"[{item_mrkt_code}/{st_code}] STOCK_INFO 미등록 보유종목 - 데이터 적재 건너뜀")
+                    if stock_info and stock_info.get("DATA_YN") != 'Y':
                         asyncio.create_task(
                             self._fetch_and_cache(user_id, item_mrkt_code, st_code, stock_info)
                         )
@@ -535,8 +549,8 @@ class SwingService:
         Args:
             redis_client: Redis 클라이언트
             scope: 워밍업 대상 시장
-                - "domestic": 국내(J 등 NASD 외)만
-                - "overseas": 미국(NASD)만
+                - "domestic": 국내(J 등 미국장 외)만
+                - "overseas": 미국(NYS/NAS/AMS)만
                 - "all": 전체 (기본값, 앱 시작 시 사용)
 
         Returns:
@@ -552,9 +566,9 @@ class SwingService:
             # 1. 활성 종목 코드 조회
             active_codes = await self.repo.find_active_stock_codes()
             if scope == "overseas":
-                active_codes = [(m, s) for m, s in active_codes if m == "NASD"]
+                active_codes = [(m, s) for m, s in active_codes if is_overseas(m)]
             elif scope == "domestic":
-                active_codes = [(m, s) for m, s in active_codes if m != "NASD"]
+                active_codes = [(m, s) for m, s in active_codes if not is_overseas(m)]
             logger.info(f"활성 종목 수: {len(active_codes)}개")
 
             if not active_codes:
