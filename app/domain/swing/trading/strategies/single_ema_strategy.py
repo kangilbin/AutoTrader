@@ -293,11 +293,11 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
             await redis_client.setex(f"entry:{swing_id}", cls.ENTRY_STATE_TTL, json.dumps(new_state))
             return None
 
-        # === 추세 추종 EMA 돌파 진입 ===
+        # === 추세 추종 EMA 돌파 진입 ===9
         current_signal = False
         if yesterday_ema20 is not None:
-            price_above_ema = curr_price > realtime_ema20
-            within_gap_limit = curr_price <= realtime_ema20 * cls.BREAKOUT_ENTRY_GAP_MAX
+            price_above_ema = curr_price > realtime_ema20 # 현재가 주가가 EMA20 보다 높을 때
+            within_gap_limit = curr_price <= realtime_ema20 * cls.BREAKOUT_ENTRY_GAP_MAX # EMA20 대비 최대 +6%까지 허용
 
             if price_above_ema and within_gap_limit:
                 trend_direction = realtime_plus_di > realtime_minus_di

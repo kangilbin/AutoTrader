@@ -714,7 +714,8 @@ async def collect_single_stock(stock, stock_service: StockService):
                     history_data = [{
                         "MRKT_CODE": mrkt_code,
                         "ST_CODE": code,
-                        "STCK_BSOP_DATE": datetime.now().strftime('%Y%m%d'),
+                        # KIS 응답의 실제 거래일(xymd, ET 기준) 사용 — 서버 시계 무관. 누락 시 ET 오늘로 폴백
+                        "STCK_BSOP_DATE": response.get('xymd') or datetime.now(ZoneInfo("America/New_York")).strftime('%Y%m%d'),
                         "STCK_OPRC": response.get('open'),
                         "STCK_HGPR": response.get('high'),
                         "STCK_LWPR": response.get('low'),
@@ -727,7 +728,8 @@ async def collect_single_stock(stock, stock_service: StockService):
                     history_data = [{
                         "MRKT_CODE": mrkt_code,
                         "ST_CODE": code,
-                        "STCK_BSOP_DATE": datetime.now().strftime('%Y%m%d'),
+                        # KIS 응답의 실제 거래일(stck_bsop_date) 사용. 누락 시 KST 오늘로 폴백
+                        "STCK_BSOP_DATE": response.get('stck_bsop_date') or datetime.now(ZoneInfo("Asia/Seoul")).strftime('%Y%m%d'),
                         "STCK_OPRC": response.get('stck_oprc'),
                         "STCK_HGPR": response.get('stck_hgpr'),
                         "STCK_LWPR": response.get('stck_lwpr'),

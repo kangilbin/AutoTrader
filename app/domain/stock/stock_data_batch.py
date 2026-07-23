@@ -76,7 +76,9 @@ async def fetch_and_store_3_years_data(user_id: str, mrkt_code: str, st_code: st
         await stock_service.update_stock(mrkt_code, st_code, {"DATA_YN": 'P'})
         logger.info(f"Started background data fetch for {mrkt_code}/{st_code}")
 
-        today = datetime.now().date()
+        # 거래일 경계는 시장 타임존 기준 (미국=ET, 국내=KST) — 서버 로컬 시계에 의존하지 않음
+        market_tz = ZoneInfo("America/New_York") if is_overseas(mrkt_code) else ZoneInfo("Asia/Seoul")
+        today = datetime.now(market_tz).date()
         if is_market_open(mrkt_code):
             end_date = today - timedelta(days=1)
             logger.info(f"[{mrkt_code}/{st_code}] 장 운영 중 - 전일({end_date})까지 적재")
