@@ -148,6 +148,16 @@ async def _get_user_auth(user_id: str, db: AsyncSession):
     return user_data, access_data
 
 
+async def is_simulation(user_id: str, db: AsyncSession) -> bool:
+    """현재 선택된 인증키가 모의투자 계정인지 여부
+
+    모의투자 미지원 API(해외 미체결 조회 등)를 호출부에서 건너뛰기 위해
+    simulation_yn 판별을 공개 헬퍼로 노출한다. (토큰 캐시 재사용 → 추가 비용 없음)
+    """
+    _, access_data = await _get_user_auth(user_id, db)
+    return access_data.get("simulation_yn") == "Y"
+
+
 # ============================================================
 # 토큰 발급 (캐싱 없음)
 # ============================================================

@@ -7,10 +7,10 @@ SIGNAL 상태:
 - 1: 보유 (1차 익절 전)
 - 2: 보유 (1차 익절 후, 잔량 보유)
 
-배치 스케줄:
-- 08:30: ema_cache_warmup_job (EMA 캐시 워밍업)
-- 09:00-14:55: trade_job (장중 매수/손절 체크)
-- 15:35: day_collect_job (일별 데이터 수집)
+배치 스케줄 (국내 기준. 미국 잡은 ET 기준으로 별도 등록):
+- 08:29: ema_cache_warmup_job (EMA 캐시 워밍업)
+- 08:00-15:20 5분 간격: trade_job — 단, 정규장 가드(is_market_open)를 통과한 09:00-15:30만 실제 실행
+- 15:40: day_collect_job (일별 데이터 수집 — 일봉 확정 15:35 + 여유)
 
 오케스트레이션 패턴:
 - Strategy: 신호 판단만 (check_entry_signal, check_exit_signal 등)
@@ -25,12 +25,15 @@ from datetime import datetime, timedelta, time as dt_time
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 from app.domain.swing.indicators import TechnicalIndicators
+from app.core.config import get_settings
 from app.core.market_code import is_overseas
+from app.core.price import to_price
 from app.external.kis_api import get_target_price, get_inquire_price
 from app.external import foreign_api
 from app.common.database import Database
 from app.domain.swing.service import SwingService
 from app.domain.stock.service import StockService
+from app.domain.stock.stock_data_batch import is_today_incomplete
 from app.domain.trade_history import TradeHistoryService
 from .order_executor import SwingOrderExecutor
 from .trading_strategy_factory import TradingStrategyFactory
@@ -40,16 +43,37 @@ from app.domain.notification.service import PushNotificationService
 
 logger = logging.getLogger(__name__)
 
-# ===== 시장별 개장 시간 (로컬 타임존 기준) =====
-_US_OPEN = {"open": dt_time(9, 30), "tz": "America/New_York"}
+# ===== 시장별 정규장 시간 (로컬 타임존 기준) =====
+_US_OPEN = {"open": dt_time(9, 30), "close": dt_time(16, 0), "tz": "America/New_York"}
+_KR_OPEN = {"open": dt_time(9, 0), "close": dt_time(15, 30), "tz": "Asia/Seoul"}
 _MARKET_OPEN_CONFIG = {
-    "J":   {"open": dt_time(9, 0), "tz": "Asia/Seoul"},
-    "NX":  {"open": dt_time(9, 0), "tz": "Asia/Seoul"},
-    "UN":  {"open": dt_time(9, 0), "tz": "Asia/Seoul"},
+    "J":   _KR_OPEN,
+    "NX":  _KR_OPEN,
+    "UN":  _KR_OPEN,
     "NYS": _US_OPEN,
     "NAS": _US_OPEN,
     "AMS": _US_OPEN,
 }
+
+
+def is_market_open(mrkt_code: str, now: datetime = None) -> bool:
+    """정규장 시간 여부 (주말 제외)
+
+    스케줄 범위가 넓어도 프리마켓/장 마감 후에 주문이 나가지 않도록 배치 진입점에서 사용한다.
+    프리마켓 시세는 거래량이 사실상 0이라 실시간 지표(OBV/accum/ATR)가 왜곡되고,
+    그 상태로 낸 주문은 개장까지 대기하다 의도치 않은 가격에 체결된다.
+
+    ⚠️ 공휴일(휴장일)은 판별하지 않는다 — 휴장일에는 시세가 전일 종가로 고정되므로
+       신호가 발생할 수 있고 주문은 다음 거래일로 넘어간다. 휴장일 캘린더가 필요하면 별도 도입.
+    """
+    config = _MARKET_OPEN_CONFIG.get(mrkt_code, _KR_OPEN)
+    tz = ZoneInfo(config["tz"])
+    now = now.astimezone(tz) if now else datetime.now(tz)
+
+    if now.weekday() >= 5:  # 토·일
+        return False
+
+    return config["open"] <= now.time() < config["close"]
 
 
 def is_opening_guard(mrkt_code: str, guard_minutes: int = 10) -> bool:
@@ -69,12 +93,32 @@ def is_opening_guard(mrkt_code: str, guard_minutes: int = 10) -> bool:
     return config["open"] <= now < guard_end
 
 
+def _trading_allowed(mrkt_code: str, label: str) -> bool:
+    """매매 배치 실행 가능 여부 (정규장 가드)
+
+    cron 범위가 넓게 잡혀 있어도 장 시간 밖에는 실행하지 않는다.
+    DB 세션 획득 전에 판단해 휴장 시간대의 불필요한 커넥션/쿼리도 막는다.
+    """
+    if is_market_open(mrkt_code):
+        return True
+
+    if get_settings().ALLOW_OFFHOURS_TRADING:
+        logger.warning(f"[{label}] 정규장 시간이 아니지만 ALLOW_OFFHOURS_TRADING=true → 실행")
+        return True
+
+    logger.debug(f"[{label}] 정규장 시간 아님 → 스킵")
+    return False
+
+
 # ===== 동시 실행 제어 =====
 _SEMAPHORE = asyncio.Semaphore(5)  # 동시에 최대 5개 종목 처리
 
 
 async def trade_job():
     """국내 매매 신호 확인 및 실행 (5분 단위) — 국내 종목만"""
+    if not _trading_allowed("J", "BATCH"):
+        return
+
     db = await Database.get_session()
     try:
         swing_service = SwingService(db)
@@ -142,7 +186,14 @@ async def process_single_swing(
 
             cached_indicators = await strategy.get_cached_indicators(redis_client, st_code)
             if not cached_indicators:
-                logger.warning(f"[{st_code}] 등록된 캐시 정보가 없습니다.")
+                if swing.has_position():
+                    # 지표가 없으면 손절/익절 판단 자체가 불가 — 포지션이 무방비로 남는다
+                    logger.error(
+                        f"[{st_code}] 지표 캐시 없음 + 포지션 보유(SIGNAL={swing.SIGNAL}, "
+                        f"{swing.HOLD_QTY}주) → 손절/익절 평가 불가, 캐시 재생성 필요"
+                    )
+                else:
+                    logger.warning(f"[{st_code}] 등록된 캐시 정보가 없습니다.")
                 return
 
             if _overseas:
@@ -184,33 +235,67 @@ async def process_single_swing(
                 ema_period=BaseSingleEMAStrategy.EMA_PERIOD,
                 atr_period=14,
                 obv_lookback=BaseSingleEMAStrategy.OBV_LOOKBACK,
-                obv_short_lookback=BaseSingleEMAStrategy.OBV_SHORT_LOOKBACK
+                accum_ema_period=BaseSingleEMAStrategy.ACCUM_EMA_PERIOD
             )
 
             avg_daily_amount = cached_indicators["avg_daily_amount"]
 
-            # === 2. 부분 체결 진행 중 체크 (신호 로직보다 우선) ===
+            # === 2. 미확인 주문 재확인 / 부분 체결 진행 중 체크 (신호 로직보다 우선) ===
             partial_key = f"partial_exec:{swing_id}"
+            pending_key = f"pending_order:{swing_id}"
             partial_state_str = await redis_client.get(partial_key)
+            pending_str = await redis_client.get(pending_key)
 
-            if partial_state_str and user_id:
-                entry_price = int(swing.ENTRY_PRICE) if swing.ENTRY_PRICE else 0
+            if (pending_str or partial_state_str) and user_id:
+                entry_price = float(swing.ENTRY_PRICE) if swing.ENTRY_PRICE else 0
                 hold_qty = swing.HOLD_QTY or 0
                 prev_signal = swing.SIGNAL
 
-                partial_result = await SwingOrderExecutor.continue_partial_execution(
-                    redis_client=redis_client,
-                    swing_id=swing_id,
-                    user_id=user_id,
-                    st_code=st_code,
-                    current_price=current_price,
-                    avg_daily_amount=avg_daily_amount,
-                    cached_indicators=cached_indicators,
-                    current_entry_price=entry_price,
-                    current_hold_qty=hold_qty,
-                    db=db,
-                    mrkt_code=mrkt_code,
-                )
+                if pending_str:
+                    # 체결 미확인 주문이 있으면 재확인이 최우선 — 확인 전까지 신규 주문 금지 (중복 주문 방지)
+                    partial_result = await SwingOrderExecutor.resolve_pending_order(
+                        pending=json.loads(pending_str),
+                        partial_state=json.loads(partial_state_str) if partial_state_str else None,
+                        swing_id=swing_id,
+                        user_id=user_id,
+                        st_code=st_code,
+                        current_price=current_price,
+                        current_entry_price=entry_price,
+                        current_hold_qty=hold_qty,
+                        db=db,
+                    )
+                else:
+                    partial_result = await SwingOrderExecutor.continue_partial_execution(
+                        redis_client=redis_client,
+                        swing_id=swing_id,
+                        user_id=user_id,
+                        st_code=st_code,
+                        current_price=current_price,
+                        avg_daily_amount=avg_daily_amount,
+                        cached_indicators=cached_indicators,
+                        current_entry_price=entry_price,
+                        current_hold_qty=hold_qty,
+                        db=db,
+                        mrkt_code=mrkt_code,
+                    )
+
+                # 포지션 보유 중 미확인 주문이 남으면 손절/익절 평가가 최대
+                # MAX_PENDING_ATTEMPTS 사이클 동안 멈춘다. 주문을 방치하는 것보다
+                # 포지션이 무방비인 게 위험하므로, 주문을 정리하고 이번 사이클에
+                # 정상 평가로 복귀한다. (취소 실패 = 체결됐을 수 있음 → 기존대로 재확인 대기)
+                resume_normal_flow = False
+                if pending_str and partial_result.get("pending_state") and swing.has_position():
+                    _pending = json.loads(pending_str)
+                    if await SwingOrderExecutor.cancel_order(
+                        user_id, _pending.get("order_no"), st_code,
+                        _pending.get("mrkt_code", mrkt_code), db,
+                        _pending.get("ord_orgno", ""),
+                    ):
+                        partial_result.pop("pending_state")  # 아래 Redis 정리에서 키 삭제
+                        resume_normal_flow = True
+                        logger.warning(
+                            f"[{st_code}] 포지션 보유 중 미확인 주문 취소 → 손절/익절 평가 재개"
+                        )
 
                 if partial_result.get("completed") or partial_result.get("aborted"):
                     new_signal = partial_result.get("signal_on_complete", swing.SIGNAL)
@@ -221,7 +306,7 @@ async def process_single_swing(
                         # 1차 익절 분할 체결 완료
                         sold_qty = partial_result.get("qty", 0)
                         swing.transition_to_partial(sold_qty)
-                        swing.PEAK_PRICE = Decimal(str(int(current_price)))
+                        swing.PEAK_PRICE = to_price(current_price)
                     else:
                         swing.SIGNAL = new_signal
                         swing.MOD_DT = datetime.now()
@@ -237,9 +322,16 @@ async def process_single_swing(
 
                 # Entity 상태 업데이트
                 if partial_result.get("entry_price"):
-                    swing.ENTRY_PRICE = Decimal(partial_result["entry_price"])
+                    swing.ENTRY_PRICE = to_price(partial_result["entry_price"])
                 if partial_result.get("hold_qty") is not None:
                     swing.HOLD_QTY = partial_result["hold_qty"]
+
+                # 지연 체결/매수 중단으로 포지션만 남은 경우 PEAK 초기화 (익절 추적 기준 확보)
+                # 급락 중이면 현재가가 평단가보다 낮으므로 평단가를 하한으로 둔다
+                # (PEAK가 평단 아래로 잡히면 트레일링 익절 기준이 비정상적으로 낮아짐)
+                if swing.has_position() and not swing.PEAK_PRICE:
+                    entry_floor = float(swing.ENTRY_PRICE) if swing.ENTRY_PRICE else 0
+                    swing.PEAK_PRICE = to_price(max(float(current_price), entry_floor))
 
                 await db.flush()
                 await db.commit()
@@ -254,15 +346,35 @@ async def process_single_swing(
                         json.dumps(partial_result["partial_state"])
                     )
 
+                if pending_str:
+                    if partial_result.get("pending_state"):
+                        # 아직 체결 미확인 → 재확인 횟수 갱신
+                        await redis_client.setex(
+                            pending_key, 86400,
+                            json.dumps(partial_result["pending_state"])
+                        )
+                    else:
+                        # 확인 완료(또는 추적 종료) → 다음 사이클부터 정상 신호 로직
+                        await redis_client.delete(pending_key)
+                elif partial_result.get("pending_order"):
+                    # 이번 사이클 chunk 주문의 체결을 확인 못함 → 다음 사이클에 재확인
+                    await redis_client.setex(
+                        pending_key, 86400,
+                        json.dumps(partial_result["pending_order"])
+                    )
+
                 # 푸쉬 알림
                 if user_id and swing.SIGNAL != prev_signal:
                     _fire_trade_notification(user_id, swing, prev_signal, st_code)
 
-                return
+                # 미확인 주문을 취소한 경우에만 이어서 손절/익절 평가를 수행한다
+                # (SIGNAL 1/2 상태이므로 신규 진입 로직은 타지 않는다)
+                if not resume_normal_flow:
+                    return
 
             # === 3. PEAK_PRICE 갱신 (현재가 기준, 노이즈 방지) ===
             if swing.has_position():
-                swing.update_peak_price(int(current_price))
+                swing.update_peak_price(float(current_price))
 
             # 변경 전 SIGNAL 저장 (알림용)
             prev_signal = swing.SIGNAL
@@ -298,6 +410,15 @@ async def process_single_swing(
                     json.dumps(pending_partial)
                 )
                 swing._pending_partial_state = None
+
+            # 체결 미확인 주문 → 다음 사이클 재확인 대상으로 등록
+            pending_order = getattr(swing, '_pending_order_state', None)
+            if pending_order:
+                await redis_client.setex(
+                    f"pending_order:{swing.SWING_ID}", 86400,
+                    json.dumps(pending_order)
+                )
+                swing._pending_order_state = None
 
             # === 6. 푸쉬 알림 ===
             if user_id and swing.SIGNAL != prev_signal:
@@ -384,6 +505,7 @@ async def _handle_waiting(
         logger.info(f"[{st_code}] 매수 수량 부족 (CUR_AMOUNT={equity:,.0f}원)")
         return
 
+    # 체결 이력 저장은 executor가 전담한다 (체결 수량/단가를 아는 지점) — 사유만 넘긴다
     order_result = await SwingOrderExecutor.execute_buy_with_partial(
         swing_id=swing.SWING_ID,
         user_id=user_id,
@@ -394,16 +516,24 @@ async def _handle_waiting(
         signal_on_complete=1,
         db=db,
         mrkt_code=mrkt_code,
+        reasons=entry_result.get("reasons", ["매수"]).copy(),
     )
 
     if not order_result.get("success"):
         logger.error(f"[{st_code}] 매수 실패: {order_result.get('reason')}")
         return
 
+    # 주문은 나갔으나 체결 확인 실패 → 상태/이력 반영 없이 다음 사이클에 재확인
+    # (0주·0원 이력 저장과 SIGNAL 미변경으로 인한 중복 주문 방지)
+    if order_result.get("unconfirmed"):
+        swing._pending_order_state = order_result.get("pending_order")
+        logger.warning(f"[{st_code}] 매수 주문 체결 미확인 → 다음 사이클 재확인 대기")
+        return
+
     if order_result.get("partial_state"):
         swing._pending_partial_state = order_result["partial_state"]
 
-    avg_price = order_result.get("avg_price", int(current_price))
+    avg_price = order_result.get("avg_price", float(current_price))
     qty = order_result.get("qty", 0)
 
     # CUR_AMOUNT 차감 (매수 금액만큼 가용 금액 감소)
@@ -411,21 +541,12 @@ async def _handle_waiting(
         swing.deduct_amount(avg_price * qty)
 
     if order_result.get("completed", True):
-        swing.transition_to_buy(avg_price, qty, int(current_price))
+        swing.transition_to_buy(avg_price, qty, float(current_price))
     else:
-        swing.ENTRY_PRICE = Decimal(avg_price)
+        swing.ENTRY_PRICE = to_price(avg_price)
         swing.HOLD_QTY = qty
         swing.MOD_DT = datetime.now()
 
-    # 거래 내역 저장
-    reasons = entry_result.get("reasons", ["매수"]).copy()
-    trade_service = TradeHistoryService(db)
-    await trade_service.record_trade(
-        swing_id=swing.SWING_ID,
-        trade_type="B",
-        order_result=order_result,
-        reasons=reasons
-    )
 
 
 async def _handle_position(
@@ -433,68 +554,73 @@ async def _handle_position(
     current_price, frgn_ntby_qty, acml_vol,
     cached_indicators, avg_daily_amount, mrkt_code=""
 ):
-    """보유 상태 → 손절/1차 익절/2차 익절 확인"""
-    entry_price = int(swing.ENTRY_PRICE) if swing.ENTRY_PRICE else 0
-    hold_qty = swing.HOLD_QTY or 0
+    """보유 상태 → 단일 청산선 판정 + (선택) 부분 익절
 
-    if entry_price <= 0:
+    청산선 하나가 손실 제한 → 본전 확보 → 이익 확정을 순서대로 수행하므로
+    손절/1차 익절/2차 익절을 따로 판정하지 않는다.
+    """
+    entry_price = float(swing.ENTRY_PRICE) if swing.ENTRY_PRICE else 0
+    hold_qty = swing.HOLD_QTY or 0
+    peak_price = float(swing.PEAK_PRICE) if swing.PEAK_PRICE else 0
+
+    if entry_price <= 0 or hold_qty <= 0:
         return
 
-    # 1. 손절 신호 체크 (SIGNAL 2에서는 본전 방어 적용)
+    # 1. 청산선 이탈 확인 (최우선)
     exit_result = await strategy.check_exit_signal(
         redis_client=redis_client,
         position_id=swing.SWING_ID,
         symbol=st_code,
         current_price=current_price,
-        entry_price=Decimal(entry_price),
+        entry_price=Decimal(str(entry_price)),
         frgn_ntby_qty=frgn_ntby_qty,
         acml_vol=acml_vol,
         cached_indicators=cached_indicators,
-        signal=swing.SIGNAL
+        signal=swing.SIGNAL,
+        peak_price=peak_price,
     )
 
     if exit_result and exit_result.get("action") == "SELL":
         await _execute_full_sell(
             swing, redis_client, db, user_id, st_code,
             current_price, hold_qty, avg_daily_amount,
-            exit_result.get("reasons", ["손절"]),
-            f"[{user_id} - 주식: {st_code}] 손절 전량 매도 완료, 사이클 종료",
+            exit_result.get("reasons", ["청산"]),
+            f"[{user_id} - 주식: {st_code}] 청산선 이탈 전량 매도, 사이클 종료",
             mrkt_code=mrkt_code,
             cached_indicators=cached_indicators
         )
         return
 
-    # 2. 장중 trailing stop 익절 체크
-    ts_result = await strategy.check_trailing_stop_signal(
+    # 2. 부분 익절 (목표 수익률 도달 시 절반, SIGNAL 1에서 1회)
+    tp_result = await strategy.check_partial_take_profit(
         symbol=st_code,
         current_price=current_price,
-        peak_price=int(swing.PEAK_PRICE) if swing.PEAK_PRICE else 0,
+        entry_price=Decimal(str(entry_price)),
         signal=swing.SIGNAL,
-        cached_indicators=cached_indicators
-        )
+    )
 
-    if ts_result and ts_result.get("action") == "SELL_HALF":
-        # 1차 익절: 50% 매도 (SIGNAL 1 → 2)
-        sell_qty = hold_qty // 2
-        if sell_qty > 0:
-            await _execute_partial_sell(
+    if tp_result and tp_result.get("action") == "SELL_HALF":
+        sell_qty = int(hold_qty * strategy.FIRST_PROFIT_TAKE_RATIO)
+
+        # 1주뿐이면 절반 분할이 불가능하다. 그대로 두면 매 사이클 신호만 반복되므로
+        # 전량 매도로 사이클을 종료한다.
+        if sell_qty <= 0:
+            await _execute_full_sell(
                 swing, redis_client, db, user_id, st_code,
-                current_price, sell_qty, avg_daily_amount,
-                ts_result.get("reasons", ["1차 익절"]),
-                f"[{user_id} - 주식: {st_code}] 1차 익절 50% 매도 완료",
-                mrkt_code=mrkt_code
+                current_price, hold_qty, avg_daily_amount,
+                tp_result.get("reasons", ["부분익절"]) + ["잔량 1주 전량 매도"],
+                f"[{user_id} - 주식: {st_code}] 잔량 1주 익절 전량 매도, 사이클 종료",
+                mrkt_code=mrkt_code,
+                cached_indicators=cached_indicators
             )
-        return
+            return
 
-    if ts_result and ts_result.get("action") == "SELL_ALL":
-        # 2차 익절: 잔량 전량 매도 (SIGNAL 2 → 0 or 3)
-        await _execute_full_sell(
+        await _execute_partial_sell(
             swing, redis_client, db, user_id, st_code,
-            current_price, hold_qty, avg_daily_amount,
-            ts_result.get("reasons", ["2차 익절"]),
-            f"[{user_id} - 주식: {st_code}] 2차 익절 전량 매도 완료, 사이클 종료",
-            mrkt_code=mrkt_code,
-            cached_indicators=cached_indicators
+            current_price, sell_qty, avg_daily_amount,
+            tp_result.get("reasons", ["부분익절"]),
+            f"[{user_id} - 주식: {st_code}] 부분 익절 {sell_qty}주 매도 완료",
+            mrkt_code=mrkt_code
         )
 
 
@@ -521,10 +647,16 @@ async def _execute_partial_sell(
         signal_on_complete=2,
         db=db,
         mrkt_code=mrkt_code,
+        reasons=list(reasons),
     )
 
     if not order_result.get("success"):
         logger.error(f"[{st_code}] 1차 익절 매도 실패: {order_result.get('reason')}")
+        return
+
+    if order_result.get("unconfirmed"):
+        swing._pending_order_state = order_result.get("pending_order")
+        logger.warning(f"[{st_code}] 1차 익절 매도 체결 미확인 → 다음 사이클 재확인 대기")
         return
 
     if order_result.get("partial_state"):
@@ -533,25 +665,18 @@ async def _execute_partial_sell(
     # CUR_AMOUNT 가산 (매도 금액만큼 가용 금액 증가)
     sold_qty_for_amount = order_result.get("qty", 0)
     if sold_qty_for_amount > 0:
-        sell_price = order_result.get("avg_price", int(current_price))
+        sell_price = order_result.get("avg_price", float(current_price))
         swing.add_amount(sell_price * sold_qty_for_amount)
 
     if order_result.get("completed", True):
         actual_sold = order_result.get("qty", sell_qty)
         swing.transition_to_partial(actual_sold)
         # PEAK를 현재가로 리셋 → 2차 익절 새로 추적
-        swing.PEAK_PRICE = Decimal(str(int(current_price)))
+        swing.PEAK_PRICE = to_price(current_price)
     else:
         sold_qty = order_result.get("qty", 0)
         swing.update_hold_qty_partial(sold_qty)
 
-    trade_service = TradeHistoryService(db)
-    await trade_service.record_trade(
-        swing_id=swing.SWING_ID,
-        trade_type="S",
-        order_result=order_result,
-        reasons=reasons
-    )
     logger.info(success_log_msg)
 
 
@@ -576,10 +701,16 @@ async def _execute_full_sell(
         signal_on_complete=0,
         db=db,
         mrkt_code=mrkt_code,
+        reasons=list(reasons),
     )
 
     if not order_result.get("success"):
         logger.error(f"[{st_code}] 매도 실패: {order_result.get('reason')}")
+        return
+
+    if order_result.get("unconfirmed"):
+        swing._pending_order_state = order_result.get("pending_order")
+        logger.warning(f"[{st_code}] 전량 매도 체결 미확인 → 다음 사이클 재확인 대기")
         return
 
     # order_result에 partial_state가 있으면 Entity에 임시 저장
@@ -589,7 +720,7 @@ async def _execute_full_sell(
     # CUR_AMOUNT 가산 (매도 금액만큼 가용 금액 증가)
     sold_qty_for_amount = order_result.get("qty", 0)
     if sold_qty_for_amount > 0:
-        sell_price = order_result.get("avg_price", int(current_price))
+        sell_price = order_result.get("avg_price", float(current_price))
         swing.add_amount(sell_price * sold_qty_for_amount)
 
     if order_result.get("completed", True):
@@ -599,14 +730,6 @@ async def _execute_full_sell(
         sold_qty = order_result.get("qty", 0)
         swing.update_hold_qty_partial(sold_qty)
 
-    # 거래 내역 저장
-    trade_service = TradeHistoryService(db)
-    await trade_service.record_trade(
-        swing_id=swing.SWING_ID,
-        trade_type="S",
-        order_result=order_result,
-        reasons=reasons
-    )
     logger.info(success_log_msg)
 
 
@@ -615,11 +738,16 @@ async def _execute_full_sell(
 
 async def day_collect_job():
     """
-    국내 일별 데이터 수집 (장 마감 후 15:35)
+    국내 일별 데이터 수집 (일봉 확정 15:35 + 여유 → 15:40 KST 실행)
 
     작업: 국내 활성 스윙의 당일 OHLCV 데이터 수집
     병렬 처리: 최대 5개 종목 동시 실행
     """
+    if is_today_incomplete("J"):
+        # 여기 걸리면 그날 OHLCV가 통째로 비고 재시도도 없다 (다음 워밍업 지표까지 오염)
+        logger.error("[DAY COLLECT KR] 세션 미완료 상태에서 수집 잡 실행 → 전 종목 스킵. 스케줄 확인 필요")
+        return
+
     logger.info("[DAY COLLECT KR] 국내 데이터 수집 시작")
     db = await Database.get_session()
 
@@ -654,11 +782,15 @@ async def day_collect_job():
 
 async def us_day_collect_job():
     """
-    미국 일별 데이터 수집 (미국장 마감 후 KST 06:35)
+    미국 일별 데이터 수집 (일봉 확정 16:35 ET + 여유 → 16:40 ET 실행)
 
     작업: 해외 활성 스윙의 당일 OHLCV 데이터 수집
     병렬 처리: 최대 5개 종목 동시 실행
     """
+    if is_today_incomplete("NAS"):
+        logger.error("[DAY COLLECT US] 세션 미완료 상태에서 수집 잡 실행 → 전 종목 스킵. 스케줄 확인 필요")
+        return
+
     logger.info("[DAY COLLECT US] 미국 데이터 수집 시작")
     db = await Database.get_session()
 
@@ -701,6 +833,11 @@ async def collect_single_stock(stock, stock_service: StockService):
         code = stock.ST_CODE
         mrkt_code = stock.MRKT_CODE
         _overseas = is_overseas(mrkt_code)
+
+        # 세션 미완료(프리마켓/장중/주말)면 당일 부분봉 저장 방지 — 완성봉만 적재
+        if is_today_incomplete(mrkt_code):
+            logger.info(f"[DAY COLLECT] {code} 세션 미완료 — 당일 저장 스킵")
+            return
 
         try:
             if _overseas:
@@ -751,7 +888,7 @@ def _fire_trade_notification(
 ):
     """SIGNAL 변경에 따른 푸쉬 알림 (fire-and-forget)"""
     new_signal = swing.SIGNAL
-    entry_price = int(swing.ENTRY_PRICE) if swing.ENTRY_PRICE else 0
+    entry_price = float(swing.ENTRY_PRICE) if swing.ENTRY_PRICE else 0
     hold_qty = swing.HOLD_QTY or 0
 
     # 매수 체결 (SIGNAL 0→1)
@@ -809,6 +946,9 @@ def _on_notification_done(task: asyncio.Task):
 
 async def us_trade_job():
     """미국 장 매매 신호 확인 및 실행 (5분 단위) — 해외 종목만"""
+    if not _trading_allowed("NAS", "US BATCH"):
+        return
+
     db = await Database.get_session()
     try:
         swing_service = SwingService(db)

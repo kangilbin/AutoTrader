@@ -4,6 +4,7 @@ KIS (한국투자증권) API 해외 주식 통합 모듈
 """
 import asyncio
 import logging
+from datetime import datetime, timedelta
 from typing import List, Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,9 +13,10 @@ from app.common.redis import get_redis
 from app.core.config import get_settings
 from app.core.market_code import to_ovrs_excg_cd, US_TRADE_EXCG
 from app.core.order import Order, ModifyOrder
+from app.exceptions import ExternalServiceError
 from app.external.headers import kis_headers
 from app.external.http_client import fetch
-from app.external.kis_api import _get_user_auth, oauth_token
+from app.external.kis_api import _get_user_auth, is_simulation, oauth_token
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -227,7 +229,7 @@ async def modify_or_cancel_order_api(user_id: str, order: ModifyOrder, db: Async
     query = {
         "CANO": user_data.get("ACCOUNT_NO")[:8],
         "ACNT_PRDT_CD": user_data.get("ACCOUNT_NO")[-2:],
-        "OVRS_EXCG_CD": to_ovrs_excg_cd(getattr(order, 'excg_cd', 'NAS')),
+        "OVRS_EXCG_CD": to_ovrs_excg_cd(order.excg_cd or "NAS"),
         "PDNO": order.pdno,
         "ORGN_ODNO": order.orgn_odno,
         "RVSE_CNCL_DVSN_CD": order.rvse_cncl_dvsn_cd,
@@ -244,8 +246,20 @@ async def modify_or_cancel_order_api(user_id: str, order: ModifyOrder, db: Async
 # ============================================================
 
 async def get_inquire_daily_ccld_obj(user_id: str, db: AsyncSession, excg_cd: str = "NAS", fk200="", nk200=""):
-    """해외 주식 미체결 내역 조회 (excg_cd: 정식코드 NAS/NYS/AMS)"""
+    """해외 주식 미체결 내역 조회 (excg_cd: 정식코드 NAS/NYS/AMS)
+
+    ⚠️ 체결 확인에 쓰지 말 것 — 완전 체결된 주문은 이 목록에서 빠지므로
+    "체결됨"과 "주문이 없음"을 구분할 수 없다. 체결 확인은
+    get_inquire_ccnl_obj(주문체결내역)를 사용한다. 본 API는 잔량 확인 용도다.
+
+    ⚠️ KIS 명세상 모의투자 미지원(TTTS3018R) → 모의 계정은 None 반환.
+    """
     user_data, access_data = await _get_user_auth(user_id, db)
+
+    # 모의투자는 본 API(TTTS3018R) 미지원 — 실전 호스트 오호출 방지
+    if access_data.get("simulation_yn") == "Y":
+        return None
+
     url = settings.REAL_API_URL
     tr_id = "TTTS3018R"
 
@@ -266,9 +280,77 @@ async def get_inquire_daily_ccld_obj(user_id: str, db: AsyncSession, excg_cd: st
     return body
 
 
+async def get_inquire_ccnl_obj(
+    user_id: str, db: AsyncSession, excg_cd: str = "NAS",
+    ord_strt_dt: str = None, ord_end_dt: str = None,
+    ccld_nccs_dvsn: str = "00", fk200="", nk200="",
+):
+    """해외 주식 주문체결내역 조회 (TTTS3035R / 모의 VTTS3035R)
+
+    체결·미체결을 모두 담으므로 체결 확인의 소스로 사용한다.
+    미체결내역(TTTS3018R)은 완전 체결된 주문이 목록에서 빠지므로 쓸 수 없다.
+
+    Args:
+        ccld_nccs_dvsn: 00 전체 / 01 체결 / 02 미체결
+        ord_strt_dt~ord_end_dt: 주문일자 구간. 기본값은 전일~당일 —
+            미국 정규장(22:30~05:00 KST)이 자정을 넘겨 주문일자가 갈리기 때문.
+    """
+    user_data, access_data = await _get_user_auth(user_id, db)
+    sim = access_data.get("simulation_yn") == "Y"
+
+    url = settings.DEV_API_URL if sim else settings.REAL_API_URL
+    tr_id = "VTTS3035R" if sim else "TTTS3035R"
+    path = "uapi/overseas-stock/v1/trading/inquire-ccnl"
+    api_url = f"{url}/{path}"
+
+    now = datetime.now()
+    if ord_strt_dt is None:
+        ord_strt_dt = (now - timedelta(days=1)).strftime("%Y%m%d")
+    if ord_end_dt is None:
+        ord_end_dt = now.strftime("%Y%m%d")
+
+    headers = kis_headers(access_data, tr_id=tr_id)
+    query = {
+        "CANO": user_data.get("ACCOUNT_NO")[:8],
+        "ACNT_PRDT_CD": user_data.get("ACCOUNT_NO")[-2:],
+        "PDNO": "",
+        "ORD_STRT_DT": ord_strt_dt,
+        "ORD_END_DT": ord_end_dt,
+        "SLL_BUY_DVSN": "00",  # 전체
+        "CCLD_NCCS_DVSN": ccld_nccs_dvsn,
+        "OVRS_EXCG_CD": to_ovrs_excg_cd(excg_cd),
+        "SORT_SQN": "DS",
+        "ORD_DT": "",
+        "ORD_GNO_BRNO": "",
+        "ODNO": "",
+        "CTX_AREA_FK200": fk200,
+        "CTX_AREA_NK200": nk200,
+    }
+    response = await fetch("GET", api_url, "KIS", params=query, headers=headers)
+    return response["body"]
+
+
 # ============================================================
 # 체결 확인
 # ============================================================
+
+
+class _Unsupported:
+    """체결 조회 자체가 불가함을 나타내는 마커 (모의투자 미지원 등)
+
+    '아직 미체결(None)'과 '확인할 방법이 없음'을 호출부가 구분해야 하므로 별도 값으로 둔다.
+    falsy라서 기존 `if not execution` 검사에는 그대로 걸린다.
+    """
+    __slots__ = ()
+
+    def __bool__(self) -> bool:
+        return False
+
+    def __repr__(self) -> str:
+        return "UNSUPPORTED"
+
+
+UNSUPPORTED = _Unsupported()
 
 async def check_order_execution(
     user_id: str, order_no: str, db: AsyncSession,
@@ -276,43 +358,60 @@ async def check_order_execution(
     max_retry: int = 3, delay: float = 2.0
 ) -> Optional[dict]:
     """
-    해외 주식 체결 확인 (폴링)
+    해외 주식 체결 확인 (폴링) — 주문체결내역(TTTS3035R/VTTS3035R) 기준
     미국 장은 체결 지연이 길 수 있어 delay 2초 기본값
 
     Returns:
-        체결 정보 또는 None
+        체결 정보 / None(아직 미체결) / UNSUPPORTED(조회 자체가 불가 - 모의 미지원 등)
     """
+    sim = await is_simulation(user_id, db)
+
     for attempt in range(max_retry):
         try:
-            result = await get_inquire_daily_ccld_obj(user_id, db, excg_cd)
-
-            if not result or "output" not in result:
-                logger.warning(f"[체결확인-해외] 응답 없음, 재시도 {attempt + 1}/{max_retry}")
-                await asyncio.sleep(delay)
-                continue
-
-            for order in result.get("output", []):
-                if order.get("odno") == order_no:
-                    executed_qty = int(order.get("ft_ccld_qty", 0))
-
-                    if executed_qty > 0:
-                        return {
-                            "order_no": order_no,
-                            "st_code": order.get("pdno"),
-                            "avg_price": float(order.get("ft_ccld_unpr3", 0)),
-                            "executed_qty": executed_qty,
-                            "executed_amt": float(order.get("ft_ccld_amt3", 0)),
-                            "trade_type": order.get("sll_buy_dvsn_cd")
-                        }
-                    else:
-                        logger.info(f"[체결확인-해외] 주문 {order_no} 미체결, 재시도 {attempt + 1}/{max_retry}")
-                        break
-
-            await asyncio.sleep(delay)
-
-        except Exception as e:
+            body = await get_inquire_ccnl_obj(user_id, db, excg_cd)
+        except ExternalServiceError as e:
+            # 모의는 TR 미지원 시 오류가 나므로 재시도 없이 '확인 불가'로 확정한다
+            if sim:
+                logger.warning(f"[체결확인-해외] 모의투자 주문체결내역 조회 불가({e}) → 확인 미지원 처리")
+                return UNSUPPORTED
             logger.error(f"[체결확인-해외] 오류: {e}, 재시도 {attempt + 1}/{max_retry}")
             await asyncio.sleep(delay)
+            continue
+
+        if not body or body.get("rt_cd") != "0":
+            msg = body.get("msg1", "응답 없음") if body else "응답 없음"
+            if sim:
+                logger.warning(f"[체결확인-해외] 모의투자 주문체결내역 응답 오류({msg}) → 확인 미지원 처리")
+                return UNSUPPORTED
+            logger.warning(f"[체결확인-해외] 응답 오류({msg}), 재시도 {attempt + 1}/{max_retry}")
+            await asyncio.sleep(delay)
+            continue
+
+        for order in body.get("output") or []:
+            if order.get("odno") != order_no:
+                continue
+
+            executed_qty = int(float(order.get("ft_ccld_qty") or 0))
+            if executed_qty > 0:
+                return {
+                    "order_no": order_no,
+                    "st_code": order.get("pdno"),
+                    "avg_price": float(order.get("ft_ccld_unpr3") or 0),
+                    "executed_qty": executed_qty,
+                    "executed_amt": float(order.get("ft_ccld_amt3") or 0),
+                    "trade_type": order.get("sll_buy_dvsn_cd"),
+                    "remaining_qty": int(float(order.get("nccs_qty") or 0)),
+                }
+
+            reject = order.get("rjct_rson_name") or order.get("rjct_rson")
+            logger.info(
+                f"[체결확인-해외] 주문 {order_no} 미체결"
+                + (f" (거부사유: {reject})" if reject else "")
+                + f", 재시도 {attempt + 1}/{max_retry}"
+            )
+            break
+
+        await asyncio.sleep(delay)
 
     logger.warning(f"[체결확인-해외] 주문 {order_no} 체결 확인 실패 (max_retry 초과)")
     return None
@@ -432,6 +531,50 @@ async def get_inquire_asking_price(user_id: str, code: str, db: AsyncSession, ex
     response = await fetch("GET", api_url, "KIS", params=query, headers=headers)
     body = response["body"]
     return body
+
+
+def _to_float(value) -> float:
+    """KIS 응답 문자열 → float (빈값/비정상 값은 0)"""
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+async def get_best_quote(user_id: str, code: str, db: AsyncSession, excd: str = "NAS") -> Optional[dict]:
+    """해외 주식 최우선 호가 조회 (매도1호가/매수1호가)
+
+    미국은 지정가(ORD_DVSN "00")만 가능하므로 주문 단가를 직접 정해야 한다.
+    현재가(last)는 '마지막 체결가'라 그 사이 호가가 움직였으면 체결되지 않으므로,
+    즉시 체결되는 반대편 호가를 단가로 쓴다. (매수→ask, 매도→bid)
+
+    Returns:
+        {"ask": 매도1호가, "bid": 매수1호가} 또는 None(조회/파싱 실패)
+    """
+    body = await get_inquire_asking_price(user_id, code, db, excd)
+    if not body:
+        return None
+
+    # output2는 배열이며 1~10호가가 담긴다. 주문에는 최우선호가만 쓰므로 첫 원소만 사용.
+    # (output1은 기본 시세(last/open/high/low)라 호가 필드가 없다)
+    rows = body.get("output2") or []
+    quote = rows[0] if isinstance(rows, list) and rows else None
+
+    if not isinstance(quote, dict):
+        logger.warning(
+            f"[호가조회] {code}({excd}) output2 없음/형식 불일치 "
+            f"(type={type(rows).__name__}, 응답 키={list(body.keys())})"
+        )
+        return None
+
+    ask = _to_float(quote.get("pask1"))
+    bid = _to_float(quote.get("pbid1"))
+
+    if ask <= 0 and bid <= 0:
+        logger.warning(f"[호가조회] {code}({excd}) 최우선호가 없음 (output2[0] 키={list(quote.keys())})")
+        return None
+
+    return {"ask": ask, "bid": bid}
 
 
 # ============================================================

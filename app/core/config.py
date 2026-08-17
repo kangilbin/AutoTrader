@@ -39,6 +39,16 @@ class Settings(BaseSettings):
     # 시스템 배치 잡 사용자 ID (KIS 토큰 발급 컨텍스트)
     BATCH_USER_ID: Optional[str] = None
 
+    # 정규장 시간 밖에도 매매 배치를 실행할지 (모의투자 테스트 전용)
+    # 프리마켓/휴장 시세는 거래량이 없어 지표가 왜곡되므로 운영에서는 반드시 False
+    ALLOW_OFFHOURS_TRADING: bool = False
+
+    # 해외 매매 배치 실행 주기 (ET 기준 cron). 기본값이 운영값이며,
+    # 테스트로 더 자주/넓게 돌리려면 .env에서 덮어쓴다 (예: "*/1", "1-23")
+    # ※ 분할 체결(TWAP)이 "5분 사이클당 한 chunk" 전제로 동작하므로 주기 변경 시 분할 속도도 함께 바뀐다
+    US_TRADE_CRON_MINUTE: str = "*/5"
+    US_TRADE_CRON_HOUR: str = "10-15"
+
     # AES Encryption
     AES_SECRET_KEY: Optional[str] = None
 

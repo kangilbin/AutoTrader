@@ -172,55 +172,6 @@ class TechnicalIndicators:
         return float((today_diff - mean) / std)
 
     @staticmethod
-    def calculate_realtime_obv_short_diff(
-        yesterday_obv: float,
-        yesterday_close: float,
-        current_price: float,
-        current_volume: int,
-        recent_diffs: list,
-        lookback: int = 3
-    ) -> float:
-        """
-        실시간 OBV의 N일 누적 변화량 (백테스트 obv_short_diff 와 동일 정의)
-
-        정의: obv[today] - obv[today - lookback]
-            = today_diff + (lookback-1)개의 직전 diff
-
-        Args:
-            yesterday_obv: 어제 종가 기준 OBV
-            yesterday_close: 어제 종가
-            current_price: 현재가 (실시간)
-            current_volume: 현재 누적 거래량
-            recent_diffs: 캐시된 최근 OBV diff 배열 (마지막 = 어제 diff)
-            lookback: 누적 기간 (기본 3 영업일)
-
-        Returns:
-            실시간 N일 누적 OBV 변화량 (양수면 누적 상승).
-            recent_diffs 길이 부족 시 NaN (호출 측에서 매수 차단 처리)
-        """
-        prior_window = lookback - 1
-
-        # 길이 가드: 의미있는 N일 누적 계산이 불가능하면 NaN 반환
-        # → 호출 측 'obv_short_diff > 0' 비교가 False 되어 자동 매수 차단
-        if prior_window > 0:
-            if recent_diffs is None or len(recent_diffs) < prior_window:
-                return float('nan')
-
-        # 1. 오늘 OBV 추정 (calculate_realtime_obv_zscore 와 동일 규칙)
-        if current_price > yesterday_close:
-            today_obv = yesterday_obv + current_volume
-        elif current_price < yesterday_close:
-            today_obv = yesterday_obv - current_volume
-        else:
-            today_obv = yesterday_obv
-
-        # 2. 오늘 diff + (lookback-1)개 직전 diff 합
-        today_diff = today_obv - yesterday_obv
-        prior_diffs_sum = sum(recent_diffs[-prior_window:]) if prior_window > 0 else 0.0
-
-        return float(today_diff + prior_diffs_sum)
-
-    @staticmethod
     def calculate_realtime_atr_from_cache(
         yesterday_atr: float,
         yesterday_close: float,
@@ -411,6 +362,32 @@ class TechnicalIndicators:
             return None
 
     @staticmethod
+    def calculate_accum(obv, obv_ema, avg_vol20) -> Optional[float]:
+        """중장기(스윙) 수급 축적도 — 완성봉 기준
+
+            accum = (OBV − EMA(OBV)) / 20일 평균거래량
+
+        "OBV가 자기 최근 평균보다 몇 거래일치 거래량만큼 위인가"를 뜻하며,
+        avg_vol20 정규화 덕에 종목 간 비교가 가능하다.
+
+        ⚠️ 반드시 완성봉(전일까지) 값으로 계산할 것.
+           당일 부분 거래량을 섞으면 같은 날에도 평가 시각에 따라 값이 달라져
+           (상승일 장 초반엔 과소, 하락일 장 초반엔 과대) 백테스트로 튜닝한
+           ACCUM_HIGH 임계값과 의미가 어긋난다.
+
+        Returns:
+            accum 값 또는 None (입력 누락/거래량 0 → 판단 불가)
+        """
+        if obv is None or obv_ema is None or not avg_vol20:
+            return None
+        try:
+            if pd.isna(obv) or pd.isna(obv_ema) or pd.isna(avg_vol20) or avg_vol20 <= 0:
+                return None
+            return float((obv - obv_ema) / avg_vol20)
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
     def calculate_foreign_ratio(
         foreign_net_buy: int,
         volume: int
@@ -439,7 +416,7 @@ class TechnicalIndicators:
         adx_period: int = 14,
         obv_lookback: int = 14,
         obv_lookback_sell: int = 14,
-        obv_short_lookback: int = 3
+        accum_ema_period: int = 12
     ) -> pd.DataFrame:
         """
         DataFrame에 모든 지표 추가
@@ -451,7 +428,6 @@ class TechnicalIndicators:
             atr_period: ATR 기간
             adx_period: ADX/DMI 기간
             obv_lookback: OBV z-score 계산 기간 (기본값: 14, 백테스트/실전 통일)
-            obv_short_lookback: 단기 OBV 누적 변화 기간 (z-score 잔향 보완)
 
         Returns:
             지표가 추가된 DataFrame
@@ -502,8 +478,10 @@ class TechnicalIndicators:
             if obv_z_sell is not None:
                 df["obv_z_sell"] = obv_z_sell
 
-            # 단기 OBV 누적 변화 (14일 z-score 잔향 보완용 — 절대 방향성)
-            df["obv_short_diff"] = df["obv"] - df["obv"].shift(obv_short_lookback)
+            # 중장기(스윙) 수급 축적: OBV가 자기 EMA(기간=accum_ema_period) 대비 얼마나 위인가
+            # → "최근 수급이 지속 축적 중인가" (avg_vol20으로 정규화해 종목 무관 비교)
+            df["obv_ema"] = df["obv"].ewm(span=accum_ema_period, adjust=False).mean()
+            df["avg_vol20"] = df["ACML_VOL"].astype(float).rolling(20).mean()
 
         # 외국인 비율 (컬럼이 있는 경우)
         if "FRGN_NTBY_QTY" in df.columns:
@@ -527,7 +505,7 @@ class TechnicalIndicators:
         adx_period: int = 14,
         obv_lookback: int = 14,
         obv_lookback_sell: int = 14,
-        obv_short_lookback: int = 3
+        accum_ema_period: int = 12
     ) -> pd.DataFrame:
         """
         단일 EMA 전략용 전체 지표 계산 (백테스팅 + 실전 공통)
@@ -542,12 +520,11 @@ class TechnicalIndicators:
             adx_period: ADX/DMI 기간 (기본값: 14)
             obv_lookback: OBV z-score 계산 기간 (기본값: 14)
             obv_lookback_sell: 2차 익절용 OBV z-score 계산 기간 (기본값: 14)
-            obv_short_lookback: 단기 OBV 누적 변화 기간 (기본값: 3)
 
         Returns:
-            지표가 추가된 DataFrame (ema20, ema120, atr, adx, plus_di, minus_di, obv, obv_z, obv_z_sell, obv_short_diff, gap_ratio, daily_return)
+            지표가 추가된 DataFrame (ema20, ema120, atr, adx, plus_di, minus_di, obv, obv_z, obv_z_sell, obv_ema, avg_vol20, gap_ratio, daily_return)
         """
-        # 기본 지표 계산 (ema20, ema120, atr, adx, dmi, obv, obv_z, obv_z_sell, obv_short_diff 포함)
+        # 기본 지표 계산 (ema20, ema120, atr, adx, dmi, obv, obv_z, obv_z_sell, obv_ema, avg_vol20 포함)
         df = cls.prepare_indicators_from_df(
             df,
             ema_short=ema_short,
@@ -556,7 +533,7 @@ class TechnicalIndicators:
             adx_period=adx_period,
             obv_lookback=obv_lookback,
             obv_lookback_sell=obv_lookback_sell,
-            obv_short_lookback=obv_short_lookback
+            accum_ema_period=accum_ema_period
         )
 
         # 일일 수익률 추가
@@ -575,7 +552,7 @@ class TechnicalIndicators:
         ema_period: int = 20,
         atr_period: int = 14,
         obv_lookback: int = 14,
-        obv_short_lookback: int = 3
+        accum_ema_period: int = 12
     ) -> dict:
         """
         캐시된 지표에 실시간 증분 계산 값을 추가
@@ -609,7 +586,7 @@ class TechnicalIndicators:
                     'realtime_ema20': float,           # 실시간 EMA20
                     'realtime_obv_z': float,           # 실시간 OBV z-score
                     'realtime_obv_z_sell': float,      # 2차 익절용 OBV z-score (14일)
-                    'realtime_obv_short_diff': float,  # 실시간 OBV 단기 누적 변화 (기본 3일)
+                    'realtime_accum': float,           # 실시간 중장기 수급 축적도
                     'realtime_atr': float,             # 실시간 ATR
                     'realtime_adx': float,             # 실시간 ADX
                     'realtime_plus_di': float,         # 실시간 +DI
@@ -644,15 +621,31 @@ class TechnicalIndicators:
                 recent_diffs=all_diffs
             )
 
-            # 2-1. 실시간 OBV 단기 누적 변화량 (14일 z-score 잔향 보완용)
-            realtime_obv_short_diff = cls.calculate_realtime_obv_short_diff(
-                yesterday_obv=cached_indicators['obv'],
-                yesterday_close=cached_indicators['close'],
-                current_price=current_price,
-                current_volume=current_volume,
-                recent_diffs=all_diffs,
-                lookback=obv_short_lookback
-            )
+            # 2-1. 실시간 중장기(스윙) 수급 축적도 accum — 매수 게이트가 사용하는 값
+            #   accum = (오늘OBV − OBV의 EMA) / 20일 평균거래량
+            #   ⚠️ 분모가 하루치 거래량이라 장중에는 당일 거래량이 쌓일수록 값이 커진다
+            #      (장 초반 < 장 후반). 백테스트가 튜닝한 완성봉 기준값과는 스케일이 다르므로,
+            #      ACCUM_HIGH 재산정 시 이 성질을 감안할 것.
+            if current_price > cached_indicators['close']:
+                realtime_obv = cached_indicators['obv'] + current_volume
+            elif current_price < cached_indicators['close']:
+                realtime_obv = cached_indicators['obv'] - current_volume
+            else:
+                realtime_obv = cached_indicators['obv']
+            # 어제 obv_ema 캐시에 오늘 OBV를 재귀식으로 한 스텝 반영 (배치 adjust=False와 동일)
+            # 입력이 없으면 accum만 None(=판단 불가) — 0.0으로 두면 '수급 없음'과 구분되지 않고,
+            # 여기서 예외를 내면 손절/익절 지표까지 함께 날아간다
+            obv_ema = cached_indicators.get('obv_ema')
+            avg_vol20 = cached_indicators.get('avg_vol20') or 0
+            if obv_ema is None or avg_vol20 <= 0:
+                realtime_accum = None
+            else:
+                realtime_obv_ema = cls.calculate_realtime_ema_from_cache(
+                    yesterday_ema=obv_ema,
+                    current_price=realtime_obv,
+                    period=accum_ema_period
+                )
+                realtime_accum = (realtime_obv - realtime_obv_ema) / avg_vol20
 
             # 3. 실시간 ATR 증분 계산
             realtime_atr = cls.calculate_realtime_atr_from_cache(
@@ -683,7 +676,7 @@ class TechnicalIndicators:
             cached_indicators['realtime_ema20'] = realtime_ema20
             cached_indicators['realtime_obv_z'] = realtime_obv_z
             cached_indicators['realtime_obv_z_sell'] = realtime_obv_z_sell
-            cached_indicators['realtime_obv_short_diff'] = realtime_obv_short_diff
+            cached_indicators['realtime_accum'] = realtime_accum
             cached_indicators['realtime_atr'] = realtime_atr
             cached_indicators['realtime_adx'] = realtime_adx
             cached_indicators['realtime_plus_di'] = realtime_plus_di
@@ -693,6 +686,7 @@ class TechnicalIndicators:
             return cached_indicators
 
         except Exception as e:
-            logger.error(f"실시간 지표 계산 실패: {e}")
-            # 실패 시 원본 반환 (어제 값 사용)
+            logger.error(f"실시간 지표 계산 실패: {e}", exc_info=True)
+            # 실패 시 원본 반환 (어제 값 사용) — realtime_* 키가 없으므로
+            # 소비부는 반드시 .get()으로 접근하고 없으면 보수적으로 판단해야 한다
             return cached_indicators

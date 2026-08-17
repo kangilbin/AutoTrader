@@ -11,6 +11,7 @@ from datetime import datetime, time, timedelta
 from zoneinfo import ZoneInfo
 from decimal import Decimal, InvalidOperation
 from app.domain.swing.indicators import TechnicalIndicators
+from app.domain.swing.trading.strategies.base_single_ema import BaseSingleEMAStrategy
 from app.domain.swing.repository import SwingRepository
 from app.domain.swing.entity import SwingTrade, EmaOption
 from app.domain.swing.schemas import SwingCreateRequest, SwingResponse
@@ -461,7 +462,9 @@ class SwingService:
         )
 
         # 백테스트와 동일하게 매수용 OBV z-score 14일 기준으로 통일
-        indicators = TechnicalIndicators.prepare_indicators_from_df(df, obv_lookback=14)
+        indicators = TechnicalIndicators.prepare_indicators_from_df(
+            df, obv_lookback=14, accum_ema_period=BaseSingleEMAStrategy.ACCUM_EMA_PERIOD
+        )
 
         if len(indicators) < 15:
             logger.warning(f"[{st_code}] 지표 데이터 부족 (15일 미만, OBV z-score 14일 계산 불가)")
@@ -500,6 +503,8 @@ class SwingService:
             "obv": float(yesterday['obv']),
             "obv_z": float(yesterday['obv_z']),
             "obv_recent_diffs": recent_obv_diffs,
+            "obv_ema": float(yesterday['obv_ema']),        # OBV의 EMA (실시간 증분 기준)
+            "avg_vol20": float(yesterday['avg_vol20']),    # 20일 평균거래량 (accum 정규화)
             "close": float(yesterday['STCK_CLPR']),
             "open": float(yesterday['STCK_OPRC']),
             "high": float(yesterday['STCK_HGPR']),

@@ -6,6 +6,7 @@ from datetime import datetime
 from decimal import Decimal
 
 from app.common.database import Base
+from app.core.price import to_price
 from app.exceptions import ValidationError
 
 VALID_MRKT_CODES = ('J', 'NX', 'UN', 'NYS', 'NAS', 'AMS')
@@ -69,14 +70,14 @@ class SwingTrade(Base):
 
     # ==================== 상태 전환 ====================
 
-    def transition_to_buy(self, entry_price: int, hold_qty: int, peak_price: int) -> None:
+    def transition_to_buy(self, entry_price: float, hold_qty: int, peak_price: float) -> None:
         """매수 완료 (SIGNAL 0 -> 1)"""
         if self.SIGNAL != 0:
             raise ValidationError(f"매수는 대기 상태(0)에서만 가능합니다. 현재: {self.SIGNAL}")
         self.SIGNAL = 1
-        self.ENTRY_PRICE = Decimal(entry_price)
+        self.ENTRY_PRICE = to_price(entry_price)
         self.HOLD_QTY = hold_qty
-        self.PEAK_PRICE = Decimal(peak_price)
+        self.PEAK_PRICE = to_price(peak_price)
         self.MOD_DT = datetime.now()
 
     def transition_to_partial(self, sold_qty: int) -> None:
@@ -119,16 +120,16 @@ class SwingTrade(Base):
         self.SIGNAL = 0
         self.MOD_DT = datetime.now()
 
-    def get_stop_loss_floor(self) -> int:
+    def get_stop_loss_floor(self) -> float:
         """1차 익절 후 손절 하한선 = 평단가 (본전 방어)"""
         if self.SIGNAL == 2 and self.ENTRY_PRICE:
-            return int(self.ENTRY_PRICE)
+            return float(self.ENTRY_PRICE)
         return 0
 
-    def update_peak_price(self, current_high: int) -> None:
+    def update_peak_price(self, current_high: float) -> None:
         """장중 고가 갱신"""
-        if self.has_position() and current_high > (int(self.PEAK_PRICE) if self.PEAK_PRICE else 0):
-            self.PEAK_PRICE = Decimal(current_high)
+        if self.has_position() and current_high > (float(self.PEAK_PRICE) if self.PEAK_PRICE else 0):
+            self.PEAK_PRICE = to_price(current_high)
 
     def update_hold_qty_partial(self, sold_qty: int) -> None:
         """부분 체결 시 보유 수량 차감"""

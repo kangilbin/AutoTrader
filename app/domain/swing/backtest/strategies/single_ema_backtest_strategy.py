@@ -48,68 +48,49 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
             prev_row = eval_df.iloc[i-1]
             current_date = row["STCK_BSOP_DATE"]
 
-            # === 1단계: 포지션 보유 시 매도 조건 체크 ===
+            # === 1단계: 포지션 보유 시 청산 판정 (단일 청산선 3단계) ===
             if signal in (1, 2):
                 # PEAK 갱신: 전일 고가까지만 반영 (당일 고가는 다음 날 반영)
                 # 일봉에서는 고가/저가의 장중 순서를 알 수 없으므로,
-                # 같은 캔들에서 PEAK 갱신 후 익절이 동시에 발동하는 오류를 방지
+                # 같은 캔들에서 PEAK 갱신 후 청산이 동시에 발동하는 오류를 방지
                 peak_price = max(peak_price, prev_row["STCK_HGPR"])
 
-                # [손절] 고정 손절 (entry - ATR×2.0, SIGNAL 2에서는 본전 방어)
-                if stop_loss > 0:
-                    current_stop = max(stop_loss, entry_price) if signal == 2 else stop_loss
+                atr = row["atr"] if pd.notna(row["atr"]) else 0
+                exit_line = floor_tick(self.calculate_exit_line(entry_price, peak_price, atr))
 
-                    if row["STCK_LWPR"] <= current_stop:
-                        reason = "손절" if signal == 1 else "손절(본전방어)"
-                        sell_price = floor_tick(min(current_stop, row["STCK_OPRC"]))
-                        current_capital = self._execute_sell(
-                            trades, current_date, sell_price, current_capital,
-                            [reason, f"손절가 {sell_price:.0f}원"]
-                        )
-                        signal = 3
-                        peak_price, entry_price, stop_loss, hold_qty = 0.0, 0.0, 0.0, 0
-                        continue
+                if exit_line > 0 and row["STCK_LWPR"] <= exit_line:
+                    sell_price = floor_tick(min(exit_line, row["STCK_OPRC"]))
+                    gain_pct = (sell_price - entry_price) / entry_price * 100 if entry_price else 0
+                    peak_gain = (peak_price - entry_price) / entry_price * 100 if entry_price else 0
+                    if peak_gain >= self.TRAILING_ACTIVATE_PCT:
+                        stage = "이익확정"
+                    elif peak_gain >= self.BREAKEVEN_ACTIVATE_PCT:
+                        stage = "본전방어"
+                    else:
+                        stage = "손절"
+                    current_capital = self._execute_sell(
+                        trades, current_date, sell_price, current_capital,
+                        [stage, f"청산선 {sell_price:.2f}", f"손익 {gain_pct:+.1f}%"]
+                    )
+                    signal = 3
+                    peak_price, entry_price, stop_loss, hold_qty = 0.0, 0.0, 0.0, 0
+                    continue
 
-                # [Trailing Stop 익절]
-                if peak_price > 0 and pd.notna(row["atr"]) and row["atr"] > 0:
-                    stop_price = floor_tick(peak_price - row["atr"] * self.TRAILING_STOP_ATR_MULT)
-
-                    if row["STCK_LWPR"] <= stop_price:
-                        trailing_sell_price = floor_tick(min(stop_price, row["STCK_OPRC"]))
-
-                        # 실제 체결가가 매수가 미만이면 익절 스킵 (손절 라인에서 처리)
-                        if trailing_sell_price < entry_price:
+                # 부분 익절: 목표 수익률 도달 시 절반 확정 (SIGNAL 1에서 1회)
+                if signal == 1 and self.PARTIAL_TAKE_PROFIT_PCT > 0:
+                    target = entry_price * (1 + self.PARTIAL_TAKE_PROFIT_PCT / 100)
+                    if row["STCK_HGPR"] >= target:
+                        sell_qty = int(hold_qty * self.FIRST_PROFIT_TAKE_RATIO)
+                        if sell_qty > 0:
+                            px = floor_tick(max(target, row["STCK_OPRC"]))
+                            current_capital = self._execute_partial_sell(
+                                trades, current_date, px, sell_qty, current_capital,
+                                [f"부분익절(+{self.PARTIAL_TAKE_PROFIT_PCT:.0f}%)",
+                                 f"목표가 {px:.2f}"]
+                            )
+                            hold_qty -= sell_qty
+                            signal = 2      # PEAK는 리셋하지 않는다 (잔량은 계속 추세 추적)
                             continue
-
-                        drawdown_pct = round((peak_price - row["STCK_LWPR"]) / peak_price * 100, 1)
-
-                        if signal == 1:
-                            # 1차 익절: 50% 매도 (수익일 때만, 갭하락 시 시가로 체결)
-                            sell_qty = hold_qty // 2
-                            if sell_qty > 0:
-                                current_capital = self._execute_partial_sell(
-                                    trades, current_date, trailing_sell_price, sell_qty,
-                                    current_capital,
-                                    ["1차익절", f"고점대비 -{drawdown_pct}%"]
-                                )
-                                hold_qty -= sell_qty
-                                signal = 2
-                                peak_price = trailing_sell_price  # PEAK 리셋
-                                continue
-
-                        elif signal == 2:
-                            # 2차 익절: OBV 게이트 확인 (갭하락 시 시가로 체결)
-                            obv_z_sell = row.get("obv_z_sell", 0)
-                            if pd.notna(obv_z_sell) and obv_z_sell < self.OBV_Z_SELL_THRESHOLD:
-                                current_capital = self._execute_sell(
-                                    trades, current_date, trailing_sell_price,
-                                    current_capital,
-                                    ["2차익절", f"고점대비 -{drawdown_pct}%", f"OBV z14={obv_z_sell:.2f}"]
-                                )
-                                signal = 3
-                                peak_price, entry_price, stop_loss, hold_qty = 0.0, 0.0, 0.0, 0
-                                continue
-
 
             # === 2단계: 수급 안정화 대기 (SIGNAL 3) ===
             # OBV z ≤ 0 한번 찍은 뒤(signal 4), 다시 양수 전환해야 매수 가능
@@ -170,12 +151,14 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
             adx_period=14,
             obv_lookback=self.OBV_LOOKBACK,
             obv_lookback_sell=self.OBV_LOOKBACK_SELL,
-            obv_short_lookback=self.OBV_SHORT_LOOKBACK
+            accum_ema_period=self.ACCUM_EMA_PERIOD
         )
 
     def _check_entry_conditions(self, row: pd.Series, prev_row: pd.Series = None) -> Tuple[bool, List[str], float]:
         """1차 매수 진입: 추세 추종 EMA20 돌파"""
-        required_cols = ["ema20", "obv_z", "obv_short_diff", "plus_di", "minus_di", "daily_return", "adx", "atr"]
+        # obv_ema/avg_vol20은 accum 판정용이며 전일 봉에서 읽으므로 여기서 제외
+        # (calculate_accum이 NaN을 None으로 처리 → 게이트 미통과)
+        required_cols = ["ema20", "plus_di", "minus_di", "daily_return", "adx", "atr"]
         if any(pd.isna(row[col]) for col in required_cols):
             return False, [], 0.0
 
@@ -214,13 +197,18 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
         if price_above_ema and within_gap_limit:
             trend_direction = row["plus_di"] > row["minus_di"]
             adx_sufficient = row["adx"] > self.BREAKOUT_ENTRY_ADX_MIN  # 최소 추세 강도
-            obv_positive = row["obv_z"] > self.BREAKOUT_ENTRY_OBV_MIN
-            # 14일 z-score 잔향으로 떨어지는 수급에서 매수되는 현상 차단
-            obv_short_rising = pd.notna(row.get("obv_short_diff")) and row["obv_short_diff"] > 0
 
-            if trend_direction and adx_sufficient and obv_positive and obv_short_rising:
+            # 중장기(스윙) 수급 축적 게이트: OBV가 자기 EMA 대비 얼마나 위인가 (정규화)
+            # 전일 완성봉 기준 — 실거래는 당일 거래량이 다 쌓이기 전에 판단하므로
+            # 당일 봉으로 판정하면 재현 불가능한(선견) 신호가 된다. 실시간 경로와 동일 정의.
+            accum = TechnicalIndicators.calculate_accum(
+                prev_row.get("obv"), prev_row.get("obv_ema"), prev_row.get("avg_vol20")
+            )
+            obv_ok = accum is not None and accum > self.ACCUM_HIGH  # 수급이 자기 평균 위로 충분히 쌓였을 때만
+
+            if trend_direction and adx_sufficient and obv_ok:
                 signal_price = row["ema20"]
-                return True, ["EMA돌파", "상향돌파", "추세확인", "거래량동반"], signal_price
+                return True, ["EMA돌파", "상향돌파", "추세확인", "수급축적"], signal_price
 
         return False, [], 0.0
 

@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.market_code import is_overseas
 from app.core.order import Order, ModifyOrder
+from app.core.price import normalize_order_price
 from app.domain.order.schemas import OrderModifyRequest, SellAllRequest
 from app.exceptions import ExternalServiceError
 
@@ -76,14 +77,25 @@ class OrderService:
         전량 매도 주문
 
         MRKT_CODE로 국내/해외 판별 후 해당 시장의 place_order_api 호출
-        - 국내/해외 모두 시장가 매도 (unpr=0)
+        - 국내: 시장가 매도 (unpr=0)
+        - 해외: 미국은 시장가 미지원 → 매수1호가 지정가로 매도
         """
         from app.external import kis_api, foreign_api
 
         overseas = is_overseas(request.MRKT_CODE)
+        ord_price = 0.0
+
+        if overseas:
+            quote = await foreign_api.get_best_quote(
+                user_id, request.ST_CODE, self.db, excd=request.MRKT_CODE
+            )
+            if not quote or quote["bid"] <= 0:
+                raise ExternalServiceError("KIS", "전량 매도 실패: 호가 조회 실패")
+            ord_price = normalize_order_price(quote["bid"], is_buy=False)
+
         order = Order.create(
             ord_dv="sell", itm_no=request.ST_CODE, qty=request.QTY,
-            excg_cd=request.MRKT_CODE if overseas else ""
+            unpr=ord_price, excg_cd=request.MRKT_CODE if overseas else ""
         )
 
         if overseas:

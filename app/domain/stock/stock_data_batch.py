@@ -1,7 +1,7 @@
 """
 주식 데이터 배치 작업 - 3년치 데이터 적재
 """
-from datetime import datetime, timedelta
+from datetime import datetime, time as dt_time, timedelta
 from dateutil.relativedelta import relativedelta
 from zoneinfo import ZoneInfo
 import asyncio
@@ -18,44 +18,62 @@ logger = logging.getLogger(__name__)
 
 MAX_ITEMS_PER_REQUEST = 100
 
+# ===== 일봉 확정 시각 (시장 로컬 타임존 기준) =====
+# 정규장 마감(국내 15:30 KST / 미국 16:00 ET) + KIS 일봉 확정 대기 여유
+_SESSION_COMPLETE = {
+    "KR": {"time": dt_time(15, 35), "tz": "Asia/Seoul"},
+    "US": {"time": dt_time(16, 35), "tz": "America/New_York"},
+}
 
-def is_market_open(mrkt_code: str) -> bool:
+# 수집 잡은 확정 시각보다 이만큼 뒤에 돌린다.
+# 같은 시각에 걸어두면 잡이 몇 ms만 일찍 깨도 is_today_incomplete가 True가 되어
+# 전 종목이 스킵되고(재시도 없음) 하루치 OHLCV가 조용히 유실된다.
+COLLECT_JOB_MARGIN_MIN = 5
+
+
+def collect_job_cron(overseas: bool) -> dict:
+    """일별 수집 잡의 cron 인자 (확정 시각 + 여유)
+
+    스케줄러가 이 값을 쓰므로 확정 시각을 바꾸면 잡 시각도 함께 움직인다.
     """
-    해당 시장이 현재 장 운영 중인지 판별한다.
+    config = _SESSION_COMPLETE["US" if overseas else "KR"]
+    fire_at = (
+        datetime.combine(datetime.today(), config["time"])
+        + timedelta(minutes=COLLECT_JOB_MARGIN_MIN)
+    )
+    return {
+        "minute": str(fire_at.minute),
+        "hour": str(fire_at.hour),
+        "timezone": config["tz"],
+    }
 
-    장중이면 True, 장 마감 후이면 False를 반환한다.
-    day_collect_job 실행 시점까지를 장중으로 간주하여
-    미확정 데이터 적재를 방지한다.
+
+def is_today_incomplete(mrkt_code: str) -> bool:
+    """
+    오늘 거래 세션이 아직 완료되지 않았는지 판별한다.
+    완료 전이면 당일 데이터는 미확정(부분봉)이므로 저장하면 안 된다.
+
+    - 주말: 오늘은 거래일 아님 → True (당일 저장 금지, 직전 거래일까지만)
+    - 프리마켓·장중: 세션 미완료 → True (당일 저장 금지)
+    - 정규장 마감 후: 세션 완료 → False (당일 완성봉 저장 가능)
+
+    ※ 기존 is_market_open은 "프리마켓(9:00 ET 이전)"을 "마감 후"와 동일 취급해
+       미완성 당일봉을 적재하는 버그가 있었음. 마감 시각 단일 기준으로 정정.
 
     Args:
         mrkt_code: 시장 코드 ("J"=국내, "NYS/NAS/AMS"=미국)
 
     Returns:
-        True: 장 운영 중 (금일 데이터 적재 불가)
-        False: 장 마감 후 (금일 데이터 적재 가능)
+        True: 오늘 세션 미완료 (당일 저장 금지)
+        False: 오늘 세션 완료 (당일 완성봉 저장 가능)
     """
-    if is_overseas(mrkt_code):
-        us_tz = ZoneInfo("America/New_York")
-        now_et = datetime.now(us_tz)
+    config = _SESSION_COMPLETE["US" if is_overseas(mrkt_code) else "KR"]
+    now = datetime.now(ZoneInfo(config["tz"]))
 
-        if now_et.weekday() >= 5:
-            return False
+    if now.weekday() >= 5:
+        return True
 
-        market_open = now_et.replace(hour=9, minute=0, second=0, microsecond=0)
-        market_close = now_et.replace(hour=16, minute=35, second=0, microsecond=0)
-
-        return market_open <= now_et <= market_close
-    else:
-        kr_tz = ZoneInfo("Asia/Seoul")
-        now_kst = datetime.now(kr_tz)
-
-        if now_kst.weekday() >= 5:
-            return False
-
-        market_open = now_kst.replace(hour=8, minute=0, second=0, microsecond=0)
-        market_close = now_kst.replace(hour=15, minute=35, second=0, microsecond=0)
-
-        return market_open <= now_kst <= market_close
+    return now.time() < config["time"]
 
 
 async def fetch_and_store_3_years_data(user_id: str, mrkt_code: str, st_code: str, stock_data: dict):
@@ -79,12 +97,12 @@ async def fetch_and_store_3_years_data(user_id: str, mrkt_code: str, st_code: st
         # 거래일 경계는 시장 타임존 기준 (미국=ET, 국내=KST) — 서버 로컬 시계에 의존하지 않음
         market_tz = ZoneInfo("America/New_York") if is_overseas(mrkt_code) else ZoneInfo("Asia/Seoul")
         today = datetime.now(market_tz).date()
-        if is_market_open(mrkt_code):
+        if is_today_incomplete(mrkt_code):
             end_date = today - timedelta(days=1)
-            logger.info(f"[{mrkt_code}/{st_code}] 장 운영 중 - 전일({end_date})까지 적재")
+            logger.info(f"[{mrkt_code}/{st_code}] 세션 미완료 - 전일({end_date})까지 적재")
         else:
             end_date = today
-            logger.info(f"[{mrkt_code}/{st_code}] 장 마감 - 금일({end_date})까지 적재")
+            logger.info(f"[{mrkt_code}/{st_code}] 세션 완료 - 금일({end_date})까지 적재")
 
         start_date = end_date - relativedelta(years=3)
         current_date = start_date

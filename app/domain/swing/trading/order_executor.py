@@ -9,7 +9,8 @@ from decimal import Decimal
 from typing import Dict, Any
 
 from app.core.market_code import is_overseas
-from app.core.order import Order
+from app.core.order import Order, ModifyOrder
+from app.core.price import normalize_order_price, round_price, to_price
 from app.external import kis_api, foreign_api
 
 logger = logging.getLogger(__name__)
@@ -25,15 +26,159 @@ class SwingOrderExecutor:
     """
 
     SLIPPAGE_RATIO: float = 0.005  # 사이클당 일거래대금 0.5% 초과 시 분할
+    MAX_PENDING_ATTEMPTS: int = 6  # 체결 미확인 주문 재확인 한도 (초과 시 미체결로 간주)
+
+    @classmethod
+    async def resolve_order_price(
+        cls, user_id: str, st_code: str, mrkt_code: str, is_buy: bool, db
+    ) -> float | None:
+        """해외 지정가 주문 단가 결정 (매수=매도1호가, 매도=매수1호가)
+
+        국내는 시장가(ORD_UNPR 0)로 나가므로 호출하지 않는다.
+        호가 조회 실패 시 None → 호출부는 이번 사이클 주문을 건너뛰고 다음 사이클에
+        신호를 다시 평가한다. (부정확한 단가로 미체결 주문을 남기지 않기 위함)
+        """
+        quote = await foreign_api.get_best_quote(user_id, st_code, db, excd=mrkt_code)
+        if not quote:
+            return None
+
+        price = quote["ask"] if is_buy else quote["bid"]
+        if price <= 0:
+            logger.warning(f"[{st_code}] {'매도' if is_buy else '매수'}호가 없음 (quote={quote})")
+            return None
+
+        return normalize_order_price(price, is_buy=is_buy)
+
+    @classmethod
+    async def place_order(
+        cls, user_id: str, st_code: str, qty: int, is_buy: bool, mrkt_code: str, db
+    ) -> tuple:
+        """국내/해외 주문 전송 (해외=호가 기반 지정가, 국내=시장가)
+
+        Returns:
+            (KIS 응답, 주문단가) — 해외 호가 조회 실패 시 (None, None)
+        """
+        _overseas = is_overseas(mrkt_code)
+        ord_price = 0.0
+
+        if _overseas:
+            ord_price = await cls.resolve_order_price(user_id, st_code, mrkt_code, is_buy, db)
+            if ord_price is None:
+                return None, None
+
+        order = Order.create(
+            ord_dv="buy" if is_buy else "sell", itm_no=st_code, qty=qty,
+            unpr=ord_price, excg_cd=mrkt_code if _overseas else "",
+        )
+
+        if _overseas:
+            return await foreign_api.place_order_api(user_id, order, db), ord_price
+        return await kis_api.place_order_api(user_id, order, db), ord_price
+
+    @classmethod
+    async def cancel_order(
+        cls, user_id: str, order_no: str, st_code: str, mrkt_code: str, db,
+        ord_orgno: str = "",
+    ) -> bool:
+        """미체결 잔량 전부 취소 (RVSE_CNCL_DVSN_CD "02")
+
+        살아있는 주문을 그대로 두면 나중에 체결되어 DB에 없는 포지션이 생기므로,
+        부분 체결 후 잔량이나 추적을 포기하는 주문은 반드시 정리한다.
+        """
+        _overseas = is_overseas(mrkt_code)
+
+        try:
+            cancel = ModifyOrder.create(
+                ord_orgno=ord_orgno,
+                orgn_odno=order_no,
+                # 정정취소는 원주문의 주문구분을 그대로 넣어야 한다
+                # (해외=지정가 "00", 국내=place_order_api가 시장가 "01"로 주문)
+                ord_dvsn="00" if _overseas else "01",
+                rvse_cncl_dvsn_cd="02",  # 취소
+                ord_qty=0,               # 잔량 전부 취소 시 0
+                ord_unpr=0,
+                qty_all_ord_yn="Y",
+                pdno=st_code,
+                excg_cd=mrkt_code if _overseas else "",
+            )
+
+            if _overseas:
+                result = await foreign_api.modify_or_cancel_order_api(user_id, cancel, db)
+            else:
+                result = await kis_api.modify_or_cancel_order_api(user_id, cancel, db)
+
+            if result and result.get("rt_cd") == "0":
+                return True
+
+            logger.warning(
+                f"[{st_code}] 주문 {order_no} 취소 거부: "
+                f"{result.get('msg1', '응답 없음') if result else '응답 없음'}"
+            )
+            return False
+
+        except Exception as e:
+            logger.error(f"[{st_code}] 주문 {order_no} 취소 실패: {e}")
+            return False
+
+    @classmethod
+    async def confirm_and_settle(
+        cls, user_id: str, st_code: str, order_no: str, mrkt_code: str,
+        ord_qty: int, ord_price: float, db,
+        ord_orgno: str = "", max_retries: int = 2,
+    ):
+        """체결 확인 + 부분 체결 시 잔량 취소
+
+        해외는 지정가라 부분 체결이 남을 수 있는데, 잔량 주문을 살려두면 다음 사이클이
+        낸 주문과 함께 체결되어 목표 수량/금액을 초과한다. 확인 직후 잔량을 정리한다.
+
+        취소가 거부되면 그 사이 체결됐을 가능성이 있으므로 한 번 더 확인해 수량을 보정한다.
+
+        Returns:
+            체결 정보 또는 None (미확인)
+        """
+        _overseas = is_overseas(mrkt_code)
+        execution = await _check_execution_with_retry(
+            user_id, order_no, db, max_retries=max_retries,
+            overseas=_overseas, mrkt_code=mrkt_code,
+            ord_qty=ord_qty, ord_price=ord_price,
+        )
+        if not execution:
+            return None
+
+        executed_qty = execution.get("executed_qty", 0)
+        if executed_qty >= ord_qty:
+            return execution
+
+        cancelled = await cls.cancel_order(user_id, order_no, st_code, mrkt_code, db, ord_orgno)
+        if cancelled:
+            logger.info(
+                f"[{st_code}] 부분 체결 {executed_qty}/{ord_qty}주 → 잔량 {ord_qty - executed_qty}주 취소"
+            )
+            return execution
+
+        # 취소 거부 = 잔량이 이미 체결됐을 수 있음 → 재확인해서 체결 수량 갱신
+        logger.warning(f"[{st_code}] 주문 {order_no} 잔량 취소 실패 → 체결 재확인")
+        recheck = await _check_execution_with_retry(
+            user_id, order_no, db, max_retries=1,
+            overseas=_overseas, mrkt_code=mrkt_code,
+            ord_qty=ord_qty, ord_price=ord_price,
+        )
+        if recheck and recheck.get("executed_qty", 0) > executed_qty:
+            logger.info(
+                f"[{st_code}] 재확인 결과 체결 수량 갱신: "
+                f"{executed_qty} → {recheck['executed_qty']}주"
+            )
+            return recheck
+        return execution
 
     @classmethod
     def calculate_avg_entry_price(
         cls,
         prev_qty: int,
-        prev_price: int,
+        prev_price: float,
         new_qty: int,
-        new_price: int
-    ) -> int:
+        new_price: float
+    ) -> float:
         """
         평균 매수 단가 계산 (2차 매수 시)
 
@@ -44,13 +189,14 @@ class SwingOrderExecutor:
             new_price: 추가 매수 단가
 
         Returns:
-            새로운 평균 단가
+            새로운 평균 단가 (ENTRY_PRICE 컬럼 정밀도인 소수점 2자리)
         """
         if prev_qty + new_qty == 0:
             return 0
 
-        total_amount = (prev_qty * prev_price) + (new_qty * new_price)
-        return int(total_amount / (prev_qty + new_qty))
+        total_amount = (Decimal(str(prev_qty)) * Decimal(str(prev_price))
+                        + Decimal(str(new_qty)) * Decimal(str(new_price)))
+        return float(to_price(total_amount / Decimal(prev_qty + new_qty)))
 
     # ========================================
     # 체결 분할 실행 (TWAP)
@@ -68,6 +214,7 @@ class SwingOrderExecutor:
         signal_on_complete: int,
         db=None,
         mrkt_code: str = "",
+        reasons: list = None,
     ) -> Dict[str, Any]:
         """
         분할 매수 시작 (첫 사이클)
@@ -89,27 +236,35 @@ class SwingOrderExecutor:
             return {"success": False, "reason": "매수 수량 부족"}
 
         _overseas = is_overseas(mrkt_code)
-        order = Order.create(ord_dv="buy", itm_no=st_code, qty=qty,
-                             excg_cd=mrkt_code if _overseas else "")
+        result, ord_price = await cls.place_order(user_id, st_code, qty, True, mrkt_code, db)
 
-        if _overseas:
-            result = await foreign_api.place_order_api(user_id, order, db)
-        else:
-            result = await kis_api.place_order_api(user_id, order, db)
+        if ord_price is None:
+            logger.warning(f"[{st_code}] 호가 조회 실패 → 이번 사이클 매수 보류 (다음 사이클 재평가)")
+            return {"success": False, "reason": "호가 조회 실패"}
 
         if not (result and result.get("rt_cd") == "0"):
             error_msg = result.get("msg1", "주문 실패") if result else "응답 없음"
             logger.error(f"[{st_code}] {signal_on_complete}차 매수 주문 실패: {error_msg}")
             return {"success": False, "reason": error_msg}
 
+        fill_price = ord_price or round_price(curr_price)  # 국내 시장가는 주문단가가 없어 현재가 기준
         order_no = result.get("output", {}).get("ODNO")
-        execution = await _check_execution_with_retry(user_id, order_no, db, overseas=_overseas, mrkt_code=mrkt_code)
+        execution = await cls.confirm_and_settle(
+            user_id, st_code, order_no, mrkt_code, qty, fill_price, db,
+            ord_orgno=result.get("output", {}).get("KRX_FWDG_ORD_ORGNO", ""),
+        )
         if not execution:
             logger.warning(f"[{st_code}] 체결 확인 불가 (주문번호: {order_no}), 다음 사이클에서 재확인")
             return {"success": True, "completed": False, "qty": 0, "avg_price": 0,
-                    "order_no": order_no, "unconfirmed": True}
+                    "order_no": order_no, "unconfirmed": True,
+                    "pending_order": {"type": "buy", "order_no": order_no,
+                                      "phase": signal_on_complete, "ord_qty": qty,
+                                      "target_amount": float(target_amount),
+                                      "mrkt_code": mrkt_code, "attempts": 0,
+                                      "ord_price": fill_price,
+                                      "ord_orgno": result.get("output", {}).get("KRX_FWDG_ORD_ORGNO", "")}}
         executed_qty = execution.get("executed_qty", qty)
-        avg_price = execution.get("avg_price", int(curr_price))
+        avg_price = execution.get("avg_price", fill_price)
         executed_amount = float(executed_qty * avg_price)
         remaining_amount = float(target_amount) - executed_amount
 
@@ -123,7 +278,7 @@ class SwingOrderExecutor:
                 trade_type="B",
                 order_result={"qty": executed_qty, "avg_price": avg_price,
                               "order_no": order_no, "amount": executed_amount},
-                reasons=[f"단일매수({signal_on_complete}차)", "100% 완료"]
+                reasons=(reasons or []) + [f"{signal_on_complete}차 매수", "100% 체결"]
             )
 
             logger.info(f"[{st_code}] {signal_on_complete}차 매수 완료 (단일): {executed_qty}주, {avg_price:,}원")
@@ -140,6 +295,18 @@ class SwingOrderExecutor:
         # Redis 저장을 caller에 위임 (DB commit 후 저장하도록)
 
         progress_pct = executed_amount / float(target_amount) * 100
+
+        # 첫 chunk도 실제 체결이므로 기록한다 (이후 chunk는 continue_partial_execution이 기록)
+        from app.domain.trade_history import TradeHistoryService
+        trade_service = TradeHistoryService(db)
+        await trade_service.record_trade(
+            swing_id=swing_id,
+            trade_type="B",
+            order_result={"qty": executed_qty, "avg_price": avg_price,
+                          "order_no": order_no, "amount": executed_amount},
+            reasons=(reasons or []) + [f"{signal_on_complete}차 매수", f"{progress_pct:.0f}% 체결"]
+        )
+
         logger.info(
             f"[{st_code}] {signal_on_complete}차 분할 매수 시작: "
             f"첫 {executed_qty}주 ({progress_pct:.1f}%), 나머지 분할 진행 예정"
@@ -160,12 +327,16 @@ class SwingOrderExecutor:
         signal_on_complete: int,
         db=None,
         mrkt_code: str = "",
+        reasons: list = None,
     ) -> Dict[str, Any]:
         """
         분할 매도 시작 (첫 사이클)
 
+        체결 이력(TRADE_HISTORY) 저장은 여기서만 한다 — 체결 수량/단가를 아는 유일한 지점이라
+        호출부가 따로 기록하면 같은 체결이 두 번 저장된다. 매매 사유는 reasons로 받는다.
+
         Returns:
-            success, completed, qty, phase
+            success, completed, qty, avg_price, amount, phase
         """
         if target_qty <= 0:
             return {"success": False, "reason": "매도 수량 부족"}
@@ -178,31 +349,38 @@ class SwingOrderExecutor:
         order_qty = target_qty if target_qty <= per_cycle_qty else per_cycle_qty
 
         _overseas = is_overseas(mrkt_code)
-        order = Order.create(ord_dv="sell", itm_no=st_code, qty=order_qty,
-                             excg_cd=mrkt_code if _overseas else "")
+        result, ord_price = await cls.place_order(user_id, st_code, order_qty, False, mrkt_code, db)
 
-        if _overseas:
-            result = await foreign_api.place_order_api(user_id, order, db)
-        else:
-            result = await kis_api.place_order_api(user_id, order, db)
+        if ord_price is None:
+            logger.warning(f"[{st_code}] 호가 조회 실패 → 이번 사이클 매도 보류 (다음 사이클 재평가)")
+            return {"success": False, "reason": "호가 조회 실패"}
 
         if not (result and result.get("rt_cd") == "0"):
             error_msg = result.get("msg1", "주문 실패") if result else "응답 없음"
             logger.error(f"[{st_code}] {signal_on_complete}차 매도 주문 실패: {error_msg}")
             return {"success": False, "reason": error_msg}
 
+        fill_price = ord_price or round_price(curr_price)
         order_no = result.get("output", {}).get("ODNO")
-        execution = await _check_execution_with_retry(user_id, order_no, db, overseas=_overseas, mrkt_code=mrkt_code)
+        execution = await cls.confirm_and_settle(
+            user_id, st_code, order_no, mrkt_code, order_qty, fill_price, db,
+            ord_orgno=result.get("output", {}).get("KRX_FWDG_ORD_ORGNO", ""),
+        )
         if not execution:
             logger.warning(f"[{st_code}] 체결 확인 불가 (주문번호: {order_no}), 다음 사이클에서 재확인")
             return {"success": True, "completed": False, "qty": 0, "avg_price": 0,
-                    "order_no": order_no, "unconfirmed": True}
+                    "order_no": order_no, "unconfirmed": True,
+                    "pending_order": {"type": "sell", "order_no": order_no,
+                                      "phase": signal_on_complete, "ord_qty": order_qty,
+                                      "target_qty": target_qty,
+                                      "mrkt_code": mrkt_code, "attempts": 0,
+                                      "ord_price": fill_price,
+                                      "ord_orgno": result.get("output", {}).get("KRX_FWDG_ORD_ORGNO", "")}}
         actual_qty = execution.get("executed_qty", order_qty)
+        avg_sell_price = execution.get("avg_price", fill_price)
 
         # 단일 주문으로 완료
         if actual_qty >= target_qty:
-            avg_sell_price = execution.get("avg_price", int(curr_price))
-
             # 거래 내역 DB 저장
             from app.domain.trade_history import TradeHistoryService
             trade_service = TradeHistoryService(db)
@@ -211,11 +389,14 @@ class SwingOrderExecutor:
                 trade_type="S",
                 order_result={"qty": actual_qty, "avg_price": avg_sell_price,
                               "order_no": order_no, "amount": actual_qty * avg_sell_price},
-                reasons=[f"단일매도({signal_on_complete}차)", "100% 완료"]
+                reasons=(reasons or []) + [f"{signal_on_complete}차 매도", "100% 체결"]
             )
 
-            logger.info(f"[{st_code}] {signal_on_complete}차 매도 완료 (단일): {actual_qty}주")
-            return {"success": True, "completed": True, "qty": actual_qty, "phase": signal_on_complete}
+            logger.info(f"[{st_code}] {signal_on_complete}차 매도 완료 (단일): {actual_qty}주 @ {avg_sell_price}")
+            # 호출부가 CUR_AMOUNT를 가산할 때 체결가를 쓰도록 매수와 같은 형태로 반환한다
+            return {"success": True, "completed": True, "qty": actual_qty,
+                    "avg_price": avg_sell_price, "amount": float(actual_qty * avg_sell_price),
+                    "phase": signal_on_complete}
 
         # 분할 진행 상태 (Redis 저장을 caller에 위임)
         partial_state = {
@@ -227,12 +408,24 @@ class SwingOrderExecutor:
         # Redis 저장을 caller에 위임
 
         progress_pct = actual_qty / target_qty * 100
+
+        from app.domain.trade_history import TradeHistoryService
+        trade_service = TradeHistoryService(db)
+        await trade_service.record_trade(
+            swing_id=swing_id,
+            trade_type="S",
+            order_result={"qty": actual_qty, "avg_price": avg_sell_price,
+                          "order_no": order_no, "amount": float(actual_qty * avg_sell_price)},
+            reasons=(reasons or []) + [f"{signal_on_complete}차 매도", f"{progress_pct:.0f}% 체결"]
+        )
+
         logger.info(
             f"[{st_code}] {signal_on_complete}차 분할 매도 시작: "
             f"첫 {actual_qty}주 ({progress_pct:.1f}%), 나머지 분할 진행 예정"
         )
-        return {"success": True, "completed": False, "qty": actual_qty, "phase": signal_on_complete,
-                "partial_state": partial_state}
+        return {"success": True, "completed": False, "qty": actual_qty,
+                "avg_price": avg_sell_price, "amount": float(actual_qty * avg_sell_price),
+                "phase": signal_on_complete, "partial_state": partial_state}
 
     @classmethod
     async def continue_partial_execution(
@@ -303,26 +496,36 @@ class SwingOrderExecutor:
                         "clear_partial": True}
 
             _overseas = is_overseas(mrkt_code)
-            order = Order.create(ord_dv="buy", itm_no=st_code, qty=order_qty,
-                                 excg_cd=mrkt_code if _overseas else "")
-            if _overseas:
-                result = await foreign_api.place_order_api(user_id, order, db)
-            else:
-                result = await kis_api.place_order_api(user_id, order, db)
+            result, ord_price = await cls.place_order(user_id, st_code, order_qty, True, mrkt_code, db)
+
+            if ord_price is None:
+                logger.warning(f"[{st_code}] 호가 조회 실패 → 이번 사이클 분할 매수 chunk 보류")
+                return {"completed": False, "aborted": False, "signal_on_complete": state["phase"],
+                        "entry_price": current_entry_price, "hold_qty": current_hold_qty}
 
             if not (result and result.get("rt_cd") == "0"):
                 logger.error(f"[{st_code}] 분할 매수 chunk 주문 실패")
                 return {"completed": False, "aborted": False, "signal_on_complete": state["phase"],
                         "entry_price": current_entry_price, "hold_qty": current_hold_qty}
 
+            fill_price = ord_price or round_price(curr_price)
             order_no = result.get("output", {}).get("ODNO")
-            execution = await _check_execution_with_retry(user_id, order_no, db, overseas=_overseas, mrkt_code=mrkt_code)
+            execution = await cls.confirm_and_settle(
+                user_id, st_code, order_no, mrkt_code, order_qty, fill_price, db,
+                ord_orgno=result.get("output", {}).get("KRX_FWDG_ORD_ORGNO", ""),
+            )
             if not execution:
                 logger.warning(f"[{st_code}] 체결 확인 불가 (주문번호: {order_no}), 다음 사이클에서 재확인")
-                return {"success": True, "completed": False, "qty": 0, "avg_price": 0,
-                        "order_no": order_no, "unconfirmed": True}
+                return {"completed": False, "aborted": False, "signal_on_complete": state["phase"],
+                        "entry_price": current_entry_price, "hold_qty": current_hold_qty,
+                        "pending_order": {"type": "buy", "order_no": order_no,
+                                          "phase": state["phase"], "ord_qty": order_qty,
+                                          "target_amount": target_amount,
+                                          "mrkt_code": mrkt_code, "attempts": 0,
+                                      "ord_price": fill_price,
+                                      "ord_orgno": result.get("output", {}).get("KRX_FWDG_ORD_ORGNO", "")}}
             executed_qty = execution.get("executed_qty", order_qty)
-            avg_price = execution.get("avg_price", int(curr_price))
+            avg_price = execution.get("avg_price", fill_price)
 
             chunk_amount = float(executed_qty * avg_price)
             new_executed_amount = executed_amount + chunk_amount
@@ -377,26 +580,36 @@ class SwingOrderExecutor:
             order_qty = min(remaining_qty, per_cycle_qty)
 
             _overseas = is_overseas(mrkt_code)
-            order = Order.create(ord_dv="sell", itm_no=st_code, qty=order_qty,
-                                 excg_cd=mrkt_code if _overseas else "")
-            if _overseas:
-                result = await foreign_api.place_order_api(user_id, order, db)
-            else:
-                result = await kis_api.place_order_api(user_id, order, db)
+            result, ord_price = await cls.place_order(user_id, st_code, order_qty, False, mrkt_code, db)
+
+            if ord_price is None:
+                logger.warning(f"[{st_code}] 호가 조회 실패 → 이번 사이클 분할 매도 chunk 보류")
+                return {"completed": False, "aborted": False, "signal_on_complete": state["phase"],
+                        "entry_price": current_entry_price, "hold_qty": current_hold_qty}
 
             if not (result and result.get("rt_cd") == "0"):
                 logger.error(f"[{st_code}] 분할 매도 chunk 주문 실패")
                 return {"completed": False, "aborted": False, "signal_on_complete": state["phase"],
                         "entry_price": current_entry_price, "hold_qty": current_hold_qty}
 
+            fill_price = ord_price or round_price(curr_price)
             order_no = result.get("output", {}).get("ODNO")
-            execution = await _check_execution_with_retry(user_id, order_no, db, overseas=_overseas, mrkt_code=mrkt_code)
+            execution = await cls.confirm_and_settle(
+                user_id, st_code, order_no, mrkt_code, order_qty, fill_price, db,
+                ord_orgno=result.get("output", {}).get("KRX_FWDG_ORD_ORGNO", ""),
+            )
             if not execution:
                 logger.warning(f"[{st_code}] 체결 확인 불가 (주문번호: {order_no}), 다음 사이클에서 재확인")
-                return {"success": True, "completed": False, "qty": 0, "avg_price": 0,
-                        "order_no": order_no, "unconfirmed": True}
+                return {"completed": False, "aborted": False, "signal_on_complete": state["phase"],
+                        "entry_price": current_entry_price, "hold_qty": current_hold_qty,
+                        "pending_order": {"type": "sell", "order_no": order_no,
+                                          "phase": state["phase"], "ord_qty": order_qty,
+                                          "target_qty": target_qty,
+                                          "mrkt_code": mrkt_code, "attempts": 0,
+                                      "ord_price": fill_price,
+                                      "ord_orgno": result.get("output", {}).get("KRX_FWDG_ORD_ORGNO", "")}}
             actual_qty = execution.get("executed_qty", order_qty)
-            avg_sell_price = execution.get("avg_price", int(curr_price))
+            avg_sell_price = execution.get("avg_price", fill_price)
 
             new_executed_qty = executed_qty_so_far + actual_qty
             new_hold_qty = current_hold_qty - actual_qty
@@ -432,19 +645,161 @@ class SwingOrderExecutor:
         return {"completed": True, "aborted": False, "signal_on_complete": None,
                 "entry_price": current_entry_price, "hold_qty": current_hold_qty}
 
+    @classmethod
+    async def resolve_pending_order(
+        cls,
+        pending: Dict[str, Any],
+        partial_state: Dict[str, Any] | None,
+        swing_id: int,
+        user_id: str,
+        st_code: str,
+        current_price: Decimal,
+        current_entry_price: int,
+        current_hold_qty: int,
+        db,
+    ) -> Dict[str, Any]:
+        """체결 미확인 주문 재확인 (다음 사이클에서 호출)
+
+        주문은 이미 나갔지만 체결 확인에 실패한 건을 주문번호로 재조회한다.
+        확인 전까지는 신규 주문을 내지 않으므로 중복 주문이 발생하지 않는다.
+
+        반환 형태는 continue_partial_execution과 동일 (호출부 후처리 공용):
+        - pending_state 존재: 아직 미확인 → 다음 사이클에 재확인
+        - pending_state 없음: 확인 완료 또는 포기 → pending 키 삭제
+        """
+        from app.domain.trade_history import TradeHistoryService
+
+        order_no = pending.get("order_no")
+        mrkt_code = pending.get("mrkt_code", "")
+        _overseas = is_overseas(mrkt_code)
+        curr_price = float(current_price)
+        unchanged = {"completed": False, "aborted": False, "signal_on_complete": None,
+                     "entry_price": current_entry_price, "hold_qty": current_hold_qty}
+
+        ord_qty = pending.get("ord_qty", 0)
+        ord_orgno = pending.get("ord_orgno", "")
+        # 주문이 실제로 나간 단가 — 재확인은 몇 사이클 뒤라 그 시점 현재가를 쓰면
+        # 체결가가 실제와 크게 어긋난다 (ENTRY_PRICE·손절 기준으로 이어짐)
+        ord_price = float(pending.get("ord_price") or round_price(curr_price))
+        execution = await cls.confirm_and_settle(
+            user_id, st_code, order_no, mrkt_code, ord_qty,
+            ord_price, db, ord_orgno=ord_orgno, max_retries=1,
+        )
+
+        # ── 여전히 확인 불가 ──
+        if not execution or execution.get("executed_qty", 0) <= 0:
+            attempts = pending.get("attempts", 0) + 1
+            if attempts >= cls.MAX_PENDING_ATTEMPTS:
+                # 방치하면 몇 시간 뒤 체결돼 DB에 없는 포지션이 생기므로 잔량을 취소한다
+                cancelled = await cls.cancel_order(
+                    user_id, order_no, st_code, mrkt_code, db, ord_orgno
+                )
+                logger.warning(
+                    f"[{st_code}] 주문 {order_no} 체결 확인 {attempts}회 실패 → "
+                    f"잔량 취소 {'성공' if cancelled else '실패'}, 추적 종료"
+                    + ("" if cancelled else " (수동 확인 필요)")
+                )
+                return unchanged  # pending_state 없음 → 키 삭제
+            pending["attempts"] = attempts
+            logger.warning(f"[{st_code}] 주문 {order_no} 체결 미확인 ({attempts}/{cls.MAX_PENDING_ATTEMPTS}), 다음 사이클 재확인")
+            return {**unchanged, "pending_state": pending}
+
+        # ── 체결 확인됨 → 이력/상태 반영 ──
+        executed_qty = execution["executed_qty"]
+        avg_price = execution.get("avg_price") or ord_price
+        chunk_amount = float(executed_qty * avg_price)
+        phase = pending.get("phase")
+        exec_type = pending.get("type")
+        trade_service = TradeHistoryService(db)
+
+        if exec_type == "buy":
+            target_amount = float(pending.get("target_amount", 0))
+            executed_before = float((partial_state or {}).get("executed_amount", 0))
+            new_executed_amount = executed_before + chunk_amount
+
+            new_entry_price = cls.calculate_avg_entry_price(
+                prev_qty=current_hold_qty, prev_price=current_entry_price,
+                new_qty=executed_qty, new_price=avg_price
+            )
+            new_hold_qty = current_hold_qty + executed_qty
+
+            await trade_service.record_trade(
+                swing_id=swing_id,
+                trade_type="B",
+                order_result={"qty": executed_qty, "avg_price": avg_price,
+                              "order_no": order_no, "amount": chunk_amount},
+                reasons=[f"매수({phase}차)", "지연 체결 확인"]
+            )
+            logger.info(f"[{st_code}] 미확인 주문 {order_no} 체결 확인: 매수 {executed_qty}주 @ {avg_price}")
+
+            base = {"aborted": False, "signal_on_complete": phase,
+                    "entry_price": new_entry_price, "hold_qty": new_hold_qty,
+                    "chunk_amount": chunk_amount, "exec_type": "buy"}
+
+            if target_amount - new_executed_amount < curr_price:
+                return {**base, "completed": True, "clear_partial": True}
+            return {**base, "completed": False,
+                    "partial_state": {"type": "buy", "phase": phase,
+                                      "target_amount": target_amount,
+                                      "executed_amount": new_executed_amount}}
+
+        # ── 매도 ──
+        target_qty = int(pending.get("target_qty", 0))
+        executed_before = int((partial_state or {}).get("executed_qty", 0))
+        new_executed_qty = executed_before + executed_qty
+        new_hold_qty = max(0, current_hold_qty - executed_qty)
+
+        await trade_service.record_trade(
+            swing_id=swing_id,
+            trade_type="S",
+            order_result={"qty": executed_qty, "avg_price": avg_price,
+                          "order_no": order_no, "amount": chunk_amount},
+            reasons=[f"매도({phase}차)", "지연 체결 확인"]
+        )
+        logger.info(f"[{st_code}] 미확인 주문 {order_no} 체결 확인: 매도 {executed_qty}주 @ {avg_price}")
+
+        base = {"aborted": False, "signal_on_complete": phase,
+                "hold_qty": new_hold_qty,
+                "chunk_amount": chunk_amount, "exec_type": "sell"}
+
+        if new_executed_qty >= target_qty:
+            return {**base, "completed": True, "clear_partial": True,
+                    "entry_price": current_entry_price if new_hold_qty > 0 else 0}
+        return {**base, "completed": False, "entry_price": current_entry_price,
+                "partial_state": {"type": "sell", "phase": phase,
+                                  "target_qty": target_qty,
+                                  "executed_qty": new_executed_qty}}
+
 
 async def _check_execution_with_retry(
     user_id: str, order_no: str, db,
     max_retries: int = 2, delay: float = 1.0,
     overseas: bool = False, mrkt_code: str = "",
+    ord_qty: int = 0, ord_price: float = 0.0,
 ):
-    """체결 확인 재시도 (국내: 1초 간격, 해외: 2초 간격)"""
+    """체결 확인 재시도 (국내: 1초 간격, 해외: 2초 간격)
+
+    해외는 주문체결내역(TTTS3035R/VTTS3035R)으로 확인한다. 모의 계정이 이 TR을
+    지원하지 않아 조회 자체가 불가한 경우(UNSUPPORTED)에만, 확인을 포기하고
+    '주문 수량 전량이 주문 단가에 체결됐다'고 가정한 결과를 반환한다.
+    """
     _delay = 2.0 if overseas else delay
     for attempt in range(max_retries):
         if overseas:
             execution = await foreign_api.check_order_execution(
                 user_id, order_no, db, excg_cd=mrkt_code
             )
+            if execution is foreign_api.UNSUPPORTED:
+                logger.warning(
+                    f"[체결확인] 해외 체결 조회 미지원 — 전량 체결 가정 "
+                    f"(주문 {order_no}, {ord_qty}주 @ {ord_price})"
+                )
+                return {
+                    "order_no": order_no,
+                    "executed_qty": ord_qty,
+                    "avg_price": ord_price,
+                    "simulated": True,
+                }
         else:
             execution = await kis_api.check_order_execution(user_id, order_no, db)
         if execution and execution.get("executed_qty", 0) > 0:

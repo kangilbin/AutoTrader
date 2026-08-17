@@ -75,10 +75,40 @@ open htmlcov/index.html
 ```
 tests/
 ├── __init__.py
-├── conftest.py          # pytest fixtures
-├── test_email.py        # 이메일 서비스 테스트
-└── README.md            # 이 파일
+├── conftest.py                    # pytest fixtures
+├── test_email.py                  # 이메일 서비스 테스트 (pytest 필요)
+├── test_swing_entity.py           # SwingTrade SIGNAL 상태머신 (unittest)
+├── test_price_adjustment_batch.py # 수정주가 재적재 (unittest)
+├── test_swing_trade_scenarios.py  # 스윙 매매 시나리오 통합 (unittest)
+└── README.md                      # 이 파일
 ```
+
+### test_swing_trade_scenarios.py
+
+매수/매도 전 흐름을 사이클 단위로 실행해 검증합니다. 실제 엔티티(`SwingTrade`)와
+실제 전략(`SingleEMAStrategy`)을 그대로 쓰고 DB/Redis/KIS API만 대체하므로,
+매매 로직을 수정한 뒤 이 파일을 돌리면 회귀를 바로 잡을 수 있습니다.
+
+```bash
+PYTHONPATH=. python -m unittest tests.test_swing_trade_scenarios -v
+```
+
+검증 항목:
+
+| 시나리오 | 확인 내용 |
+|---|---|
+| 매수 단일 체결 | SIGNAL 0→1, 보유수량/평단가/PEAK, 가용금액 차감, 이력 1건 |
+| 매수 주문 단가 | 해외는 매도1호가(ask) 지정가로 전송 |
+| 손절 전량 매도 | SIGNAL→3, 평단가 초기화, 매도 대금이 **체결가** 기준으로 가산 |
+| 1차/2차 익절 | SIGNAL 1→2→3, 절반 매도, 1차 후 평단가 유지(본전방어) |
+| 쿨다운 | SIGNAL 3→4→0 |
+| 분할 매수(TWAP) | 첫 chunk 이력 저장, 보유수량=주문합계, 가용금액 정합 |
+| 부분 체결 | 잔량 취소 1회, 체결분만 반영 |
+| 분할 중 급락 | 1사이클 매수 중단 → 다음 사이클 손절 (의도된 동작) |
+| 장 시간 가드 | 정규장 밖에는 주문 없음 |
+
+> **중요**: TRADE_HISTORY 저장은 `order_executor` 한 곳에서만 이뤄져야 합니다.
+> 배치가 중복 저장하면 실현손익이 왜곡되므로 이력 **건수**까지 검증합니다.
 
 ## 테스트 케이스 설명
 

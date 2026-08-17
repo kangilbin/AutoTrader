@@ -6,6 +6,7 @@ import logging
 from typing import Dict, Optional
 from decimal import Decimal
 from datetime import datetime
+from app.domain.swing.indicators import TechnicalIndicators
 from .base_trading_strategy import TradingStrategy
 from .base_single_ema import BaseSingleEMAStrategy
 from app.domain.swing.indicators import TechnicalIndicators
@@ -29,6 +30,22 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
     # ========================================
     # 지표 계산 및 유틸리티
     # ========================================
+
+    # 없으면 어떤 판단도 불가한 지표 (실시간 EMA/ATR/ADX/OBV 증분 계산의 입력)
+    REQUIRED_CACHE_KEYS = (
+        'ema20', 'adx', 'plus_dm14', 'minus_dm14', 'atr',
+        'obv', 'obv_recent_diffs', 'close', 'high', 'low',
+    )
+
+    # 없으면 해당 기능만 비활성되는 지표 (손절/익절 평가에는 불필요)
+    OPTIONAL_CACHE_DEFAULTS = {
+        'obv_ema': None,           # accum 실시간 증분 기준 — 없으면 매수 게이트만 불능
+        'avg_vol20': None,         # accum 정규화 (20일 평균거래량)
+        'obv_z': 0.0,
+        'open': 0.0,               # 전일 윗꼬리 필터 (0이면 필터 미적용)
+        'date': None,
+        'avg_daily_amount': 0.0,   # TWAP 분할 기준 (0이면 단일 주문)
+    }
 
     @classmethod
     async def get_cached_indicators(cls, redis_client, symbol: str) -> Optional[Dict]:
@@ -55,28 +72,41 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
             cached = await redis_client.get(f"indicators:{symbol}")
             if not cached:
                 return None
-
             data = json.loads(cached)
-            # 평탄화된 구조 그대로 반환
-            return {
-                'ema20': data['ema20'],
-                'adx': data['adx'],
-                'plus_dm14': data['plus_dm14'],    # 중간값
-                'minus_dm14': data['minus_dm14'],  # 중간값
-                'atr': data['atr'],
-                'obv': data['obv'],
-                'obv_z': data['obv_z'],
-                'obv_recent_diffs': data['obv_recent_diffs'],
-                'close': data['close'],
-                'open': data['open'],
-                'high': data['high'],
-                'low': data['low'],
-                'date': data['date'],
-                'avg_daily_amount': data['avg_daily_amount'],
-            }
         except Exception as e:
             logger.warning(f"[{symbol}] 캐시 조회 실패: {e}")
             return None
+
+        # 필수 지표가 하나라도 없으면 손절 판단조차 불가 → 이번 사이클 포기
+        missing_required = [k for k in cls.REQUIRED_CACHE_KEYS if data.get(k) is None]
+        if missing_required:
+            logger.error(
+                f"[{symbol}] 캐시 필수 지표 누락 {missing_required} → 판단 불가. "
+                f"지표 캐시 재생성(warmup) 필요"
+            )
+            return None
+
+        indicators = {k: data[k] for k in cls.REQUIRED_CACHE_KEYS}
+
+        # 선택 지표는 없어도 해당 게이트만 비활성 — 매도/손절은 계속 동작해야 한다
+        # (구버전 캐시가 남아 있어도 포지션이 무방비가 되지 않도록)
+        missing_optional = [k for k in cls.OPTIONAL_CACHE_DEFAULTS if data.get(k) is None]
+        if missing_optional:
+            logger.warning(
+                f"[{symbol}] 캐시 선택 지표 누락 {missing_optional} → 해당 게이트만 비활성 "
+                f"(매도·손절은 정상 평가)"
+            )
+        for key, default in cls.OPTIONAL_CACHE_DEFAULTS.items():
+            value = data.get(key)
+            indicators[key] = default if value is None else value
+
+        # 완성봉 기준 수급 축적도 (백테스트 _check_entry_conditions와 동일 정의)
+        # 매수 게이트는 실시간 accum을 쓰고, 이 값은 두 정의의 차이를 관측하기 위한 비교용이다
+        indicators['accum'] = TechnicalIndicators.calculate_accum(
+            indicators['obv'], indicators['obv_ema'], indicators['avg_vol20']
+        )
+
+        return indicators
 
     @classmethod
     async def get_realtime_ema20(
@@ -255,7 +285,11 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
             realtime_minus_di = cached_indicators['realtime_minus_di']
             realtime_adx = cached_indicators['realtime_adx']
             realtime_ema20 = cached_indicators['realtime_ema20']
-            realtime_obv_z = cached_indicators['realtime_obv_z']
+            # 중장기 수급 축적도 — 당일 거래량까지 증분 반영한 실시간 값을 사용한다.
+            # (5분 사이클로 당일 수급 변화에 바로 반응하기 위함)
+            # 캐시에 obv_ema/avg_vol20이 없으면 None(판단 불가)
+            accum = cached_indicators.get('realtime_accum')
+            accum_eod = cached_indicators.get('accum')  # 전일 완성봉 기준 (비교·로그용)
 
         except Exception as e:
             logger.error(f"[{symbol}] 매수 신호 지표 계산 실패: {e}", exc_info=True)
@@ -293,7 +327,7 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
             await redis_client.setex(f"entry:{swing_id}", cls.ENTRY_STATE_TTL, json.dumps(new_state))
             return None
 
-        # === 추세 추종 EMA 돌파 진입 ===9
+        # === 추세 추종 EMA 돌파 진입 ===
         current_signal = False
         if yesterday_ema20 is not None:
             price_above_ema = curr_price > realtime_ema20 # 현재가 주가가 EMA20 보다 높을 때
@@ -302,13 +336,23 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
             if price_above_ema and within_gap_limit:
                 trend_direction = realtime_plus_di > realtime_minus_di
                 adx_sufficient = realtime_adx > cls.BREAKOUT_ENTRY_ADX_MIN  # 최소 추세 강도
-                obv_positive = realtime_obv_z > cls.BREAKOUT_ENTRY_OBV_MIN
-                # 14일 z-score 잔향으로 떨어지는 수급에서 매수되는 현상 차단
-                # 길이 부족(NaN) 또는 누락(None) 시 모두 매수 차단 (안전 fail)
-                realtime_obv_short_diff = cached_indicators.get('realtime_obv_short_diff')
-                obv_short_rising = pd.notna(realtime_obv_short_diff) and realtime_obv_short_diff > 0
 
-                current_signal = trend_direction and adx_sufficient and obv_positive and obv_short_rising
+                # 중장기(스윙) 수급 축적 게이트
+                if accum is None:
+                    # 판단 불가 → 매수는 보류(fail-closed). 매도/손절은 이 값을 쓰지 않는다
+                    obv_ok = False
+                    logger.warning(f"[{symbol}] 수급 축적도 계산 불가 → 매수 보류 (지표 캐시 확인 필요)")
+                else:
+                    obv_ok = accum > cls.ACCUM_HIGH  # 수급이 자기 평균 위로 충분히 쌓였을 때만
+                    # 실시간 accum은 당일 거래량이 쌓일수록 커진다. 백테스트가 튜닝된
+                    # 완성봉 값(accum_eod)과 함께 남겨, 임계값 재산정 시 근거로 쓴다
+                    if accum_eod is not None and (accum > cls.ACCUM_HIGH) != (accum_eod > cls.ACCUM_HIGH):
+                        logger.info(
+                            f"[{symbol}] accum 판정 불일치: 실시간={accum:.2f}(사용) "
+                            f"vs 완성봉={accum_eod:.2f} (임계값 {cls.ACCUM_HIGH})"
+                        )
+
+                current_signal = trend_direction and adx_sufficient and obv_ok
 
         # 연속성 체크 (Redis, swing_id별 분리)
         prev_state_key = f"entry:{swing_id}"
@@ -344,118 +388,86 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
         frgn_ntby_qty: int,
         acml_vol: int,
         cached_indicators: Dict,
-        signal: int = 1
+        signal: int = 1,
+        peak_price: float = 0,
     ) -> Dict:
-        """
-        손절 신호 체크 — SIGNAL 2에서는 본전 방어 적용
-        """
-        result = await cls.check_immediate_sell_signal(
-            redis_client, symbol, current_price, cached_indicators,
-            entry_price=int(entry_price), signal=signal
-        )
-        return result if result else {"action": "HOLD", "reasons": []}
+        """청산 판정 — 단일 청산선(3단계)
 
-    # ========================================
-    # 매도 신호 로직
-    # ========================================
+        손절/1차 익절/2차 익절을 하나의 청산선으로 통합했다.
+        청산선은 이익이 쌓일수록 올라가므로, 이탈 시점의 가격이 곧 확정 손익이다.
 
-    @classmethod
-    async def check_immediate_sell_signal(
-        cls,
-        redis_client,
-        symbol: str,
-        current_price: Decimal,
-        cached_indicators: Dict,
-        entry_price: int = 0,
-        signal: int = 1
-    ) -> Optional[Dict]:
-        """
-        [손절] 장중 즉시 매도 신호 체크 (백테스트와 동일: 매수가 기준)
-
-        - SIGNAL 1: max(매수가 - ATR×2.0, 매수가 × (1 - MAX_STOP_LOSS_PCT))
-        - SIGNAL 2: 본전 방어 — 위 손절가와 평단가 중 더 높은 값
+        Returns:
+            {"action": "SELL"|"HOLD", "reasons": [...]}
         """
         curr_price = float(current_price)
+        entry = float(entry_price) if entry_price else 0
+        # 청산선 폭은 **완성봉 ATR**로 잰다. 실시간 증분 ATR을 쓰면 장 초반에 값이 작아
+        # 청산선이 타이트해져 조기 청산되고, 같은 날에도 평가 시각마다 청산선이 달라진다.
+        # (백테스트도 완성봉 ATR을 쓰므로 정의가 일치한다)
+        atr = cached_indicators.get('atr', 0) or 0
 
-        realtime_atr = cached_indicators['realtime_atr']
-
-        if realtime_atr <= 0:
-            logger.warning(f"[{symbol}] ATR이 0 이하, 손절 체크 스킵")
+        if entry <= 0:
+            logger.warning(f"[{symbol}] ENTRY_PRICE 없음, 청산 체크 스킵")
             return {"action": "HOLD", "reasons": []}
 
-        if entry_price <= 0:
-            logger.warning(f"[{symbol}] ENTRY_PRICE 없음, 손절 체크 스킵")
+        if atr <= 0:
+            logger.warning(f"[{symbol}] ATR이 0 이하, 청산 체크 스킵")
             return {"action": "HOLD", "reasons": []}
 
-        # 백테스트와 동일: 매수가 기준 ATR×N 손절, MAX_STOP_LOSS_PCT 하한 cap
-        atr_stop = entry_price - realtime_atr * cls.ATR_MULTIPLIER
-        max_stop = entry_price * (1 - cls.MAX_STOP_LOSS_PCT / 100)
-        stop_loss = max(atr_stop, max_stop)
+        # 장중 고가가 PEAK에 아직 반영되지 않았을 수 있으므로 현재가도 후보에 넣는다
+        peak = max(peak_price or 0, entry, curr_price)
+        exit_line = cls.calculate_exit_line(entry, peak, atr)
 
-        # SIGNAL 2 (1차 익절 후): 본전 방어 — 손절 하한을 평단가로 올림
-        if signal == 2:
-            stop_loss = max(stop_loss, entry_price)
-
-        if curr_price <= stop_loss:
-            reason_prefix = "손절" if signal == 1 else "손절(본전방어)"
-            logger.warning(f"[{symbol}] 🚨 {reason_prefix}: 현재가≤{stop_loss:,.0f}")
+        if curr_price <= exit_line:
+            gain_pct = (curr_price - entry) / entry * 100
+            peak_gain = (peak - entry) / entry * 100
+            if peak_gain >= cls.TRAILING_ACTIVATE_PCT:
+                stage = "이익확정"
+            elif peak_gain >= cls.BREAKEVEN_ACTIVATE_PCT:
+                stage = "본전방어"
+            else:
+                stage = "손절"
+            logger.warning(
+                f"[{symbol}] 🚨 청산({stage}): 현재가 {curr_price:,.2f} ≤ 청산선 {exit_line:,.2f} "
+                f"(평단 {entry:,.2f}, 고점 {peak:,.2f}, 손익 {gain_pct:+.1f}%)"
+            )
             return {
                 "action": "SELL",
-                "reasons": [reason_prefix, f"손절가: {stop_loss:,.0f}원"]
+                "reasons": [stage, f"청산선 {exit_line:,.2f}", f"손익 {gain_pct:+.1f}%"],
             }
 
         return {"action": "HOLD", "reasons": []}
 
     @classmethod
-    async def check_trailing_stop_signal(
+    async def check_partial_take_profit(
         cls,
         symbol: str,
         current_price: Decimal,
-        peak_price: int,
+        entry_price: Decimal,
         signal: int,
-        cached_indicators: Dict
     ) -> Optional[Dict]:
+        """부분 익절 — 목표 수익률 도달 시 절반 확정 (SIGNAL 1에서만, 1회)
+
+        PARTIAL_TAKE_PROFIT_PCT <= 0 이면 비활성.
         """
-        장중 trailing stop 익절 신호 체크 (2단계)
-
-        SIGNAL 1: 고점 - ATR×2.0 → SELL_HALF (50% 매도)
-        SIGNAL 2: 고점 - ATR×2.0 AND OBV-Z < -0.5 → SELL_ALL (잔량 전량)
-                  OBV 양호 시 → 추세 추적 계속 (매도 안 함)
-        """
-        curr_price = int(current_price)
-
-        if peak_price <= 0:
-            return None
-        updated_peak = max(peak_price or 0, curr_price)
-
-        if updated_peak <= 0:
+        if signal != 1 or cls.PARTIAL_TAKE_PROFIT_PCT <= 0:
             return None
 
-        realtime_atr = cached_indicators.get('realtime_atr', 0)
-        atr = round(realtime_atr, 2)
+        entry = float(entry_price) if entry_price else 0
+        if entry <= 0:
+            return None
 
-        if atr > 0:
-            stop_price = updated_peak - atr * cls.TRAILING_STOP_ATR_MULT
-        else:
-            stop_price = updated_peak * (1 - cls.TRAILING_STOP_FALLBACK_PCT / 100)
+        target = entry * (1 + cls.PARTIAL_TAKE_PROFIT_PCT / 100)
+        curr_price = float(current_price)
+        if curr_price < target:
+            return None
 
-        if curr_price <= stop_price:
-            drawdown_pct = round((updated_peak - curr_price) / updated_peak * 100, 1)
-
-            if signal == 1:
-                reason = f"1차익절(고점대비 -{drawdown_pct}%, 익절가 {stop_price:,.0f}원)"
-                return {"action": "SELL_HALF", "reasons": [reason]}
-
-            elif signal == 2:
-                obv_z_sell = cached_indicators.get('realtime_obv_z_sell', 0)
-                if obv_z_sell < cls.OBV_Z_SELL_THRESHOLD:
-                    reason = f"2차익절(고점대비 -{drawdown_pct}%, OBV z14={obv_z_sell:.2f})"
-                    return {"action": "SELL_ALL", "reasons": [reason]}
-                else:
-                    logger.info(
-                        f"[{symbol}] 2차 익절 ATR 조건 충족이나 OBV 양호 "
-                        f"(z14={obv_z_sell:.2f} >= {cls.OBV_Z_SELL_THRESHOLD}), 추세 유지"
-                    )
-                    return None
-
-        return None
+        logger.info(
+            f"[{symbol}] 부분 익절: 현재가 {curr_price:,.2f} ≥ 목표 {target:,.2f} "
+            f"(+{cls.PARTIAL_TAKE_PROFIT_PCT:.0f}%) → 절반 매도"
+        )
+        return {
+            "action": "SELL_HALF",
+            "reasons": [f"부분익절(+{cls.PARTIAL_TAKE_PROFIT_PCT:.0f}%)",
+                        f"목표가 {target:,.2f}"],
+        }
