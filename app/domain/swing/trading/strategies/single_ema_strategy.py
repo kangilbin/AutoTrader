@@ -371,7 +371,9 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
 
         if consecutive >= cls.CONSECUTIVE_REQUIRED:
             logger.info(f"[{symbol}] 1차 매수 신호 발생 (EMA돌파, 연속 {consecutive}회)")
-            return {'action': 'BUY', 'price': curr_price, 'reasons': ["1차 매수", "EMA돌파"]}
+            # 차수 표기("N차 매수")는 signal_on_complete를 아는 executor가 붙인다.
+            # 여기서 하드코딩하면 이력에 "1차 매수"가 중복 저장된다.
+            return {'action': 'BUY', 'price': curr_price, 'reasons': ["EMA돌파"]}
         elif current_signal:
             logger.info(f"[{symbol}] 매수 신호 대기 중 (EMA돌파, {consecutive}/{cls.CONSECUTIVE_REQUIRED})")
 
