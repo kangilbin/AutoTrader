@@ -555,10 +555,16 @@ async def get_best_quote(user_id: str, code: str, db: AsyncSession, excd: str = 
     if not body:
         return None
 
-    # output2는 배열이며 1~10호가가 담긴다. 주문에는 최우선호가만 쓰므로 첫 원소만 사용.
+    # 해외 호가는 output2에 1~10호가를 pask1..pask10 / pbid1..pbid10 형태로 평면 담아
+    # '단일 객체'로 내려준다(국내와 달리 배열이 아님). 다만 배열로 오는 케이스도 방어한다.
     # (output1은 기본 시세(last/open/high/low)라 호가 필드가 없다)
-    rows = body.get("output2") or []
-    quote = rows[0] if isinstance(rows, list) and rows else None
+    rows = body.get("output2")
+    if isinstance(rows, dict):
+        quote = rows
+    elif isinstance(rows, list) and rows:
+        quote = rows[0]
+    else:
+        quote = None
 
     if not isinstance(quote, dict):
         logger.warning(
@@ -571,7 +577,7 @@ async def get_best_quote(user_id: str, code: str, db: AsyncSession, excd: str = 
     bid = _to_float(quote.get("pbid1"))
 
     if ask <= 0 and bid <= 0:
-        logger.warning(f"[호가조회] {code}({excd}) 최우선호가 없음 (output2[0] 키={list(quote.keys())})")
+        logger.warning(f"[호가조회] {code}({excd}) 최우선호가 없음 (output2 키={list(quote.keys())})")
         return None
 
     return {"ask": ask, "bid": bid}
