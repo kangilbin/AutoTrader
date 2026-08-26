@@ -186,7 +186,9 @@ async def process_single_swing(
 
             cached_indicators = await strategy.get_cached_indicators(redis_client, st_code)
             if not cached_indicators:
-                if swing.has_position():
+                # SIGNAL=0이어도 HOLD_QTY>0이면 실제 포지션이 남아있다 (편입 대기 상태).
+                # has_position()만 보면 이 경우를 warning으로 흘려보내 무방비 상태를 놓친다.
+                if swing.has_position() or (swing.HOLD_QTY or 0) > 0:
                     # 지표가 없으면 손절/익절 판단 자체가 불가 — 포지션이 무방비로 남는다
                     logger.error(
                         f"[{st_code}] 지표 캐시 없음 + 포지션 보유(SIGNAL={swing.SIGNAL}, "
@@ -365,19 +367,47 @@ async def process_single_swing(
 
                 # 푸쉬 알림
                 if user_id and swing.SIGNAL != prev_signal:
-                    _fire_trade_notification(user_id, swing, prev_signal, st_code)
+                    _fire_trade_notification(
+                        user_id, swing, prev_signal, st_code,
+                        prev_hold_qty=hold_qty, current_price=float(current_price)
+                    )
 
                 # 미확인 주문을 취소한 경우에만 이어서 손절/익절 평가를 수행한다
                 # (SIGNAL 1/2 상태이므로 신규 진입 로직은 타지 않는다)
                 if not resume_normal_flow:
                     return
 
+            # === 2-1. 불변식 강제: SIGNAL 0(매수대기) + HOLD_QTY>0 은 성립할 수 없다 ===
+            # 신규 진입으로 처리하면 transition_to_buy가 기존 수량/평단을 덮어써 포지션이 유실된다.
+            # 발생원: 계좌 보유종목 자동등록분(mapping_swing) / 분할매수 중 partial_exec 키 소실
+            if swing.is_waiting() and (swing.HOLD_QTY or 0) > 0:
+                _entry_price = float(swing.ENTRY_PRICE) if swing.ENTRY_PRICE else 0
+                if _entry_price <= 0:
+                    logger.error(
+                        f"[{st_code}] SIGNAL=0 + {swing.HOLD_QTY}주 보유 + 평단 없음 "
+                        f"→ 편입 불가, 이번 사이클 스킵 (수동 확인 필요)"
+                    )
+                    return
+                swing.adopt_position(
+                    hold_qty=swing.HOLD_QTY,
+                    entry_price=_entry_price,
+                    current_price=float(current_price),
+                )
+                logger.warning(
+                    f"[{st_code}] 고아 포지션 편입: {swing.HOLD_QTY}주 @ {_entry_price:,.2f} "
+                    f"→ SIGNAL=1 (신규 매수 차단, 손절/익절 평가로 전환)"
+                )
+                # prev_signal 캡처보다 앞에 둔다 — 편입은 체결이 아니므로
+                # 0→1 전환을 매수 완료 푸시로 오인해서는 안 된다 (_fire_trade_notification)
+
             # === 3. PEAK_PRICE 갱신 (현재가 기준, 노이즈 방지) ===
             if swing.has_position():
                 swing.update_peak_price(float(current_price))
 
-            # 변경 전 SIGNAL 저장 (알림용)
+            # 변경 전 SIGNAL/수량 저장 (알림용)
+            # 전량 매도 시 reset_cycle이 HOLD_QTY를 0으로 지우므로 미리 잡아둔다
             prev_signal = swing.SIGNAL
+            prev_hold_qty = swing.HOLD_QTY or 0
 
             # === 4. SIGNAL별 오케스트레이션 ===
             if swing.is_waiting():
@@ -422,7 +452,10 @@ async def process_single_swing(
 
             # === 6. 푸쉬 알림 ===
             if user_id and swing.SIGNAL != prev_signal:
-                _fire_trade_notification(user_id, swing, prev_signal, st_code)
+                _fire_trade_notification(
+                    user_id, swing, prev_signal, st_code,
+                    prev_hold_qty=prev_hold_qty, current_price=float(current_price)
+                )
 
         except Exception as e:
             await db.rollback()
@@ -884,9 +917,14 @@ async def collect_single_stock(stock, stock_service: StockService):
 
 
 def _fire_trade_notification(
-    user_id: str, swing, prev_signal: int, st_code: str
+    user_id: str, swing, prev_signal: int, st_code: str,
+    prev_hold_qty: int = 0, current_price: float = 0
 ):
-    """SIGNAL 변경에 따른 푸쉬 알림 (fire-and-forget)"""
+    """SIGNAL 변경에 따른 푸쉬 알림 (fire-and-forget)
+
+    전량 매도는 reset_cycle이 HOLD_QTY/ENTRY_PRICE를 지우므로 swing에서 체결 정보를
+    읽을 수 없다. 매도 직전 수량(prev_hold_qty)과 평가 시점 현재가를 인자로 받는다.
+    """
     new_signal = swing.SIGNAL
     entry_price = float(swing.ENTRY_PRICE) if swing.ENTRY_PRICE else 0
     hold_qty = swing.HOLD_QTY or 0
@@ -907,28 +945,33 @@ def _fire_trade_notification(
 
     # 1차 익절 (SIGNAL 1→2)
     elif new_signal == 2 and prev_signal == 1:
+        # transition_to_partial이 HOLD_QTY에서 매도분을 차감하므로 매도 수량은 차이로 구한다
+        # (swing.HOLD_QTY를 그대로 쓰면 '잔여 수량'을 매도 수량으로 표기하게 된다)
+        sold_qty = max(0, prev_hold_qty - hold_qty)
         task = asyncio.create_task(
             PushNotificationService.send_trade_notification(
                 user_id=user_id,
                 noti_type="TRADE",
                 st_code=st_code,
-                qty=hold_qty,
-                price=entry_price,
+                qty=sold_qty,
+                price=current_price or entry_price,
                 reasons=["1차 익절 50% 매도 완료"],
             )
         )
         task.add_done_callback(_on_notification_done)
 
-    # 전량 매도 (SIGNAL 1,2→0)
-    elif new_signal == 0 and prev_signal in (1, 2):
+    # 전량 매도 (SIGNAL 1,2→3)
+    # reset_cycle은 항상 SIGNAL=3(수급 안정화 대기)으로 전이한다. 0을 기대하면
+    # 조건이 영원히 성립하지 않아 전량매도 알림이 조용히 누락된다.
+    elif new_signal == 3 and prev_signal in (1, 2):
         reason = "2차 익절 전량 매도 완료" if prev_signal == 2 else "전량 매도 완료"
         task = asyncio.create_task(
             PushNotificationService.send_trade_notification(
                 user_id=user_id,
                 noti_type="TRADE",
                 st_code=st_code,
-                qty=0,
-                price=entry_price,
+                qty=prev_hold_qty,
+                price=current_price or entry_price,
                 reasons=[reason],
             )
         )
@@ -960,6 +1003,7 @@ async def us_trade_job():
         return
     finally:
         await db.close()
+
 
     tasks = [process_single_swing(swing_row, redis_client) for swing_row in swing_list]
     results = await asyncio.gather(*tasks, return_exceptions=True)

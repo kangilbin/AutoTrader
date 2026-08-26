@@ -17,7 +17,7 @@ from app.domain.swing.entity import SwingTrade, EmaOption
 from app.domain.swing.schemas import SwingCreateRequest, SwingResponse
 from app.domain.stock.service import StockService
 from app.domain.stock.stock_data_batch import fetch_and_store_3_years_data
-from app.exceptions import DatabaseError, NotFoundError, DuplicateError, BusinessRuleError
+from app.exceptions import DatabaseError, NotFoundError, DuplicateError, BusinessRuleError, ValidationError
 from app.core.market_code import is_overseas, from_ovrs_excg_cd
 from app.external.kis_api import get_stock_balance
 from app.external import foreign_api
@@ -131,16 +131,8 @@ class SwingService:
 
             await self.db.commit()
 
-            # 데이터 적재 여부 확인 후 백그라운드 실행
-            stock_service = StockService(self.db)
-            stock_info = await stock_service.get_stock_info(request.MRKT_CODE, request.ST_CODE)
-
-            if stock_info.get("DATA_YN") != 'Y':
-                asyncio.create_task(
-                    self._fetch_and_cache(user_id, request.MRKT_CODE, request.ST_CODE, stock_info)
-                )
-                logger.info(f"[{request.MRKT_CODE}/{request.ST_CODE}] 데이터 적재 + 캐싱 백그라운드 태스크 시작")
-
+            # 주가 데이터 적재는 여기서 하지 않는다 (등록 시 USE_YN='N')
+            # → 활성화 시점(update_swing)의 _ensure_stock_data에서 일괄 처리
             return SwingResponse.model_validate(db_swing).model_dump()
 
         except IntegrityError as e:
@@ -164,6 +156,108 @@ class SwingService:
         finally:
             await db.close()
 
+    async def _ensure_stock_data(self, user_id: str, mrkt_code: str, st_code: str) -> str:
+        """주가 데이터 적재 보장 (활성화 시점 단일 트리거)
+
+        적재는 활성화(USE_YN 'N'→'Y') 시점에만 수행한다.
+        등록/목록조회 시점에 적재하면 활성화하지 않을 종목까지 3년치를 받고,
+        DATA_YN='Y'가 되면 day_collect_job이 영구히 매일 수집하게 된다.
+
+        Returns:
+            "READY"     - 이미 적재 완료 (DATA_YN='Y')
+            "PREPARING" - 적재 진행중 또는 백그라운드 태스크 시작
+            "SKIP"      - STOCK_INFO 미등록 종목 (적재 불가)
+        """
+        stock_service = StockService(self.db)
+        try:
+            stock_info = await stock_service.get_stock_info(mrkt_code, st_code)
+        except NotFoundError:
+            # 계좌 보유종목 중 STOCK_INFO에 없는 종목 — 적재만 건너뛰고 활성화는 허용
+            logger.warning(f"[{mrkt_code}/{st_code}] STOCK_INFO 미등록 - 데이터 적재 건너뜀")
+            return "SKIP"
+
+        data_yn = stock_info.get("DATA_YN")
+        if data_yn == 'Y':
+            return "READY"
+
+        if data_yn == 'P':
+            # 적재 진행중 — 재요청 시 3년치를 중복으로 받지 않도록 차단
+            logger.info(f"[{mrkt_code}/{st_code}] 데이터 적재 진행중(DATA_YN=P) - 중복 적재 생략")
+            return "PREPARING"
+
+        asyncio.create_task(
+            self._fetch_and_cache(user_id, mrkt_code, st_code, stock_info)
+        )
+        logger.info(f"[{mrkt_code}/{st_code}] 활성화 - 데이터 적재 + 캐싱 백그라운드 태스크 시작")
+        return "PREPARING"
+
+    async def _fetch_broker_position(self, user_id: str, mrkt_code: str, st_code: str) -> dict | None:
+        """증권사 실보유 수량/평단 조회 (포지션 편입 기준값)
+
+        DB의 HOLD_QTY는 매핑 시점 스냅샷이므로 신뢰하지 않는다.
+        (그 사이 사용자가 증권사 앱에서 직접 매도/추가매수했을 수 있음)
+
+        Returns:
+            {"qty": int, "avg_price": float, "prpr": float} — 보유 목록에 없으면 qty=0
+            None — 조회 실패 (편입 보류)
+        """
+        try:
+            if is_overseas(mrkt_code):
+                holdings = await foreign_api.get_us_holdings(user_id, self.db)
+            else:
+                holdings = await get_stock_balance(user_id, self.db)
+
+            for item in holdings.get("output1", []):
+                if item.get("pdno") != st_code:
+                    continue
+                return {
+                    "qty": int(float(item.get("hldg_qty", 0) or 0)),
+                    "avg_price": float(item.get("pchs_avg_pric", 0) or 0),
+                    "prpr": float(item.get("prpr", 0) or 0),
+                }
+            return {"qty": 0, "avg_price": 0.0, "prpr": 0.0}
+
+        except Exception as e:
+            # 조회 실패로 활성화 자체를 막지는 않는다 (배치 진입 가드가 안전망)
+            logger.error(f"[{mrkt_code}/{st_code}] 실보유 조회 실패 - 편입 보류: {e}", exc_info=True)
+            return None
+
+    async def _adopt_position_on_activate(self, user_id: str, swing) -> None:
+        """활성화 시 기존 보유 포지션 편입 (실보유 기준)
+
+        SIGNAL=0 + HOLD_QTY>0 은 성립할 수 없는 상태다. 그대로 활성화하면
+        배치가 매수대기로 보아 손절/익절을 평가하지 않고, 투자금 증액 시엔
+        신규 매수가 기존 수량/평단을 덮어써 포지션이 유실된다.
+        """
+        position = await self._fetch_broker_position(user_id, swing.MRKT_CODE, swing.ST_CODE)
+        if position is None:
+            return
+
+        try:
+            if position["qty"] <= 0:
+                # 매핑 후 사용자가 증권사에서 직접 전량 매도 → 잔여 수량 정리하고 정상 매수대기
+                swing.clear_orphan_position()
+                logger.info(f"[{swing.ST_CODE}] 실보유 0주 - 잔여 수량 정리, 매수대기 유지")
+            else:
+                swing.adopt_position(
+                    hold_qty=position["qty"],
+                    entry_price=position["avg_price"],
+                    current_price=position["prpr"] or position["avg_price"],
+                )
+                logger.info(
+                    f"[{swing.ST_CODE}] 포지션 편입: {position['qty']}주 "
+                    f"@ {position['avg_price']:,.2f} → SIGNAL=1 (손절/익절 관리 시작)"
+                )
+        except ValidationError as e:
+            # 편입 실패로 활성화 응답을 422로 만들지 않는다 — 활성화는 이미 commit됐으므로
+            # 예외를 올리면 "실패로 보이지만 실제로는 활성화됨" 불일치가 생긴다.
+            # (예: 증권사가 qty>0인데 평단 0을 반환)
+            # 배치 진입 가드가 다음 사이클에 DB값으로 같은 상태를 다시 처리한다.
+            logger.error(f"[{swing.ST_CODE}] 포지션 편입 실패 - 보류: {e}", exc_info=True)
+            return
+
+        await self.db.commit()
+
     async def get_swing(self, swing_id: int) -> dict:
         """스윙 조회"""
         swing = await self.repo.find_by_id(swing_id)
@@ -178,12 +272,15 @@ class SwingService:
             if not swing:
                 raise NotFoundError("스윙 전략", swing_id)
 
+            # 비활성 → 활성 전환 여부 (자본 검증 + 데이터 적재 트리거 기준)
+            is_activating = data.get("USE_YN") == "Y" and swing.USE_YN == "N"
+
             # 자본 한도 검증 (활성 스윙만 합산)
             # - INIT_AMOUNT 변경 시: 변경 후 금액이 가용 자본 초과 여부
             # - USE_YN 활성화 시: 해당 스윙 INIT_AMOUNT가 가용 자본 초과 여부
             need_capital_check = user_id and (
                 "INIT_AMOUNT" in data
-                or (data.get("USE_YN") == "Y" and swing.USE_YN == "N")
+                or is_activating
             )
             if need_capital_check:
                 # 활성 스윙이면 자기 자신 제외, 비활성→활성 전환이면 제외 불필요(이미 합산에서 빠져있음)
@@ -217,7 +314,25 @@ class SwingService:
             result = await self.repo.update(swing_id, data)
             await self.db.commit()
 
-            return SwingResponse.model_validate(result).model_dump()
+            # 보유 수량이 남은 스윙(계좌 보유종목 자동등록분)은 신규 진입이 아니라 포지션 편입 대상
+            if is_activating and user_id and (result.HOLD_QTY or 0) > 0 and result.SIGNAL == 0:
+                await self._adopt_position_on_activate(user_id, result)
+
+            # repo.update는 Core bulk UPDATE(synchronize_session=False)라 identity map의
+            # 인스턴스가 갱신되지 않는다 → refresh 없이는 응답이 변경 전 값을 돌려준다
+            # (활성화해도 USE_YN='N'으로 응답되던 문제)
+            await self.db.refresh(result)
+            response = SwingResponse.model_validate(result).model_dump()
+
+            # 활성화 시점에만 주가 데이터 적재 (미적재면 백그라운드 진행)
+            # 적재 완료 전 배치가 돌면 지표 캐시가 없어 해당 종목만 스킵되고,
+            # 적재 후 cache_single_indicators가 캐시를 채우면 다음 틱부터 자동 합류한다.
+            if is_activating and user_id:
+                response["DATA_STATUS"] = await self._ensure_stock_data(
+                    user_id, result.MRKT_CODE, result.ST_CODE
+                )
+
+            return response
         except SQLAlchemyError as e:
             await self.db.rollback()
             logger.error(f"스윙 수정 실패: {e}", exc_info=True)
@@ -290,7 +405,6 @@ class SwingService:
 
             swing_dict = {swing["ST_CODE"]: swing for swing in swing_list}
             buy_dict = {item.get("pdno"): item for item in buy_list if item.get("pdno")}
-            stock_service = StockService(self.db)
             results = []
 
             # 1. buy_list 기준으로 처리 (기존 로직)
@@ -327,19 +441,10 @@ class SwingService:
                         if not db_swing:
                             continue
 
-                    # 주가 데이터 적재 여부 확인 후 백그라운드 적재
-                    # STOCK_INFO 미등록 보유종목은 적재만 건너뛰고 목록에는 표시
-                    try:
-                        stock_info = await stock_service.get_stock_info(item_mrkt_code, st_code)
-                    except NotFoundError:
-                        stock_info = None
-                        logger.warning(f"[{item_mrkt_code}/{st_code}] STOCK_INFO 미등록 보유종목 - 데이터 적재 건너뜀")
-                    if stock_info and stock_info.get("DATA_YN") != 'Y':
-                        asyncio.create_task(
-                            self._fetch_and_cache(user_id, item_mrkt_code, st_code, stock_info)
-                        )
-                        logger.info(f"[{item_mrkt_code}/{st_code}] 매핑 등록 - 데이터 적재 백그라운드 태스크 시작")
-
+                    # 목록 조회는 보유종목 전체를 USE_YN='N'으로 자동 등록하는 경로다.
+                    # 여기서 적재하면 활성화하지 않을 종목까지 3년치를 받고
+                    # DATA_YN='Y'가 되어 day_collect_job이 영구히 매일 수집한다.
+                    # → 적재는 활성화 시점(update_swing)으로 미룬다.
                     swing_result = SwingResponse.model_validate(db_swing).model_dump()
                     result_data = {
                         **swing_result,

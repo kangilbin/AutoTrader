@@ -38,6 +38,7 @@ class SwingResponse(BaseModel):
     INIT_AMOUNT: Optional[Decimal] = None
     CUR_AMOUNT: Optional[Decimal] = None
     ENTRY_PRICE: Optional[Decimal] = None
+    HOLD_QTY: Optional[int] = None
     SWING_TYPE: Optional[str] = None
     SIGNAL: Optional[int] = None
     REG_DT: Optional[datetime] = None

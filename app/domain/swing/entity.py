@@ -80,6 +80,37 @@ class SwingTrade(Base):
         self.PEAK_PRICE = to_price(peak_price)
         self.MOD_DT = datetime.now()
 
+    def adopt_position(self, hold_qty: int, entry_price: float, current_price: float) -> None:
+        """기존 보유 포지션을 자동매매 관리 대상으로 편입 (SIGNAL 0 -> 1)
+
+        대상:
+        - 계좌 보유종목 자동 등록분(SWING_TYPE='S')을 활성화하는 경우
+        - 분할매수 중간 상태가 Redis 소실로 고아가 된 경우
+
+        transition_to_buy와 달리 '신규 매수'가 아니라 '이미 보유 중인 수량의 인수'이므로
+        체결 이력을 남기지 않고 CUR_AMOUNT도 차감하지 않는다 (이미 매수에 쓰인 자금).
+        """
+        if self.SIGNAL != 0:
+            raise ValidationError(f"포지션 편입은 대기 상태(0)에서만 가능합니다. 현재: {self.SIGNAL}")
+        if hold_qty <= 0:
+            raise ValidationError("편입 수량은 1주 이상이어야 합니다")
+        if not entry_price or entry_price <= 0:
+            raise ValidationError("편입 평단가가 없어 손절/익절 기준을 세울 수 없습니다")
+
+        self.SIGNAL = 1
+        self.HOLD_QTY = hold_qty
+        self.ENTRY_PRICE = to_price(entry_price)
+        # PEAK는 평단을 하한으로 둔다 — 평단 아래로 잡히면 트레일링 익절 기준이 비정상적으로 낮아짐
+        self.PEAK_PRICE = to_price(max(current_price, entry_price))
+        self.MOD_DT = datetime.now()
+
+    def clear_orphan_position(self) -> None:
+        """실보유 0주 확인 시 잔여 수량 정보 정리 (SIGNAL 0 유지 = 정상 매수 대기)"""
+        self.HOLD_QTY = 0
+        self.ENTRY_PRICE = None
+        self.PEAK_PRICE = None
+        self.MOD_DT = datetime.now()
+
     def transition_to_partial(self, sold_qty: int) -> None:
         """1차 익절 완료 (SIGNAL 1 -> 2) — 50% 매도 후 잔여 포지션"""
         if self.SIGNAL != 1:
