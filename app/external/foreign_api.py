@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.common.redis import get_redis
 from app.core.config import get_settings
 from app.core.market_code import to_ovrs_excg_cd, US_TRADE_EXCG
-from app.core.order import Order, ModifyOrder
+from app.core.order import Order, ModifyOrder, same_order_no
 from app.exceptions import ExternalServiceError
 from app.external.headers import kis_headers
 from app.external.http_client import fetch
@@ -388,7 +388,9 @@ async def check_order_execution(
             continue
 
         for order in body.get("output") or []:
-            if order.get("odno") != order_no:
+            # KIS는 주문 전송 응답('0000041672')과 체결내역('41672')의 패딩이 달라
+            # 문자열 직접 비교 시 같은 주문을 못 찾는다 → 선행 0 무시 비교
+            if not same_order_no(order.get("odno"), order_no):
                 continue
 
             executed_qty = int(float(order.get("ft_ccld_qty") or 0))

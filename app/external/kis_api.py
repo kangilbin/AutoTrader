@@ -13,7 +13,7 @@ from app.core.security import decrypt
 from app.external.headers import kis_headers, kis_error_message
 from app.external.http_client import fetch
 from app.common.redis import get_redis
-from app.core.order import Order, ModifyOrder
+from app.core.order import Order, ModifyOrder, same_order_no
 from app.domain.auth.repository import AuthRepository
 from typing import List, Optional
 
@@ -481,7 +481,7 @@ async def check_order_execution(user_id: str, order_no: str, db: AsyncSession, m
 
             # 주문번호로 체결 내역 찾기
             for order in result.get("output1", []):
-                if order.get("odno") == order_no:
+                if same_order_no(order.get("odno"), order_no):
                     executed_qty = int(order.get("tot_ccld_qty", 0))
 
                     if executed_qty > 0:
