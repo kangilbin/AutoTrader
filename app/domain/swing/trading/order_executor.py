@@ -180,7 +180,7 @@ class SwingOrderExecutor:
         new_price: float
     ) -> float:
         """
-        평균 매수 단가 계산 (2차 매수 시)
+        평균 매수 단가 계산 (TWAP 분할 매수 chunk 간 평단 갱신)
 
         Args:
             prev_qty: 기존 보유 수량
@@ -198,9 +198,9 @@ class SwingOrderExecutor:
                         + Decimal(str(new_qty)) * Decimal(str(new_price)))
         return float(to_price(total_amount / Decimal(prev_qty + new_qty)))
 
-    # 매도 후 SIGNAL 값 → 매도 구분 라벨.
-    # signal_on_complete는 '차수'가 아니라 '매도 완료 후 SIGNAL'이라, 매수처럼
-    # f"{signal}차 매도"로 쓰면 전량매도(0)가 "0차 매도"가 되어 의미가 없어진다.
+    # 매도 종류 라벨. 호출부(auto_swing_batch)가 넘기는 signal_on_complete 값 기준 —
+    # 부분익절은 2(전이 후 SIGNAL과 일치), 전량매도는 0(실제 전이는 reset_cycle로 SIGNAL 3).
+    # 매수처럼 '차수'로 쓸 수 없는 값이라(f"{0}차 매도" = "0차 매도") 성격을 나타내는 이름으로 둔다.
     SELL_LABELS = {2: "부분 매도", 0: "전량 매도"}
 
     @classmethod
@@ -313,7 +313,7 @@ class SwingOrderExecutor:
                 trade_type="B",
                 order_result={"qty": executed_qty, "avg_price": avg_price,
                               "order_no": order_no, "amount": executed_amount},
-                reasons=([f"{signal_on_complete}차 매수"] + (reasons or [])
+                reasons=((reasons or [])
                          + [r for r in [await cls._amount_reason(swing_id, executed_amount, db, "투입")] if r])
             )
 
@@ -340,7 +340,7 @@ class SwingOrderExecutor:
             trade_type="B",
             order_result={"qty": executed_qty, "avg_price": avg_price,
                           "order_no": order_no, "amount": executed_amount},
-            reasons=([f"{signal_on_complete}차 매수"] + (reasons or [])
+            reasons=((reasons or [])
                      + [r for r in [await cls._amount_reason(swing_id, executed_amount, db, "투입")] if r]
                      + [f"진행 {progress_pct:.0f}%"])
         )
@@ -588,8 +588,7 @@ class SwingOrderExecutor:
                 trade_type="B",
                 order_result={"qty": executed_qty, "avg_price": avg_price,
                               "order_no": order_no, "amount": chunk_amount},
-                reasons=([f"{state['phase']}차 매수"]
-                         + [r for r in [await cls._amount_reason(swing_id, chunk_amount, db, "투입")] if r]
+                reasons=([r for r in [await cls._amount_reason(swing_id, chunk_amount, db, "투입")] if r]
                          + [f"진행 {progress_pct:.0f}%"])
             )
 
@@ -776,7 +775,7 @@ class SwingOrderExecutor:
                 trade_type="B",
                 order_result={"qty": executed_qty, "avg_price": avg_price,
                               "order_no": order_no, "amount": chunk_amount},
-                reasons=([f"{phase}차 매수", "지연 체결 확인"]
+                reasons=(["지연 체결 확인"]
                          + [r for r in [await cls._amount_reason(swing_id, chunk_amount, db, "투입")] if r]
                          + ([] if target_amount <= 0 or target_amount - new_executed_amount < curr_price
                             else [f"진행 {new_executed_amount / target_amount * 100:.0f}%"]))

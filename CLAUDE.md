@@ -54,44 +54,65 @@ app/
 │   ├── database.py          # SQLAlchemy 비동기 설정, Database 싱글톤
 │   ├── dependencies.py      # FastAPI 의존성 (get_db, get_current_user)
 │   ├── redis.py             # Redis 연결 관리, 싱글톤
-│   └── scheduler.py         # APScheduler 크론 작업 설정
+│   ├── scheduler.py         # APScheduler 크론 작업 설정 (국내/미국 잡 분리)
+│   ├── middleware.py        # 디바이스 검증 등 미들웨어
+│   └── email.py             # 메일 발송
 ├── exceptions/              # 예외 처리 (상세: exceptions/README.md)
 │   ├── base.py              # AppError 베이스 클래스
 │   ├── domain.py            # 도메인 예외 (4xx)
 │   ├── infrastructure.py    # 인프라 예외 (5xx)
 │   ├── auth.py              # 인증/인가 예외 (401, 403)
 │   └── handlers.py          # 전역 예외 핸들러
-├── core/                    # 앱 설정/유틸리티
-│   ├── config.py            # Pydantic Settings (환경변수)
+├── core/                    # 앱 설정 + 계층 공용 유틸 (domain·external 양쪽에서 사용)
+│   ├── config.py            # Pydantic Settings (환경변수, 크론 설정 포함)
 │   ├── response.py          # 표준 API 응답 헬퍼
 │   ├── security.py          # 암호화 유틸 (AES, 해싱, JWT)
-│   └── health.py            # 헬스체크 로직
+│   ├── health.py            # 헬스체크 로직
+│   ├── sentry.py            # Sentry 초기화
+│   ├── market_code.py       # 시장 코드 판별/변환 (국내 vs NYS/NAS/AMS)
+│   ├── price.py             # 가격 정밀도·호가 단위 (국내 정수 / 해외 소수점)
+│   └── order.py             # 주문 파라미터 DTO + 주문번호 비교
 ├── external/                # 외부 API 통합
-│   ├── kis_api.py           # KIS Open API 호출 (시세, 주문, 잔고)
-│   ├── http_client.py       # 범용 HTTP 클라이언트 (httpx 래퍼)
-│   └── headers.py           # KIS API 헤더 생성
-├── infrastructure/
-│   └── database/
-│       └── tables.py        # SQLAlchemy 테이블 정의
-├── routers/                 # 비도메인 라우터
-│   ├── backtest_router.py   # 백테스팅 API
-│   └── health_router.py     # 헬스체크 API
+│   ├── kis_api.py           # KIS 국내 API (시세, 주문, 잔고, 체결)
+│   ├── foreign_api.py       # KIS 해외 API (시세, 호가, 주문, 체결)
+│   ├── http_client.py       # 범용 HTTP 클라이언트 (httpx 래퍼, 재시도)
+│   ├── headers.py           # KIS API 헤더 생성
+│   └── expo_push.py         # Expo 푸시 알림 발송
 ├── domain/                  # 도메인별 모듈
-│   ├── routers.py           # 라우터 통합 (전체 등록)
+│   ├── routers/             # 라우터 통합 + 비도메인 라우터
+│   │   ├── __init__.py      # 전체 라우터 등록
+│   │   ├── backtest_router.py   # 백테스팅 API
+│   │   └── health_router.py     # 헬스체크 API
 │   ├── swing/               # 스윙 매매 도메인
-│   │   ├── entity.py        # SwingTrade, EmaOption 엔티티
+│   │   ├── entity.py        # SwingTrade 엔티티 (SIGNAL 상태 전이)
 │   │   ├── schemas.py       # Request/Response DTO
 │   │   ├── repository.py    # 데이터 접근 계층
-│   │   ├── service.py       # 비즈니스 로직
+│   │   ├── service.py       # 비즈니스 로직 + 지표 캐시 워밍업
 │   │   ├── router.py        # API 엔드포인트
-│   │   ├── strategies/      # 매매 전략 구현
-│   │   │   ├── base_strategy.py
-│   │   │   ├── ema_strategy.py
-│   │   │   └── ichimoku_strategy.py
-│   │   ├── tech_analysis.py # 기술 지표 계산
-│   │   ├── auto_swing_batch.py  # 정기 매매 배치
-│   │   └── backtest/        # 백테스팅 기능
-│   └── [domain]/            # user, account, auth, stock, order
+│   │   ├── indicators.py    # 지표 캐시 스키마/계산
+│   │   ├── tech_analysis.py # 기술 지표 계산 (TA-Lib)
+│   │   ├── trading/         # 실시간 매매 실행
+│   │   │   ├── auto_swing_batch.py       # 정기 매매 배치 (오케스트레이터)
+│   │   │   ├── order_executor.py         # 주문 실행·체결 확인·TWAP 분할
+│   │   │   ├── trading_strategy_factory.py
+│   │   │   └── strategies/
+│   │   │       ├── base_trading_strategy.py  # TradingStrategy 추상 클래스
+│   │   │       ├── base_single_ema.py        # 단일 EMA 공통 로직/파라미터
+│   │   │       └── single_ema_strategy.py    # 실전 전략 (유일)
+│   │   └── backtest/        # 백테스팅 (실전 전략과 분리)
+│   │       ├── backtest_service.py
+│   │       ├── strategy_factory.py
+│   │       └── strategies/
+│   │           ├── base_strategy.py              # BacktestStrategy 추상 클래스
+│   │           ├── ema_strategy.py               # A: 이평선
+│   │           ├── ichimoku_strategy.py          # B: 일목균형표
+│   │           └── single_ema_backtest_strategy.py  # S: 단일 20EMA
+│   ├── stock/               # 종목 마스터 + 일별 데이터 수집 배치
+│   │   ├── stock_data_batch.py       # 일별 OHLCV 수집
+│   │   └── price_adjustment_batch.py # 액면분할 등 가격 보정
+│   ├── trade_history/       # 체결 이력 (TRADE_HISTORY)
+│   └── [domain]/            # user, account, auth, order, device,
+│                            # notification, oauth, gemini
 │       ├── entity.py        # 도메인 엔티티 (비즈니스 로직 포함)
 │       ├── schemas.py       # Pydantic DTO (Request/Response)
 │       ├── repository.py    # 데이터 접근 계층
@@ -203,18 +224,82 @@ async def create_swing(
 
 3. **정기 매매**: APScheduler가 `trade_job`을 1시간 단위로(평일 9AM-3PM) 실행. `day_collect_job`은 3:31PM에 일일 데이터 수집.
 
-4. **매매 전략**: `BaseStrategy` 추상 클래스 + 전략 패턴.
-   - `EmaStrategy`: EMA 골든크로스 (단기/중기/장기)
-   - `IchimokuStrategy`: 일목균형표 신호
+4. **매매 전략**: 전략 패턴. **실전과 백테스트가 별도 계층으로 분리**되어 있다.
+   실전 전략은 `check_entry_signal`/`check_exit_signal`(비동기, Redis 상태 사용)을,
+   백테스트 전략은 과거 봉 배열 기반 판정을 제공하므로 인터페이스가 다르다.
+
+   **실전 매매** — `trading/trading_strategy_factory.py` → `TradingStrategy` 상속
+
+   | SWING_TYPE | 전략 |
+   |------------|------|
+   | `S` | `SingleEMAStrategy` — 단일 20EMA + 단일 청산선 (**현재 유일한 실전 전략**) |
+   | 그 외 | `SingleEMAStrategy` 폴백 (warning 로그) |
+
+   **백테스트** — `backtest/strategy_factory.py` → `BacktestStrategy` 상속
+
+   | 타입 | 전략 |
+   |------|------|
+   | `A` | `EMAStrategy` — EMA 골든크로스 (단기/중기/장기) |
+   | `B` | `IchimokuStrategy` — 일목균형표 신호 |
+   | `S` | `SingleEMABacktestStrategy` — 단일 20EMA (실전과 동일 정의) |
+
+   `EMAStrategy`·`IchimokuStrategy`는 백테스트에만 등록되어 있어 실전 매매에서는
+   호출되지 않는다. 실전 전략 추가 시 `TradingStrategyFactory._strategies`에 등록해야 한다.
 
 5. **신호 흐름**: SWING_TRADE.SIGNAL 컬럼으로 상태 추적
-   - 0=초기, 1=1차 매수, 2=2차 매수, 3=매도
+
+   | SIGNAL | 의미 |
+   |--------|------|
+   | 0 | 매수 대기 |
+   | 1 | 포지션 보유 (부분익절 전) |
+   | 2 | 포지션 보유 (부분익절 후 잔여) |
+   | 3 | 수급 이탈 대기 (매도 직후 쿨다운 1단계) |
+   | 4 | 수급 재유입 대기 (쿨다운 2단계) |
+
+   **상태 전이** (`domain/swing/entity.py`)
+
+   | 전이 | 메서드 | 조건 |
+   |------|--------|------|
+   | 0 → 1 | `transition_to_buy` | 매수 체결 (진입은 1회뿐, 2차 매수 없음) |
+   | 0 → 1 | `adopt_position` | 기존 보유 포지션 편입 (체결 이력·자금 차감 없음) |
+   | 1 → 2 | `transition_to_partial` | 부분익절 50% 매도 (SIGNAL 1에서 1회만) |
+   | 1/2 → 3 | `reset_cycle` | 청산선 이탈 전량 매도 → **0이 아니라 3으로 진입** |
+   | 3 → 4 | `transition_to_reentry_waiting` | OBV z < `COOLDOWN_OBV_EXIT` (수급 이탈 확인) |
+   | 4 → 0 | `transition_to_waiting` | OBV z > `COOLDOWN_OBV_REENTRY` (수급 재유입 확인) |
+
+   매도는 차수가 아니라 **종류**로 구분한다 — `부분 매도`(1→2)와 `전량 매도`(1/2→3).
+   전량 매도는 부분익절을 거치지 않아도 발생하므로 매도 횟수는 사이클당 1~2회다.
+   매도 직후 SIGNAL 0으로 바로 돌아가지 않는 이유는 잔존 수급으로 진입 조건이
+   즉시 재충족되는 것을 막기 위함이다 (`reset_cycle` docstring 참고).
 
 ### 데이터베이스 테이블
-- `USER`, `ACCOUNT`, `AUTH_KEY`: 사용자/계좌 관리
-- `STOCK_INFO`, `STOCK_DAY_HISTORY`: 주식 마스터 및 OHLCV
-- `SWING_TRADE`, `EMA_OPT`: 매매 설정
-- `TRADE_HISTORY`: 체결 내역
+
+테이블 정의는 각 도메인의 `entity.py`에 있다 (중앙 `tables.py` 없음).
+
+| 테이블 | 엔티티 | 정의 위치 | 용도 |
+|--------|--------|-----------|------|
+| `USER` | `User` | `domain/user/entity.py` | 사용자 |
+| `USER_ID_SEQUENCE` | `UserIdSequence` | `domain/user/entity.py` | USER_ID 자동 생성 시퀀스 |
+| `ACCOUNT` | `Account` | `domain/account/entity.py` | 증권 계좌 |
+| `AUTH_KEY` | `Auth` | `domain/auth/entity.py` | KIS 인증키 (AES 암호화 저장) |
+| `DEVICE` | `Device` | `domain/device/entity.py` | 디바이스 화이트리스트 |
+| `USER_NOTI_SETTING` | `UserNotiSetting` | `domain/notification/entity.py` | 알림 설정 (유형별 1행) |
+| `USER_PUSH_TOKEN` | `UserPushToken` | `domain/notification/entity.py` | Expo 푸시 토큰 |
+| `STOCK_INFO` | `Stock` | `domain/stock/entity.py` | 종목 마스터 (국내/NYS/NAS/AMS) |
+| `STOCK_DAY_HISTORY` | `StockHistory` | `domain/stock/entity.py` | 일별 OHLCV — **완성봉만 적재** |
+| `SWING_TRADE` | `SwingTrade` | `domain/swing/entity.py` | 스윙 매매 설정 + SIGNAL 상태 |
+| `EMA_OPT` | `EmaOption` | `domain/swing/entity.py` | 3-EMA 기간 설정 (아래 주의 참고) |
+| `TRADE_HISTORY` | `TradeHistory` | `domain/trade_history/entity.py` | 체결 내역 + 실현손익 |
+
+**주의사항**
+
+- `STOCK_DAY_HISTORY`에는 **완성된 일봉만** 넣는다. 실시간 지표가 이 값을 전일 기준으로
+  참조하므로, 장중/프리마켓 미완성 봉이 섞이면 지표가 당일 값을 선견(look-ahead)한다.
+- `EMA_OPT`은 `SWING_TYPE='A'` 등록 시에만 저장되고(`swing/service.py`) **읽는 코드가 없다.**
+  실전 전략이 `SingleEMAStrategy` 하나로 통합되면서 자체 상수를 쓰기 때문이다.
+  3-EMA 전략을 실전에 다시 등록할 때까지는 사실상 미사용 테이블이다.
+- `TRADE_HISTORY`는 `order_executor`만 저장한다. 배치는 매매 사유(`reasons`)만 넘기고
+  체결 수량·단가를 아는 executor가 단독으로 기록한다 (저장 지점 단일화).
 
 ### 외부 의존성
 - **KIS Open API**: 실시간 시세 및 주문 체결

@@ -20,5 +20,14 @@ class TradeHistory(Base):
     TRADE_AMOUNT = Column(DECIMAL(15, 2), nullable=False, comment='거래 금액')
     TOTAL_FEE = Column(DECIMAL(15, 2), nullable=True, comment='제비용합계 (수수료+세금, 매도 시)')
     REALIZED_PNL = Column(DECIMAL(15, 2), nullable=True, comment='실현손익 (매도 시)')
-    TRADE_REASONS = Column(String(500), nullable=True, comment='매매 사유 JSON ["추세약화","추세반전","EMA 이탈"]')
+    # 저장 형식: [조건...] + [투입/회수 x%] + [진행 y%]  (조립 지점: order_executor)
+    #   매수 단일  ["EMA돌파", "투입 33.5%"]
+    #   매수 분할  ["EMA돌파", "투입 11.2%", "진행 33%"] / 후속 chunk는 조건 없이 ["투입...", "진행..."]
+    #   매도 부분  ["부분 매도", "부분익절(+8%)", "목표가 533.20", "회수 35.2%"]
+    #   매도 전량  ["전량 매도", "이익확정", "청산선 500.00", "손익 +5.2%", "회수 71.4%"]
+    # 매수에 동작 라벨이 없는 이유: 진입이 1회뿐이라 TRADE_TYPE='B'에서 파생되는 정보.
+    # 매도의 부분/전량은 다른 컬럼으로 복원할 수 없어 남긴다.
+    # 투입·회수는 INIT_AMOUNT 대비(분모 동일 → 직접 비교 가능), 진행은 이번 목표 대비.
+    TRADE_REASONS = Column(String(500), nullable=True,
+                           comment='매매 사유 JSON ["전량 매도","이익확정","청산선 500.00","손익 +5.2%","회수 71.4%"]')
     REG_DT = Column(DateTime, default=datetime.now, nullable=False, comment='등록일')
