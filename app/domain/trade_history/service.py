@@ -6,6 +6,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from typing import List, Optional
 from datetime import datetime
 from decimal import Decimal
+from zoneinfo import ZoneInfo
 import json
 import logging
 
@@ -13,6 +14,7 @@ import pandas as pd
 import talib as ta
 from dateutil.relativedelta import relativedelta
 
+from app.core.market_code import is_overseas
 from app.domain.trade_history.repository import TradeHistoryRepository
 from app.domain.trade_history.schemas import TradeHistoryResponse
 from app.exceptions import DatabaseError, NotFoundError, PermissionDeniedError
@@ -31,12 +33,26 @@ class TradeHistoryService:
     COMMISSION_RATE = Decimal("0.00147")  # 증권사 수수료율
     TAX_RATE = Decimal("0.0020")  # 거래세율
 
+    @staticmethod
+    def _market_now(mrkt_code: str) -> datetime:
+        """
+        시장 타임존 기준 현재 시각 (naive)
+
+        거래일 경계는 시장 타임존을 따라야 한다 (미국=ET, 국내=KST).
+        서버 로컬 시계를 쓰면 미국 정규장(KST 22:30~05:00)이 다음 날로 기록되어
+        STOCK_DAY_HISTORY(ET 영업일)와 날짜가 어긋난다.
+        stock_data_batch / auto_swing_batch 의 일봉 날짜 처리와 동일한 컨벤션.
+        """
+        tz = ZoneInfo("America/New_York") if is_overseas(mrkt_code) else ZoneInfo("Asia/Seoul")
+        return datetime.now(tz).replace(tzinfo=None)
+
     async def record_trade(
         self,
         swing_id: int,
         trade_type: str,
         order_result: dict,
         reasons: Optional[list[str]] = None,
+        mrkt_code: str = "",
     ) -> dict:
         """
         거래 내역 저장 (공통 로직)
@@ -49,6 +65,8 @@ class TradeHistoryService:
                 - qty: 체결 수량
                 - amount: 거래 금액
             reasons: 매매 사유 리스트 (선택)
+            mrkt_code: 시장 코드 ("J"=국내, "NYS/NAS/AMS"=미국).
+                TRADE_DATE 타임존 판정에 사용. 미지정 시 국내(KST) 기준.
 
         Returns:
             저장된 거래 내역
@@ -67,7 +85,7 @@ class TradeHistoryService:
             # 거래 데이터 준비
             trade_data = {
                 "SWING_ID": swing_id,
-                "TRADE_DATE": datetime.now(),
+                "TRADE_DATE": self._market_now(mrkt_code),
                 "TRADE_TYPE": trade_type,
                 "TRADE_PRICE": sell_price,
                 "TRADE_QTY": sell_qty,

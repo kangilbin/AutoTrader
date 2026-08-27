@@ -314,7 +314,8 @@ class SwingOrderExecutor:
                 order_result={"qty": executed_qty, "avg_price": avg_price,
                               "order_no": order_no, "amount": executed_amount},
                 reasons=((reasons or [])
-                         + [r for r in [await cls._amount_reason(swing_id, executed_amount, db, "투입")] if r])
+                         + [r for r in [await cls._amount_reason(swing_id, executed_amount, db, "투입")] if r]),
+                mrkt_code=mrkt_code,
             )
 
             logger.info(f"[{st_code}] {signal_on_complete}차 매수 완료 (단일): {executed_qty}주, {avg_price:,}원")
@@ -342,7 +343,8 @@ class SwingOrderExecutor:
                           "order_no": order_no, "amount": executed_amount},
             reasons=((reasons or [])
                      + [r for r in [await cls._amount_reason(swing_id, executed_amount, db, "투입")] if r]
-                     + [f"진행 {progress_pct:.0f}%"])
+                     + [f"진행 {progress_pct:.0f}%"]),
+            mrkt_code=mrkt_code,
         )
 
         logger.info(
@@ -429,7 +431,8 @@ class SwingOrderExecutor:
                               "order_no": order_no, "amount": actual_qty * avg_sell_price},
                 reasons=([cls._sell_label(signal_on_complete)] + (reasons or [])
                          + [r for r in [await cls._amount_reason(
-                             swing_id, float(actual_qty * avg_sell_price), db, "회수")] if r])
+                             swing_id, float(actual_qty * avg_sell_price), db, "회수")] if r]),
+                mrkt_code=mrkt_code,
             )
 
             logger.info(f"[{st_code}] {signal_on_complete}차 매도 완료 (단일): {actual_qty}주 @ {avg_sell_price}")
@@ -459,7 +462,8 @@ class SwingOrderExecutor:
             reasons=([cls._sell_label(signal_on_complete)] + (reasons or [])
                      + [r for r in [await cls._amount_reason(
                          swing_id, float(actual_qty * avg_sell_price), db, "회수")] if r]
-                     + [f"진행 {progress_pct:.0f}%"])
+                     + [f"진행 {progress_pct:.0f}%"]),
+            mrkt_code=mrkt_code,
         )
 
         logger.info(
@@ -589,7 +593,8 @@ class SwingOrderExecutor:
                 order_result={"qty": executed_qty, "avg_price": avg_price,
                               "order_no": order_no, "amount": chunk_amount},
                 reasons=([r for r in [await cls._amount_reason(swing_id, chunk_amount, db, "투입")] if r]
-                         + [f"진행 {progress_pct:.0f}%"])
+                         + [f"진행 {progress_pct:.0f}%"]),
+                mrkt_code=mrkt_code,
             )
 
             # 완료 여부
@@ -669,7 +674,8 @@ class SwingOrderExecutor:
                 reasons=([cls._sell_label(state["phase"])]
                          + [r for r in [await cls._amount_reason(
                              swing_id, float(actual_qty * avg_sell_price), db, "회수")] if r]
-                         + [f"진행 {progress_pct:.0f}%"])
+                         + [f"진행 {progress_pct:.0f}%"]),
+                mrkt_code=mrkt_code,
             )
 
             chunk_amount = float(actual_qty * avg_sell_price)
@@ -778,7 +784,8 @@ class SwingOrderExecutor:
                 reasons=(["지연 체결 확인"]
                          + [r for r in [await cls._amount_reason(swing_id, chunk_amount, db, "투입")] if r]
                          + ([] if target_amount <= 0 or target_amount - new_executed_amount < curr_price
-                            else [f"진행 {new_executed_amount / target_amount * 100:.0f}%"]))
+                            else [f"진행 {new_executed_amount / target_amount * 100:.0f}%"])),
+                mrkt_code=mrkt_code,
             )
             logger.info(f"[{st_code}] 미확인 주문 {order_no} 체결 확인: 매수 {executed_qty}주 @ {avg_price}")
 
@@ -807,7 +814,8 @@ class SwingOrderExecutor:
             reasons=([cls._sell_label(phase), "지연 체결 확인"]
                      + [r for r in [await cls._amount_reason(swing_id, chunk_amount, db, "회수")] if r]
                      + ([] if target_qty <= 0 or new_executed_qty >= target_qty
-                        else [f"진행 {new_executed_qty / target_qty * 100:.0f}%"]))
+                        else [f"진행 {new_executed_qty / target_qty * 100:.0f}%"])),
+            mrkt_code=mrkt_code,
         )
         logger.info(f"[{st_code}] 미확인 주문 {order_no} 체결 확인: 매도 {executed_qty}주 @ {avg_price}")
 
