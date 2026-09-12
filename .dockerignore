@@ -3,7 +3,20 @@
 .idea
 .env
 .bkit
+.claude
 docs
 __pycache__
 *.pyc
 *.md
+
+# 호스트(macOS) venv 가 COPY . . 로 컨테이너의 /app/.venv 를 덮어쓰는 것 방지
+.venv
+
+# 런타임에 불필요
+tests
+sample
+scripts
+pytest.ini
+auto_trader.egg-info
+test_main.http
+docker-compose.yml
