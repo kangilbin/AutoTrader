@@ -10,6 +10,7 @@ from app.common.redis import Redis
 from app.common.scheduler import schedule_start
 from app.common.middleware import DeviceAuthMiddleware
 from app.exceptions.handlers import register_exception_handlers
+from app.core.config import get_settings
 from app.core.sentry import init_sentry
 from app.domain.swing.service import SwingService
 
@@ -30,7 +31,14 @@ from app.domain.routers import (
     notification_router,
 )
 
-logging.basicConfig(level=logging.DEBUG)
+# 로그 레벨은 DEBUG 설정으로 제어한다 (운영: false → INFO).
+logging.basicConfig(level=logging.DEBUG if get_settings().DEBUG else logging.INFO)
+
+# basicConfig 는 루트 로거를 바꾸므로 서드파티 라이브러리 로그까지 함께 열린다.
+# DEBUG 로 켜더라도 앱 로그가 묻히지 않도록 시끄러운 라이브러리는 따로 낮춘다.
+for _noisy in ("httpx", "httpcore", "asyncio", "apscheduler.executors"):
+    logging.getLogger(_noisy).setLevel(logging.WARNING)
+
 logger = logging.getLogger(__name__)
 
 # Sentry 초기화 (FastAPI 앱 생성 전에 호출해야 ASGI 미들웨어 자동 등록)
