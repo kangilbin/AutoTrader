@@ -120,6 +120,10 @@ async def process_single_swing(
             current_low = Decimal(str(current_price_data.get("stck_lwpr", current_price)))
             acml_vol = int(current_price_data.get("acml_vol", 0))
 
+            # frgn_ntby_qty = int(current_price_data.get("frgn_ntby_qty", 0))  # 외국인 순매수 수량
+            # prdy_vrss_vol_rate = float(current_price_data.get("prdy_vrss_vol_rate", 100))  # 저일 대비 거래량 비율
+            # prdy_ctrt = float(current_price_data.get("prdy_ctrt", 0))  # 전일 대비율
+
             # 1.3 실시간 지표 증분 계산
             cached_indicators = TechnicalIndicators.enrich_cached_indicators_with_realtime(
                 cached_indicators=cached_indicators,
