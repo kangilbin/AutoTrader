@@ -24,7 +24,14 @@ class DeviceAuthMiddleware(BaseHTTPMiddleware):
     """
 
     # 검증 제외 경로 (헬스체크, 문서, 루트)
-    EXCLUDED_PATHS = ["/", "/health", "/docs", "/redoc", "/openapi.json", "/oauth/google/login"]
+    # /favicon.ico: 브라우저가 페이지 열 때 자동 요청하는 경로. 앱 라우트가 아니라
+    #               제외하지 않으면 브라우저로 /health 등을 열 때마다 에러 로그가 남는다.
+    EXCLUDED_PATHS = [
+        "/", "/health", "/ready",
+        "/docs", "/redoc", "/openapi.json",
+        "/oauth/google/login",
+        "/favicon.ico",
+    ]
 
     async def dispatch(self, request: Request, call_next):
         # 제외 경로는 스킵

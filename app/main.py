@@ -2,7 +2,9 @@
 FastAPI 애플리케이션 진입점
 """
 import logging
+from pathlib import Path
 from fastapi import FastAPI
+from fastapi.responses import FileResponse
 from contextlib import asynccontextmanager
 
 from app.common.database import Database
@@ -101,6 +103,19 @@ register_exception_handlers(app)
 
 # 디바이스 인증 미들웨어 등록 (모든 요청에 적용)
 app.add_middleware(DeviceAuthMiddleware)
+
+# favicon (브라우저가 /docs·/health 등을 열 때 자동 요청)
+# 확장자가 .ico 가 아니어도 브라우저는 Content-Type 으로 판단하므로 PNG 를 그대로 응답한다.
+_FAVICON = Path(__file__).parent / "static" / "favicon.png"
+
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    return FileResponse(
+        _FAVICON,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=86400"},  # 하루 캐시 → 재요청 억제
+    )
+
 
 # 라우터 등록
 app.include_router(health_router)
