@@ -8,7 +8,8 @@ from fastapi import Request
 from app.common.database import Database
 from app.common.redis import Redis
 from app.domain.device.repository import DeviceRepository
-from app.exceptions import DeviceNotAllowedError
+from app.exceptions import AppError, DeviceNotAllowedError
+from app.exceptions.handlers import app_error_response
 
 logger = logging.getLogger(__name__)
 
@@ -26,22 +27,38 @@ class DeviceAuthMiddleware(BaseHTTPMiddleware):
     # 검증 제외 경로 (헬스체크, 문서, 루트)
     # /favicon.ico: 브라우저가 페이지 열 때 자동 요청하는 경로. 앱 라우트가 아니라
     #               제외하지 않으면 브라우저로 /health 등을 열 때마다 에러 로그가 남는다.
-    EXCLUDED_PATHS = [
+    # frozenset: 매 요청마다 조회하므로 리스트 선형탐색 대신 해시 조회를 쓴다
+    EXCLUDED_PATHS = frozenset({
         "/", "/health", "/ready",
         "/docs", "/redoc", "/openapi.json",
         "/oauth/google/login",
         "/favicon.ico",
-    ]
+    })
 
     async def dispatch(self, request: Request, call_next):
         # 제외 경로는 스킵
         if request.url.path in self.EXCLUDED_PATHS:
             return await call_next(request)
 
+        try:
+            await self._verify_device(request)
+        except AppError as e:
+            # BaseHTTPMiddleware 는 FastAPI 의 ExceptionMiddleware 바깥에서 실행되므로
+            # @app.exception_handler(AppError) 가 닿지 않는다. 여기서 던지면 미처리 예외로
+            # 취급되어 403 이어야 할 접근 거부가 500 + 트레이스백 + Sentry 이벤트가 된다.
+            # (공개 포트로 들어오는 스캐너 요청마다 발생) → 경계에서 직접 응답으로 변환한다.
+            return app_error_response(request, e)
+
+        return await call_next(request)
+
+    async def _verify_device(self, request: Request) -> None:
+        """디바이스 검증 — 실패 시 AppError 를 던진다 (변환은 dispatch 가 담당)"""
         # X-Device-ID 헤더 추출
         device_id = request.headers.get("X-Device-ID")
         if not device_id:
-            logger.warning(f"X-Device-ID 헤더 누락: {request.url.path}")
+            # UA 는 클라이언트가 임의로 넣는 값 → 로그 부풀림 방지로 길이 제한
+            ua = request.headers.get("user-agent", "-")[:120]
+            logger.warning(f"X-Device-ID 헤더 누락: {request.url.path} UA={ua}")
             raise DeviceNotAllowedError(
                 device_id=None,
                 message="X-Device-ID 헤더가 필요합니다"
@@ -83,5 +100,3 @@ class DeviceAuthMiddleware(BaseHTTPMiddleware):
 
         # Request state에 디바이스 정보 저장 (선택적 활용)
         request.state.device_id = device_id
-
-        return await call_next(request)
