@@ -28,6 +28,10 @@ docker run -p 8000:auto-trader
 - `REDIS_URL`: Redis 연결 URL
 - `REDIS_PASSWORD`: Redis 비밀번호
 - `AES_SECRET_KEY`: AES 암호화 키 (Base64 인코딩된 16바이트)
+- `BATCH_USER_ID`: 배치 잡이 KIS 시세를 조회할 때 사용할 인증키 소유자 USER_ID.
+  **미설정 시 일별 데이터 수집(`day_collect_job`/`us_day_collect_job`)과 수정주가 재적재가
+  에러 로그만 남기고 즉시 종료한다** — 서비스는 정상으로 보이지만 OHLCV가 비어간다.
+  지정한 사용자는 `AUTH_KEY` 행을 최소 1개 가지고 있어야 한다 (로그인 상태는 불필요).
 
 ## 아키텍처
 

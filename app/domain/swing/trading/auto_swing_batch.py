@@ -28,7 +28,7 @@ from app.domain.swing.indicators import TechnicalIndicators
 from app.core.config import get_settings
 from app.core.market_code import is_overseas
 from app.core.price import to_price
-from app.external.kis_api import get_target_price, get_inquire_price
+from app.external.kis_api import get_target_price, get_inquire_price, get_quote_auth
 from app.external import foreign_api
 from app.common.database import Database
 from app.domain.swing.service import SwingService
@@ -199,9 +199,11 @@ async def process_single_swing(
                 return
 
             if _overseas:
-                current_price_data = await foreign_api.get_inquire_price(user_id, st_code, swing_service.db, excd=mrkt_code)
+                current_price_data = await foreign_api.get_inquire_price(
+                    user_id, st_code, swing_service.db, excd=mrkt_code, account_no=swing.ACCOUNT_NO
+                )
             else:
-                response = await get_inquire_price(user_id, st_code, swing_service.db)
+                response = await get_inquire_price(user_id, st_code, swing_service.db, account_no=swing.ACCOUNT_NO)
                 current_price_data = response.get("output", {}) if isinstance(response, dict) else response
             if not current_price_data:
                 logger.warning(f"[{st_code}] 현재가 조회 실패")
@@ -265,6 +267,7 @@ async def process_single_swing(
                         current_entry_price=entry_price,
                         current_hold_qty=hold_qty,
                         db=db,
+                        account_no=swing.ACCOUNT_NO,
                     )
                 else:
                     partial_result = await SwingOrderExecutor.continue_partial_execution(
@@ -279,6 +282,7 @@ async def process_single_swing(
                         current_hold_qty=hold_qty,
                         db=db,
                         mrkt_code=mrkt_code,
+                        account_no=swing.ACCOUNT_NO,
                     )
 
                 # 포지션 보유 중 미확인 주문이 남으면 손절/익절 평가가 최대
@@ -291,7 +295,7 @@ async def process_single_swing(
                     if await SwingOrderExecutor.cancel_order(
                         user_id, _pending.get("order_no"), st_code,
                         _pending.get("mrkt_code", mrkt_code), db,
-                        _pending.get("ord_orgno", ""),
+                        _pending.get("ord_orgno", ""), swing.ACCOUNT_NO,
                     ):
                         partial_result.pop("pending_state")  # 아래 Redis 정리에서 키 삭제
                         resume_normal_flow = True
@@ -550,6 +554,7 @@ async def _handle_waiting(
         db=db,
         mrkt_code=mrkt_code,
         reasons=entry_result.get("reasons", ["매수"]).copy(),
+        account_no=swing.ACCOUNT_NO,
     )
 
     if not order_result.get("success"):
@@ -681,6 +686,7 @@ async def _execute_partial_sell(
         db=db,
         mrkt_code=mrkt_code,
         reasons=list(reasons),
+        account_no=swing.ACCOUNT_NO,
     )
 
     if not order_result.get("success"):
@@ -735,6 +741,7 @@ async def _execute_full_sell(
         db=db,
         mrkt_code=mrkt_code,
         reasons=list(reasons),
+        account_no=swing.ACCOUNT_NO,
     )
 
     if not order_result.get("success"):
@@ -781,18 +788,29 @@ async def day_collect_job():
         logger.error("[DAY COLLECT KR] 세션 미완료 상태에서 수집 잡 실행 → 전 종목 스킵. 스케줄 확인 필요")
         return
 
+    # 배치는 로그인 세션이 없으므로 시세 조회에 쓸 인증키 소유자를 환경변수로 지정한다
+    user_id = get_settings().BATCH_USER_ID
+    if not user_id:
+        logger.error("[DAY COLLECT KR] BATCH_USER_ID 미설정 - 잡 중단")
+        return
+
     logger.info("[DAY COLLECT KR] 국내 데이터 수집 시작")
     db = await Database.get_session()
 
     try:
         stock_service = StockService(db)
 
+        # 시세 토큰은 잡 진입 시 한 번만 해석한다. 종목마다 해석하면 gather로
+        # 동시 실행되는 코루틴들이 공유 AsyncSession에 SELECT를 몰아넣어,
+        # 다른 종목의 save_history_bulk 커밋과 겹치면 세션이 깨진다.
+        access_data = await get_quote_auth(user_id, db)
+
         data_target_stocks = await stock_service.get_data_target_stocks(overseas=False)
         logger.info(f"[DAY COLLECT KR] 데이터 수집 대상 종목 수: {len(data_target_stocks)}")
 
         # 병렬 처리: asyncio.gather로 모든 종목 동시 실행
         tasks = [
-            collect_single_stock(stock, stock_service)
+            collect_single_stock(stock, stock_service, user_id, access_data)
             for stock in data_target_stocks
         ]
 
@@ -824,17 +842,25 @@ async def us_day_collect_job():
         logger.error("[DAY COLLECT US] 세션 미완료 상태에서 수집 잡 실행 → 전 종목 스킵. 스케줄 확인 필요")
         return
 
+    user_id = get_settings().BATCH_USER_ID
+    if not user_id:
+        logger.error("[DAY COLLECT US] BATCH_USER_ID 미설정 - 잡 중단")
+        return
+
     logger.info("[DAY COLLECT US] 미국 데이터 수집 시작")
     db = await Database.get_session()
 
     try:
         stock_service = StockService(db)
 
+        # 국내 잡과 동일 — 토큰 1회 해석 후 종목별로 전달 (공유 세션 동시 접근 방지)
+        access_data = await get_quote_auth(user_id, db)
+
         data_target_stocks = await stock_service.get_data_target_stocks(overseas=True)
         logger.info(f"[DAY COLLECT US] 데이터 수집 대상 종목 수: {len(data_target_stocks)}")
 
         tasks = [
-            collect_single_stock(stock, stock_service)
+            collect_single_stock(stock, stock_service, user_id, access_data)
             for stock in data_target_stocks
         ]
 
@@ -854,13 +880,15 @@ async def us_day_collect_job():
         await db.close()
 
 
-async def collect_single_stock(stock, stock_service: StockService):
+async def collect_single_stock(stock, stock_service: StockService, user_id: str, access_data: dict):
     """
     개별 종목 데이터 수집 (세마포어로 동시 실행 제어)
 
     Args:
         stock: STOCK_INFO 레코드
         stock_service: StockService 인스턴스
+        user_id: 시세 조회에 사용할 인증키 소유자 (BATCH_USER_ID)
+        access_data: 잡 진입 시 1회 해석한 시세 토큰 (종목별 DB/Redis 재조회 방지)
     """
     async with _SEMAPHORE:
         code = stock.ST_CODE
@@ -875,9 +903,11 @@ async def collect_single_stock(stock, stock_service: StockService):
         try:
             if _overseas:
                 excd = mrkt_code
-                response = await foreign_api.get_target_price(code, excd)
+                response = await foreign_api.get_target_price(
+                    user_id, code, stock_service.db, excd=excd, access_data=access_data
+                )
             else:
-                response = await get_target_price(code)
+                response = await get_target_price(user_id, code, stock_service.db, access_data=access_data)
 
             if response:
                 if _overseas:

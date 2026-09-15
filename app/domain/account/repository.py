@@ -44,6 +44,36 @@ class AccountRepository:
             "SECRET_KEY": row.SECRET_KEY
         }
 
+    async def find_auth_id_by_account_no(self, user_id: str, account_no: str) -> Optional[int]:
+        """계좌번호로 해당 계좌에 묶인 인증키 ID 조회
+
+        계좌↔인증키 바인딩은 ACCOUNT 행에 영속화되어 있으므로, 계좌번호만 있으면
+        실전/모의가 확정된다. 배치처럼 로그인 세션(Redis)이 없는 경로에서
+        "어떤 인증키로 주문할지"를 결정하는 근거로 쓴다.
+
+        ⚠️ (USER_ID, ACCOUNT_NO)에 유니크 제약이 없고 계좌 등록도 중복을 막지 않는다.
+        앱키 교체 후 같은 계좌가 여러 AUTH_ID로 남을 수 있으므로 최신 등록분
+        (ACCOUNT_ID 내림차순)을 쓴다 — 임의 행을 골라 폐기된 키로 주문하는 것을 막는다.
+        """
+        query = (
+            select(Account.AUTH_ID)
+            .filter(
+                Account.USER_ID == user_id,
+                Account.ACCOUNT_NO == account_no,
+            )
+            .order_by(Account.ACCOUNT_ID.desc())
+        )
+        result = await self.db.execute(query)
+        auth_ids = result.scalars().all()
+
+        if len(auth_ids) > 1:
+            logger.warning(
+                f"계좌 {account_no}(USER_ID={user_id})에 인증키가 {len(auth_ids)}개 연결됨 "
+                f"{auth_ids} → 최신 등록분 AUTH_ID={auth_ids[0]} 사용. 중복 계좌 등록 정리 필요"
+            )
+
+        return auth_ids[0] if auth_ids else None
+
     async def find_all_by_user(self, user_id: str) -> List[dict]:
         """사용자의 모든 계좌 조회"""
         query = text(

@@ -14,6 +14,7 @@ from app.external.headers import kis_headers, kis_error_message
 from app.external.http_client import fetch
 from app.common.redis import get_redis
 from app.core.order import Order, ModifyOrder, same_order_no
+from app.domain.account.repository import AccountRepository
 from app.domain.auth.repository import AuthRepository
 from typing import List, Optional
 
@@ -31,8 +32,7 @@ _TOKEN_WAIT_MAX_ATTEMPTS = 50  # 최대 대기 시도 (0.2s * 50 = 10s)
 
 
 def _token_cache_key(user_id: str, auth_id=None) -> str:
-    """토큰 캐시 키. 인증키(AUTH_ID)별로 슬롯을 분리해 모의/실전 토큰이 공존하도록 한다.
-    auth_id 미지정(mgnt 등)은 레거시 키 사용."""
+    """토큰 캐시 키. 인증키(AUTH_ID)별로 슬롯을 분리해 모의/실전 토큰이 공존하도록 한다."""
     return f"{user_id}_{auth_id}_access_token" if auth_id else f"{user_id}_access_token"
 
 
@@ -119,8 +119,53 @@ async def oauth_token(user_id: str, simulation_yn: str, api_key: str, secret_key
         await redis.delete(lock_key)
 
 
-async def _get_user_auth(user_id: str, db: AsyncSession):
-    """사용자 인증 정보 조회 (선택된 인증키(AUTH_ID)별 토큰 캐시 사용, 만료 시 재발급)"""
+async def _token_for_auth_id(user_id: str, auth_id, db: AsyncSession) -> dict:
+    """AUTH_KEY의 인증키로 토큰 확보 (캐시 우선, 없으면 발급)
+
+    캐시 슬롯이 auth_id별로 분리되어 있어 모의/실전 토큰이 공존한다.
+    """
+    redis = await get_redis()
+    access_data = await redis.hgetall(_token_cache_key(user_id, auth_id))
+    if access_data:
+        return access_data
+
+    auth_data = await AuthRepository(db).find_by_id(user_id, int(auth_id))
+    if not auth_data:
+        raise NotFoundError("인증키", auth_id)
+
+    return await oauth_token(
+        user_id,
+        auth_data["SIMULATION_YN"],
+        decrypt(auth_data["API_KEY"]),
+        decrypt(auth_data["SECRET_KEY"]),
+        auth_id=auth_id,
+    )
+
+
+async def _get_account_auth(user_id: str, account_no: str, db: AsyncSession):
+    """계좌번호 기준 인증 해석 (로그인 세션이 없는 배치 경로)
+
+    Redis 세션의 ACCOUNT_NO는 '사용자가 앱에서 마지막으로 고른 계좌'라
+    스윙이 등록된 계좌와 다를 수 있다. 계좌가 명시되면 세션을 보지 않고
+    ACCOUNT 테이블의 계좌↔인증키 바인딩을 따른다 (실전/모의 혼동 차단).
+    """
+    auth_id = await AccountRepository(db).find_auth_id_by_account_no(user_id, account_no)
+    if not auth_id:
+        raise NotFoundError("계좌", account_no)
+
+    access_data = await _token_for_auth_id(user_id, auth_id, db)
+    return {"ACCOUNT_NO": account_no, "AUTH_ID": str(auth_id)}, access_data
+
+
+async def _get_user_auth(user_id: str, db: AsyncSession, account_no: str = None):
+    """인증 정보 조회
+
+    account_no 지정 시: DB의 계좌↔인증키 바인딩으로 확정 (배치 등 세션 없는 경로)
+    미지정 시: Redis 세션에서 사용자가 선택한 인증키 사용 (API 요청 경로)
+    """
+    if account_no:
+        return await _get_account_auth(user_id, account_no, db)
+
     redis = await get_redis()
     user_data = await redis.hgetall(user_id)
 
@@ -129,32 +174,60 @@ async def _get_user_auth(user_id: str, db: AsyncSession):
         raise ExternalServiceError("KIS", "인증키가 선택되지 않았습니다. 인증키를 먼저 선택해주세요.")
 
     # 선택된 인증키 슬롯에서 토큰 조회 (모의/실전 전환해도 각자 캐시 유지)
-    access_data = await redis.hgetall(_token_cache_key(user_id, auth_id))
-
-    if not access_data:
-        repo = AuthRepository(db)
-        auth_data = await repo.find_by_id(user_id, int(auth_id))
-        if not auth_data:
-            raise NotFoundError("인증키", auth_id)
-
-        access_data = await oauth_token(
-            user_id,
-            auth_data["SIMULATION_YN"],
-            decrypt(auth_data["API_KEY"]),
-            decrypt(auth_data["SECRET_KEY"]),
-            auth_id=auth_id,
-        )
+    access_data = await _token_for_auth_id(user_id, auth_id, db)
 
     return user_data, access_data
 
 
-async def is_simulation(user_id: str, db: AsyncSession) -> bool:
-    """현재 선택된 인증키가 모의투자 계정인지 여부
+async def _quote_auth(user_id: str, db: AsyncSession, account_no: str = None) -> dict:
+    """시세 조회용 인증 (CANO를 쓰지 않는 함수 전용)
+
+    계좌 지정 > 로그인 세션 > 계좌 무관 폴백 순으로 해석한다.
+    시세는 어느 인증키로 조회해도 결과가 같으므로 마지막 폴백이 안전하고,
+    덕분에 배치가 로그인 세션 없이도 시세를 볼 수 있다.
+    주문·잔고는 계좌가 확정돼야 하므로 이 헬퍼를 쓰지 않는다.
+    """
+    if account_no:
+        _, access_data = await _get_account_auth(user_id, account_no, db)
+        return access_data
+
+    # 세션에 선택된 인증키가 있으면 그 키를 쓴다. 예외를 잡아 폴백하지 않는 이유:
+    # _get_user_auth는 '인증키 미선택'과 '토큰 발급 실패/대기 초과'에 같은 예외를 쓴다.
+    # 후자까지 삼키면 일시적 KIS 장애가 조용히 다른 appkey 발급으로 이어져
+    # 장애가 로그에 안 남고 appkey별 1분 발급 제한까지 건드린다.
+    redis = await get_redis()
+    auth_id = (await redis.hgetall(user_id)).get("AUTH_ID")
+    if auth_id:
+        return await _token_for_auth_id(user_id, auth_id, db)
+
+    # 선택된 인증키 없음 (배치/세션 만료) → 계좌 무관 키로 조회
+    return await get_quote_auth(user_id, db)
+
+
+async def get_quote_auth(user_id: str, db: AsyncSession) -> dict:
+    """시세 조회 전용 토큰 (계좌 무관)
+
+    시세 TR은 CANO를 쓰지 않으므로 계좌를 고를 필요가 없다. 배치처럼
+    로그인 세션도 계좌 컨텍스트도 없는 경로가 시세를 볼 수 있게 한다.
+
+    선택 규칙: 실전키 우선(모의 도메인은 일부 TR 미지원) → AUTH_ID 오름차순.
+    조회 전용이므로 어느 키를 써도 결과가 같고, 주문으로 새지 않는다.
+    """
+    auths = await AuthRepository(db).find_all_by_user(user_id)
+    if not auths:
+        raise NotFoundError("인증키", user_id)
+
+    auth = sorted(auths, key=lambda a: (a.SIMULATION_YN == "Y", a.AUTH_ID))[0]
+    return await _token_for_auth_id(user_id, auth.AUTH_ID, db)
+
+
+async def is_simulation(user_id: str, db: AsyncSession, account_no: str = None) -> bool:
+    """선택된(또는 계좌에 묶인) 인증키가 모의투자 계정인지 여부
 
     모의투자 미지원 API(해외 미체결 조회 등)를 호출부에서 건너뛰기 위해
     simulation_yn 판별을 공개 헬퍼로 노출한다. (토큰 캐시 재사용 → 추가 비용 없음)
     """
-    _, access_data = await _get_user_auth(user_id, db)
+    _, access_data = await _get_user_auth(user_id, db, account_no)
     return access_data.get("simulation_yn") == "Y"
 
 
@@ -237,9 +310,10 @@ async def verify_account_balance(access_data: dict, account_no: str):
 # 잔고 조회 관련
 # ============================================================
 
-async def get_stock_balance(user_id: str, db: AsyncSession, fk100="", nk100="", result: Optional[List] = None,):
+async def get_stock_balance(user_id: str, db: AsyncSession, fk100="", nk100="", result: Optional[List] = None,
+                            account_no: str = None):
     """보유 주식 조회 (output1: 종목 리스트, output2: 계좌 요약)"""
-    user_data, access_data = await _get_user_auth(user_id, db)
+    user_data, access_data = await _get_user_auth(user_id, db, account_no)
 
     path = "uapi/domestic-stock/v1/trading/inquire-balance"
     if access_data.get("simulation_yn") == "Y":
@@ -289,7 +363,7 @@ async def get_stock_balance(user_id: str, db: AsyncSession, fk100="", nk100="", 
     output2_data = output2[0] if output2 else {}
 
     if tr_cont == "F" or tr_cont == "M":  # 다음 페이지 존재하는 경우 자기 호출 처리
-        return await get_stock_balance(user_id, db, ctx_area_fk100, ctx_area_nk100, result)
+        return await get_stock_balance(user_id, db, ctx_area_fk100, ctx_area_nk100, result, account_no)
 
     return {"output1": result, "output2": output2_data}
 
@@ -298,9 +372,9 @@ async def get_stock_balance(user_id: str, db: AsyncSession, fk100="", nk100="", 
 # 주문 관련
 # ============================================================
 
-async def place_order_api(user_id: str, order: Order, db: AsyncSession):
+async def place_order_api(user_id: str, order: Order, db: AsyncSession, account_no: str = None):
     """주식 주문"""
-    user_data, access_data = await _get_user_auth(user_id, db)
+    user_data, access_data = await _get_user_auth(user_id, db, account_no)
     if access_data.get("simulation_yn") == "Y":
         url = settings.DEV_API_URL
     else:
@@ -339,9 +413,9 @@ async def place_order_api(user_id: str, order: Order, db: AsyncSession):
     return body
 
 
-async def get_cancelable_orders_api(user_id: str, db: AsyncSession, fk100="", nk100=""):
+async def get_cancelable_orders_api(user_id: str, db: AsyncSession, fk100="", nk100="", account_no: str = None):
     """주식 정정/취소 가능 주문 내역"""
-    user_data, access_data = await _get_user_auth(user_id, db)
+    user_data, access_data = await _get_user_auth(user_id, db, account_no)
 
     path = "uapi/domestic-stock/v1/trading/inquire-psbl-rvsecncl"
     api_url = f"{settings.REAL_API_URL}/{path}"
@@ -365,9 +439,9 @@ async def get_cancelable_orders_api(user_id: str, db: AsyncSession, fk100="", nk
     return body
 
 
-async def modify_or_cancel_order_api(user_id: str, order: ModifyOrder, db: AsyncSession):
+async def modify_or_cancel_order_api(user_id: str, order: ModifyOrder, db: AsyncSession, account_no: str = None):
     """주문 정정/취소"""
-    user_data, access_data = await _get_user_auth(user_id, db)
+    user_data, access_data = await _get_user_auth(user_id, db, account_no)
     if access_data.get("simulation_yn") == "Y":
         url = settings.DEV_API_URL
     else:
@@ -402,9 +476,10 @@ async def modify_or_cancel_order_api(user_id: str, order: ModifyOrder, db: Async
     body = response["body"]
     return body
 
-async def get_inquire_daily_ccld_obj(user_id: str, db: AsyncSession, inqr_strt_dt=None, inqr_end_dt=None, fk100="", nk100=""):
+async def get_inquire_daily_ccld_obj(user_id: str, db: AsyncSession, inqr_strt_dt=None, inqr_end_dt=None, fk100="", nk100="",
+                                     account_no: str = None):
     """주식일별주문체결(현황)조회"""
-    user_data, access_data = await _get_user_auth(user_id, db)
+    user_data, access_data = await _get_user_auth(user_id, db, account_no)
     if access_data.get("simulation_yn") == "Y":
         url = settings.DEV_API_URL
         tr_id = "VTSC9215R"
@@ -446,7 +521,8 @@ async def get_inquire_daily_ccld_obj(user_id: str, db: AsyncSession, inqr_strt_d
     return body
 
 
-async def check_order_execution(user_id: str, order_no: str, db: AsyncSession, max_retry: int = 3, delay: float = 1.0) -> Optional[dict]:
+async def check_order_execution(user_id: str, order_no: str, db: AsyncSession, max_retry: int = 3, delay: float = 1.0,
+                                account_no: str = None) -> Optional[dict]:
     """
     주문 체결 확인 (폴링)
 
@@ -472,7 +548,7 @@ async def check_order_execution(user_id: str, order_no: str, db: AsyncSession, m
 
     for attempt in range(max_retry):
         try:
-            result = await get_inquire_daily_ccld_obj(user_id, db)
+            result = await get_inquire_daily_ccld_obj(user_id, db, account_no=account_no)
 
             if not result or "output1" not in result:
                 logger.warning(f"[체결확인] 응답 없음, 재시도 {attempt + 1}/{max_retry}")
@@ -509,13 +585,14 @@ async def check_order_execution(user_id: str, order_no: str, db: AsyncSession, m
     return None
 
 
-async def get_target_price(code: str):
-    """종목 일별 시세 조회"""
-    redis = await get_redis()
-    access_data = await redis.hgetall("mgnt_access_token")
+async def get_target_price(user_id: str, code: str, db: AsyncSession, access_data: dict = None):
+    """종목 일별 시세 조회 (배치용 — BATCH_USER_ID의 인증키로 조회)
 
-    if not access_data:
-        access_data = await oauth_token("mgnt", "Y", settings.API_KEY, settings.SECRET_KEY)
+    이전에는 `mgnt` 전용 토큰 캐시 + settings.API_KEY/SECRET_KEY를 썼으나,
+    두 설정이 Settings에 정의되지 않아 캐시가 만료되는 순간 AttributeError로
+    수집 전 종목이 실패했다. 시세 TR은 계좌가 필요 없으므로 계좌 무관 토큰을 쓴다.
+    """
+    access_data = access_data or await _quote_auth(user_id, db)
 
     if access_data.get("simulation_yn") == "Y":
         url = settings.DEV_API_URL
@@ -536,14 +613,19 @@ async def get_target_price(code: str):
         "FID_ORG_ADJ_PRC": "0",
         "FID_PERIOD_DIV_CODE": "D"
     }
-    response = await fetch("POST", api_url, "KIS", json=query, headers=headers)
+    # 국내 시세 조회 TR은 GET + query string이다 (POST/json은 output 없는 응답 → KeyError).
+    # mgnt 경로가 죽어 있어 이 함수가 성공 실행된 적이 없었기에 드러나지 않았던 버그.
+    response = await fetch("GET", api_url, "KIS", params=query, headers=headers)
     body = response["body"]
-    return body['output'][0]
+    output = body.get("output")
+    if not output:
+        raise ExternalServiceError("KIS", kis_error_message(body, f"{code} 일별 시세 조회 실패"))
+    return output[0]
 
 
-async def get_stock_data(user_id: str, code: str, start_date: str, end_date: str, db: AsyncSession):
+async def get_stock_data(user_id: str, code: str, start_date: str, end_date: str, db: AsyncSession, account_no: str = None):
     """기간별 주식 데이터 조회"""
-    user_data, access_data = await _get_user_auth(user_id, db)
+    access_data = await _quote_auth(user_id, db, account_no)
     url = settings.REAL_API_URL
     path = "uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice"
     api_url = f"{url}/{path}"
@@ -590,9 +672,9 @@ async def get_stock_data(user_id: str, code: str, start_date: str, end_date: str
     return body
 
 
-async def get_inquire_asking_price(user_id: str, code: str, db: AsyncSession):
+async def get_inquire_asking_price(user_id: str, code: str, db: AsyncSession, account_no: str = None):
     """주식 호가 조회"""
-    user_data, access_data = await _get_user_auth(user_id, db)
+    access_data = await _quote_auth(user_id, db, account_no)
     path = "uapi/domestic-stock/v1/quotations/inquire-asking-price-exp-ccn"
     if access_data.get("simulation_yn") == "Y":
         url = settings.DEV_API_URL
@@ -614,9 +696,9 @@ async def get_inquire_asking_price(user_id: str, code: str, db: AsyncSession):
     return body
 
 
-async def get_inquire_price(user_id: str, code: str, db: AsyncSession):
+async def get_inquire_price(user_id: str, code: str, db: AsyncSession, account_no: str = None):
     """주식현재가 시세"""
-    user_data, access_data = await _get_user_auth(user_id, db)
+    access_data = await _quote_auth(user_id, db, account_no)
     path = "uapi/domestic-stock/v1/quotations/inquire-price"
     if access_data.get("simulation_yn") == "Y":
         url = settings.DEV_API_URL
@@ -637,9 +719,9 @@ async def get_inquire_price(user_id: str, code: str, db: AsyncSession):
     body = response["body"]
     return body
 
-async def get_fluctuation_rank(user_id: str, db: AsyncSession, rank_sort_cls_code: str = "0", prc_cls_code: str = "1"):
+async def get_fluctuation_rank(user_id: str, db: AsyncSession, rank_sort_cls_code: str = "0", prc_cls_code: str = "1", account_no: str = None):
     """국내주식 등락률 순위"""
-    user_data, access_data = await _get_user_auth(user_id, db)
+    access_data = await _quote_auth(user_id, db, account_no)
     path = "uapi/domestic-stock/v1/ranking/fluctuation"
     url = settings.REAL_API_URL
     api_url = f"{url}/{path}"
@@ -670,9 +752,9 @@ async def get_fluctuation_rank(user_id: str, db: AsyncSession, rank_sort_cls_cod
     body = response["body"]
     return body.get("output")
 
-async def get_volume_rank(user_id: str, db: AsyncSession, blng_cls_code: str = "3"):
+async def get_volume_rank(user_id: str, db: AsyncSession, blng_cls_code: str = "3", account_no: str = None):
     """국내주식 거래량 순위"""
-    user_data, access_data = await _get_user_auth(user_id, db)
+    access_data = await _quote_auth(user_id, db, account_no)
     path = "uapi/domestic-stock/v1/quotations/volume-rank"
     url = settings.REAL_API_URL
     api_url = f"{url}/{path}"
@@ -700,9 +782,9 @@ async def get_volume_rank(user_id: str, db: AsyncSession, blng_cls_code: str = "
     body = response["body"]
     return body.get("output")
 
-async def get_volume_power_rank(user_id: str, db: AsyncSession, input_iscd: str = "0000"):
+async def get_volume_power_rank(user_id: str, db: AsyncSession, input_iscd: str = "0000", account_no: str = None):
     """국내주식 체결강도 순위"""
-    user_data, access_data = await _get_user_auth(user_id, db)
+    access_data = await _quote_auth(user_id, db, account_no)
     path = "uapi/domestic-stock/v1/ranking/volume-power"
     url = settings.REAL_API_URL
     api_url = f"{url}/{path}"
@@ -735,7 +817,8 @@ async def get_volume_power_rank(user_id: str, db: AsyncSession, input_iscd: str 
 
 
 async def get_rev_split_schedule(
-    user_id: str, from_date: str, to_date: str, db: AsyncSession
+    user_id: str, from_date: str, to_date: str, db: AsyncSession,
+    account_no: str = None,
 ) -> dict:
     """예탁원정보 액면교체일정 조회 (액면분할/병합)
 
@@ -748,7 +831,7 @@ async def get_rev_split_schedule(
     Returns:
         KIS 응답 body (output1 배열 포함)
     """
-    user_data, access_data = await _get_user_auth(user_id, db)
+    access_data = await _quote_auth(user_id, db, account_no)
     url = settings.REAL_API_URL
     path = "uapi/domestic-stock/v1/ksdinfo/rev-split"
     api_url = f"{url}/{path}"
@@ -767,7 +850,8 @@ async def get_rev_split_schedule(
 
 
 async def get_merger_split_schedule(
-    user_id: str, from_date: str, to_date: str, db: AsyncSession
+    user_id: str, from_date: str, to_date: str, db: AsyncSession,
+    account_no: str = None,
 ) -> dict:
     """예탁원정보 합병/분할일정 조회
 
@@ -780,7 +864,7 @@ async def get_merger_split_schedule(
     Returns:
         KIS 응답 body (output1 배열 포함)
     """
-    user_data, access_data = await _get_user_auth(user_id, db)
+    access_data = await _quote_auth(user_id, db, account_no)
     url = settings.REAL_API_URL
     path = "uapi/domestic-stock/v1/ksdinfo/merger-split"
     api_url = f"{url}/{path}"

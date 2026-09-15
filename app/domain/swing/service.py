@@ -77,7 +77,7 @@ class SwingService:
 
         if overseas:
             # 해외증거금 통화별조회 — 외화주문가능금액(ord_psbl_amt)을 가용자본으로 사용
-            margin = await foreign_api.get_foreign_margin(user_id, self.db)
+            margin = await foreign_api.get_foreign_margin(user_id, self.db, account_no=account_no)
             if margin is None:
                 # 모의투자: 현금/주문가능 소스 없음 → 한도 추적 불가
                 allocated = int(await self.repo.get_total_init_amount(account_no, overseas, exclude_swing_id))
@@ -89,7 +89,7 @@ class SwingService:
                 }
             cash = int(float(margin.get("ord_psbl_amt", 0) or 0))
         else:
-            balance_data = await get_stock_balance(user_id, self.db)
+            balance_data = await get_stock_balance(user_id, self.db, account_no=account_no)
             output2 = balance_data["output2"]
             cash = int(float(output2.get("dnca_tot_amt", 0) or 0))
 
@@ -191,7 +191,8 @@ class SwingService:
         logger.info(f"[{mrkt_code}/{st_code}] 활성화 - 데이터 적재 + 캐싱 백그라운드 태스크 시작")
         return "PREPARING"
 
-    async def _fetch_broker_position(self, user_id: str, mrkt_code: str, st_code: str) -> dict | None:
+    async def _fetch_broker_position(self, user_id: str, mrkt_code: str, st_code: str,
+                                     account_no: str = None) -> dict | None:
         """증권사 실보유 수량/평단 조회 (포지션 편입 기준값)
 
         DB의 HOLD_QTY는 매핑 시점 스냅샷이므로 신뢰하지 않는다.
@@ -203,9 +204,9 @@ class SwingService:
         """
         try:
             if is_overseas(mrkt_code):
-                holdings = await foreign_api.get_us_holdings(user_id, self.db)
+                holdings = await foreign_api.get_us_holdings(user_id, self.db, account_no=account_no)
             else:
-                holdings = await get_stock_balance(user_id, self.db)
+                holdings = await get_stock_balance(user_id, self.db, account_no=account_no)
 
             for item in holdings.get("output1", []):
                 if item.get("pdno") != st_code:
@@ -229,7 +230,9 @@ class SwingService:
         배치가 매수대기로 보아 손절/익절을 평가하지 않고, 투자금 증액 시엔
         신규 매수가 기존 수량/평단을 덮어써 포지션이 유실된다.
         """
-        position = await self._fetch_broker_position(user_id, swing.MRKT_CODE, swing.ST_CODE)
+        position = await self._fetch_broker_position(
+            user_id, swing.MRKT_CODE, swing.ST_CODE, account_no=swing.ACCOUNT_NO
+        )
         if position is None:
             return
 
@@ -379,8 +382,8 @@ class SwingService:
             swing_list = await self.repo.find_all_by_account_no(account_no, mrkt_code)
             if overseas:
                 # 해외: 보유 종목은 TTTS3012R(체결 즉시 반영), USD 현금은 해외증거금 통화별조회
-                holdings = await foreign_api.get_us_holdings(user_id, self.db)
-                margin = await foreign_api.get_foreign_margin(user_id, self.db)
+                holdings = await foreign_api.get_us_holdings(user_id, self.db, account_no=account_no)
+                margin = await foreign_api.get_foreign_margin(user_id, self.db, account_no=account_no)
                 buy_list = holdings["output1"]
                 # 035에는 평가금액/손익이 없어 보유종목(TTTS3012R)을 합산해 summary용 output2를 구성
                 evlu_sum = sum((_to_decimal(i.get("evlu_amt")) for i in buy_list), Decimal(0))
@@ -399,7 +402,7 @@ class SwingService:
                     "dnca_tot_amt": dnca_display,  # 외화예수금 → CASH_ASSET
                 }
             else:
-                balance_data = await get_stock_balance(user_id, self.db)
+                balance_data = await get_stock_balance(user_id, self.db, account_no=account_no)
                 buy_list = balance_data["output1"]
                 output2 = balance_data["output2"]
 

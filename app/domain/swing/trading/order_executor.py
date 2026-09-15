@@ -30,7 +30,8 @@ class SwingOrderExecutor:
 
     @classmethod
     async def resolve_order_price(
-        cls, user_id: str, st_code: str, mrkt_code: str, is_buy: bool, db
+        cls, user_id: str, st_code: str, mrkt_code: str, is_buy: bool, db,
+        account_no: str = None,
     ) -> float | None:
         """해외 지정가 주문 단가 결정 (매수=매도1호가, 매도=매수1호가)
 
@@ -38,7 +39,7 @@ class SwingOrderExecutor:
         호가 조회 실패 시 None → 호출부는 이번 사이클 주문을 건너뛰고 다음 사이클에
         신호를 다시 평가한다. (부정확한 단가로 미체결 주문을 남기지 않기 위함)
         """
-        quote = await foreign_api.get_best_quote(user_id, st_code, db, excd=mrkt_code)
+        quote = await foreign_api.get_best_quote(user_id, st_code, db, excd=mrkt_code, account_no=account_no)
         if not quote:
             return None
 
@@ -51,7 +52,8 @@ class SwingOrderExecutor:
 
     @classmethod
     async def place_order(
-        cls, user_id: str, st_code: str, qty: int, is_buy: bool, mrkt_code: str, db
+        cls, user_id: str, st_code: str, qty: int, is_buy: bool, mrkt_code: str, db,
+        account_no: str = None,
     ) -> tuple:
         """국내/해외 주문 전송 (해외=호가 기반 지정가, 국내=시장가)
 
@@ -62,7 +64,7 @@ class SwingOrderExecutor:
         ord_price = 0.0
 
         if _overseas:
-            ord_price = await cls.resolve_order_price(user_id, st_code, mrkt_code, is_buy, db)
+            ord_price = await cls.resolve_order_price(user_id, st_code, mrkt_code, is_buy, db, account_no)
             if ord_price is None:
                 return None, None
 
@@ -72,13 +74,13 @@ class SwingOrderExecutor:
         )
 
         if _overseas:
-            return await foreign_api.place_order_api(user_id, order, db), ord_price
-        return await kis_api.place_order_api(user_id, order, db), ord_price
+            return await foreign_api.place_order_api(user_id, order, db, account_no), ord_price
+        return await kis_api.place_order_api(user_id, order, db, account_no), ord_price
 
     @classmethod
     async def cancel_order(
         cls, user_id: str, order_no: str, st_code: str, mrkt_code: str, db,
-        ord_orgno: str = "",
+        ord_orgno: str = "", account_no: str = None,
     ) -> bool:
         """미체결 잔량 전부 취소 (RVSE_CNCL_DVSN_CD "02")
 
@@ -103,9 +105,9 @@ class SwingOrderExecutor:
             )
 
             if _overseas:
-                result = await foreign_api.modify_or_cancel_order_api(user_id, cancel, db)
+                result = await foreign_api.modify_or_cancel_order_api(user_id, cancel, db, account_no)
             else:
-                result = await kis_api.modify_or_cancel_order_api(user_id, cancel, db)
+                result = await kis_api.modify_or_cancel_order_api(user_id, cancel, db, account_no)
 
             if result and result.get("rt_cd") == "0":
                 return True
@@ -124,7 +126,7 @@ class SwingOrderExecutor:
     async def confirm_and_settle(
         cls, user_id: str, st_code: str, order_no: str, mrkt_code: str,
         ord_qty: int, ord_price: float, db,
-        ord_orgno: str = "", max_retries: int = 2,
+        ord_orgno: str = "", max_retries: int = 2, account_no: str = None,
     ):
         """체결 확인 + 부분 체결 시 잔량 취소
 
@@ -140,7 +142,7 @@ class SwingOrderExecutor:
         execution = await _check_execution_with_retry(
             user_id, order_no, db, max_retries=max_retries,
             overseas=_overseas, mrkt_code=mrkt_code,
-            ord_qty=ord_qty, ord_price=ord_price,
+            ord_qty=ord_qty, ord_price=ord_price, account_no=account_no,
         )
         if not execution:
             return None
@@ -149,7 +151,7 @@ class SwingOrderExecutor:
         if executed_qty >= ord_qty:
             return execution
 
-        cancelled = await cls.cancel_order(user_id, order_no, st_code, mrkt_code, db, ord_orgno)
+        cancelled = await cls.cancel_order(user_id, order_no, st_code, mrkt_code, db, ord_orgno, account_no)
         if cancelled:
             logger.info(
                 f"[{st_code}] 부분 체결 {executed_qty}/{ord_qty}주 → 잔량 {ord_qty - executed_qty}주 취소"
@@ -161,7 +163,7 @@ class SwingOrderExecutor:
         recheck = await _check_execution_with_retry(
             user_id, order_no, db, max_retries=1,
             overseas=_overseas, mrkt_code=mrkt_code,
-            ord_qty=ord_qty, ord_price=ord_price,
+            ord_qty=ord_qty, ord_price=ord_price, account_no=account_no,
         )
         if recheck and recheck.get("executed_qty", 0) > executed_qty:
             logger.info(
@@ -250,6 +252,7 @@ class SwingOrderExecutor:
         db=None,
         mrkt_code: str = "",
         reasons: list = None,
+        account_no: str = None,
     ) -> Dict[str, Any]:
         """
         분할 매수 시작 (첫 사이클)
@@ -271,7 +274,7 @@ class SwingOrderExecutor:
             return {"success": False, "reason": "매수 수량 부족"}
 
         _overseas = is_overseas(mrkt_code)
-        result, ord_price = await cls.place_order(user_id, st_code, qty, True, mrkt_code, db)
+        result, ord_price = await cls.place_order(user_id, st_code, qty, True, mrkt_code, db, account_no)
 
         if ord_price is None:
             logger.warning(f"[{st_code}] 호가 조회 실패 → 이번 사이클 매수 보류 (다음 사이클 재평가)")
@@ -287,6 +290,7 @@ class SwingOrderExecutor:
         execution = await cls.confirm_and_settle(
             user_id, st_code, order_no, mrkt_code, qty, fill_price, db,
             ord_orgno=result.get("output", {}).get("KRX_FWDG_ORD_ORGNO", ""),
+            account_no=account_no,
         )
         if not execution:
             logger.warning(f"[{st_code}] 체결 확인 불가 (주문번호: {order_no}), 다음 사이클에서 재확인")
@@ -368,6 +372,7 @@ class SwingOrderExecutor:
         db=None,
         mrkt_code: str = "",
         reasons: list = None,
+        account_no: str = None,
     ) -> Dict[str, Any]:
         """
         분할 매도 시작 (첫 사이클)
@@ -389,7 +394,7 @@ class SwingOrderExecutor:
         order_qty = target_qty if target_qty <= per_cycle_qty else per_cycle_qty
 
         _overseas = is_overseas(mrkt_code)
-        result, ord_price = await cls.place_order(user_id, st_code, order_qty, False, mrkt_code, db)
+        result, ord_price = await cls.place_order(user_id, st_code, order_qty, False, mrkt_code, db, account_no)
 
         if ord_price is None:
             logger.warning(f"[{st_code}] 호가 조회 실패 → 이번 사이클 매도 보류 (다음 사이클 재평가)")
@@ -405,6 +410,7 @@ class SwingOrderExecutor:
         execution = await cls.confirm_and_settle(
             user_id, st_code, order_no, mrkt_code, order_qty, fill_price, db,
             ord_orgno=result.get("output", {}).get("KRX_FWDG_ORD_ORGNO", ""),
+            account_no=account_no,
         )
         if not execution:
             logger.warning(f"[{st_code}] 체결 확인 불가 (주문번호: {order_no}), 다음 사이클에서 재확인")
@@ -488,6 +494,7 @@ class SwingOrderExecutor:
         current_hold_qty: int,
         db,
         mrkt_code: str = "",
+        account_no: str = None,
     ) -> Dict[str, Any]:
         """
         부분 실행 사이클 처리 (5분 간격 배치에서 호출)
@@ -543,7 +550,7 @@ class SwingOrderExecutor:
                         "clear_partial": True}
 
             _overseas = is_overseas(mrkt_code)
-            result, ord_price = await cls.place_order(user_id, st_code, order_qty, True, mrkt_code, db)
+            result, ord_price = await cls.place_order(user_id, st_code, order_qty, True, mrkt_code, db, account_no)
 
             if ord_price is None:
                 logger.warning(f"[{st_code}] 호가 조회 실패 → 이번 사이클 분할 매수 chunk 보류")
@@ -560,6 +567,7 @@ class SwingOrderExecutor:
             execution = await cls.confirm_and_settle(
                 user_id, st_code, order_no, mrkt_code, order_qty, fill_price, db,
                 ord_orgno=result.get("output", {}).get("KRX_FWDG_ORD_ORGNO", ""),
+                account_no=account_no,
             )
             if not execution:
                 logger.warning(f"[{st_code}] 체결 확인 불가 (주문번호: {order_no}), 다음 사이클에서 재확인")
@@ -629,7 +637,7 @@ class SwingOrderExecutor:
             order_qty = min(remaining_qty, per_cycle_qty)
 
             _overseas = is_overseas(mrkt_code)
-            result, ord_price = await cls.place_order(user_id, st_code, order_qty, False, mrkt_code, db)
+            result, ord_price = await cls.place_order(user_id, st_code, order_qty, False, mrkt_code, db, account_no)
 
             if ord_price is None:
                 logger.warning(f"[{st_code}] 호가 조회 실패 → 이번 사이클 분할 매도 chunk 보류")
@@ -646,6 +654,7 @@ class SwingOrderExecutor:
             execution = await cls.confirm_and_settle(
                 user_id, st_code, order_no, mrkt_code, order_qty, fill_price, db,
                 ord_orgno=result.get("output", {}).get("KRX_FWDG_ORD_ORGNO", ""),
+                account_no=account_no,
             )
             if not execution:
                 logger.warning(f"[{st_code}] 체결 확인 불가 (주문번호: {order_no}), 다음 사이클에서 재확인")
@@ -710,6 +719,7 @@ class SwingOrderExecutor:
         current_entry_price: int,
         current_hold_qty: int,
         db,
+        account_no: str = None,
     ) -> Dict[str, Any]:
         """체결 미확인 주문 재확인 (다음 사이클에서 호출)
 
@@ -736,7 +746,7 @@ class SwingOrderExecutor:
         ord_price = float(pending.get("ord_price") or round_price(curr_price))
         execution = await cls.confirm_and_settle(
             user_id, st_code, order_no, mrkt_code, ord_qty,
-            ord_price, db, ord_orgno=ord_orgno, max_retries=1,
+            ord_price, db, ord_orgno=ord_orgno, max_retries=1, account_no=account_no,
         )
 
         # ── 여전히 확인 불가 ──
@@ -745,7 +755,7 @@ class SwingOrderExecutor:
             if attempts >= cls.MAX_PENDING_ATTEMPTS:
                 # 방치하면 몇 시간 뒤 체결돼 DB에 없는 포지션이 생기므로 잔량을 취소한다
                 cancelled = await cls.cancel_order(
-                    user_id, order_no, st_code, mrkt_code, db, ord_orgno
+                    user_id, order_no, st_code, mrkt_code, db, ord_orgno, account_no
                 )
                 logger.warning(
                     f"[{st_code}] 주문 {order_no} 체결 확인 {attempts}회 실패 → "
@@ -837,6 +847,7 @@ async def _check_execution_with_retry(
     max_retries: int = 2, delay: float = 1.0,
     overseas: bool = False, mrkt_code: str = "",
     ord_qty: int = 0, ord_price: float = 0.0,
+    account_no: str = None,
 ):
     """체결 확인 재시도 (국내: 1초 간격, 해외: 2초 간격)
 
@@ -848,7 +859,7 @@ async def _check_execution_with_retry(
     for attempt in range(max_retries):
         if overseas:
             execution = await foreign_api.check_order_execution(
-                user_id, order_no, db, excg_cd=mrkt_code
+                user_id, order_no, db, excg_cd=mrkt_code, account_no=account_no
             )
             if execution is foreign_api.UNSUPPORTED:
                 logger.warning(
@@ -862,7 +873,7 @@ async def _check_execution_with_retry(
                     "simulated": True,
                 }
         else:
-            execution = await kis_api.check_order_execution(user_id, order_no, db)
+            execution = await kis_api.check_order_execution(user_id, order_no, db, account_no=account_no)
         if execution and execution.get("executed_qty", 0) > 0:
             return execution
         if attempt < max_retries - 1:

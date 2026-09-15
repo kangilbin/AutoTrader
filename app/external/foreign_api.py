@@ -9,14 +9,13 @@ from typing import List, Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.common.redis import get_redis
 from app.core.config import get_settings
 from app.core.market_code import to_ovrs_excg_cd, US_TRADE_EXCG
 from app.core.order import Order, ModifyOrder, same_order_no
 from app.exceptions import ExternalServiceError
 from app.external.headers import kis_headers
 from app.external.http_client import fetch
-from app.external.kis_api import _get_user_auth, is_simulation, oauth_token
+from app.external.kis_api import _get_user_auth, _quote_auth, is_simulation
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -30,6 +29,7 @@ async def get_stock_balance(
     user_id: str, db: AsyncSession,
     excg_cd: str = "NASD", crcy_cd: str = "USD",
     fk200="", nk200="", result: Optional[List] = None,
+    account_no: str = None,
 ):
     """해외 주식 잔고 조회 (TTTS3012R) — 체결 즉시 반영되는 보유 종목/평가금액
 
@@ -37,7 +37,7 @@ async def get_stock_balance(
     output2에는 외화 예수금이 없으므로, USD 현금/주문가능금액은
     `get_foreign_margin`(해외증거금 통화별조회)에서 별도로 가져온다.
     """
-    user_data, access_data = await _get_user_auth(user_id, db)
+    user_data, access_data = await _get_user_auth(user_id, db, account_no)
 
     path = "uapi/overseas-stock/v1/trading/inquire-balance"
     url = settings.DEV_API_URL if access_data.get("simulation_yn") == "Y" else settings.REAL_API_URL
@@ -72,7 +72,7 @@ async def get_stock_balance(
             user_id, db, excg_cd, crcy_cd,
             body.get("ctx_area_fk200", ""),
             body.get("ctx_area_nk200", ""),
-            result
+            result, account_no
         )
 
     # 보유 종목 정규화 — mapping_swing이 기대하는 키 이름으로 변환 (USD 기준)
@@ -98,6 +98,7 @@ async def get_stock_balance(
 
 async def get_foreign_margin(
     user_id: str, db: AsyncSession, crcy_cd: str = "USD",
+    account_no: str = None,
 ):
     """해외증거금 통화별조회 (TTTC2101R)
 
@@ -112,7 +113,7 @@ async def get_foreign_margin(
         실전: 지정 통화(기본 USD) 1건을 정규화한 dict (값은 문자열, KIS 원형 유지)
         모의: None
     """
-    user_data, access_data = await _get_user_auth(user_id, db)
+    user_data, access_data = await _get_user_auth(user_id, db, account_no)
 
     # 모의투자는 본 API(TTTC2101R) 미지원 — 현금/주문가능 소스 없음
     if access_data.get("simulation_yn") == "Y":
@@ -146,7 +147,7 @@ async def get_foreign_margin(
     }
 
 
-async def get_us_holdings(user_id: str, db: AsyncSession):
+async def get_us_holdings(user_id: str, db: AsyncSession, account_no: str = None):
     """미국 전 거래소 보유종목 조회 (output1 병합)
 
     - 실전: OVRS_EXCG_CD="NASD"(미국전체) 1회 호출
@@ -155,17 +156,17 @@ async def get_us_holdings(user_id: str, db: AsyncSession):
     소비처(mapping_swing)는 output1만 사용(평가합계 재계산, 현금은 해외증거금 별도)하므로
     output2는 빈 dict로 반환한다.
     """
-    _, access_data = await _get_user_auth(user_id, db)
+    _, access_data = await _get_user_auth(user_id, db, account_no)
     sim = access_data.get("simulation_yn") == "Y"
 
     if not sim:
-        return await get_stock_balance(user_id, db, excg_cd="NASD")  # 미국전체 1회
+        return await get_stock_balance(user_id, db, excg_cd="NASD", account_no=account_no)  # 미국전체 1회
 
     merged: List = []
     for i, excg in enumerate(US_TRADE_EXCG):  # ("NASD", "NYSE", "AMEX")
         if i > 0:
             await asyncio.sleep(0.3)  # 호출 사이 간격 — KIS 초당 거래건수 제한 회피
-        r = await get_stock_balance(user_id, db, excg_cd=excg)
+        r = await get_stock_balance(user_id, db, excg_cd=excg, account_no=account_no)
         for it in r["output1"]:
             # 응답에 거래소코드가 없으면 조회한 거래소로 보정 (종목별 시장 구분 보존)
             if not it.get("ovrs_excg_cd"):
@@ -178,9 +179,9 @@ async def get_us_holdings(user_id: str, db: AsyncSession):
 # 주문
 # ============================================================
 
-async def place_order_api(user_id: str, order: Order, db: AsyncSession):
+async def place_order_api(user_id: str, order: Order, db: AsyncSession, account_no: str = None):
     """해외 주식 주문 (미국)"""
-    user_data, access_data = await _get_user_auth(user_id, db)
+    user_data, access_data = await _get_user_auth(user_id, db, account_no)
     url = settings.DEV_API_URL if access_data.get("simulation_yn") == "Y" else settings.REAL_API_URL
     path = "uapi/overseas-stock/v1/trading/order"
     api_url = f"{url}/{path}"
@@ -213,9 +214,9 @@ async def place_order_api(user_id: str, order: Order, db: AsyncSession):
 # 주문 정정/취소
 # ============================================================
 
-async def modify_or_cancel_order_api(user_id: str, order: ModifyOrder, db: AsyncSession):
+async def modify_or_cancel_order_api(user_id: str, order: ModifyOrder, db: AsyncSession, account_no: str = None):
     """해외 주식 주문 정정/취소"""
-    user_data, access_data = await _get_user_auth(user_id, db)
+    user_data, access_data = await _get_user_auth(user_id, db, account_no)
     url = settings.DEV_API_URL if access_data.get("simulation_yn") == "Y" else settings.REAL_API_URL
     path = "uapi/overseas-stock/v1/trading/order-rvsecncl"
     api_url = f"{url}/{path}"
@@ -245,7 +246,8 @@ async def modify_or_cancel_order_api(user_id: str, order: ModifyOrder, db: Async
 # 미체결 내역 조회
 # ============================================================
 
-async def get_inquire_daily_ccld_obj(user_id: str, db: AsyncSession, excg_cd: str = "NAS", fk200="", nk200=""):
+async def get_inquire_daily_ccld_obj(user_id: str, db: AsyncSession, excg_cd: str = "NAS", fk200="", nk200="",
+                                     account_no: str = None):
     """해외 주식 미체결 내역 조회 (excg_cd: 정식코드 NAS/NYS/AMS)
 
     ⚠️ 체결 확인에 쓰지 말 것 — 완전 체결된 주문은 이 목록에서 빠지므로
@@ -254,7 +256,7 @@ async def get_inquire_daily_ccld_obj(user_id: str, db: AsyncSession, excg_cd: st
 
     ⚠️ KIS 명세상 모의투자 미지원(TTTS3018R) → 모의 계정은 None 반환.
     """
-    user_data, access_data = await _get_user_auth(user_id, db)
+    user_data, access_data = await _get_user_auth(user_id, db, account_no)
 
     # 모의투자는 본 API(TTTS3018R) 미지원 — 실전 호스트 오호출 방지
     if access_data.get("simulation_yn") == "Y":
@@ -284,6 +286,7 @@ async def get_inquire_ccnl_obj(
     user_id: str, db: AsyncSession, excg_cd: str = "NAS",
     ord_strt_dt: str = None, ord_end_dt: str = None,
     ccld_nccs_dvsn: str = "00", fk200="", nk200="",
+    account_no: str = None,
 ):
     """해외 주식 주문체결내역 조회 (TTTS3035R / 모의 VTTS3035R)
 
@@ -295,7 +298,7 @@ async def get_inquire_ccnl_obj(
         ord_strt_dt~ord_end_dt: 주문일자 구간. 기본값은 전일~당일 —
             미국 정규장(22:30~05:00 KST)이 자정을 넘겨 주문일자가 갈리기 때문.
     """
-    user_data, access_data = await _get_user_auth(user_id, db)
+    user_data, access_data = await _get_user_auth(user_id, db, account_no)
     sim = access_data.get("simulation_yn") == "Y"
 
     url = settings.DEV_API_URL if sim else settings.REAL_API_URL
@@ -355,7 +358,8 @@ UNSUPPORTED = _Unsupported()
 async def check_order_execution(
     user_id: str, order_no: str, db: AsyncSession,
     excg_cd: str = "NAS",
-    max_retry: int = 3, delay: float = 2.0
+    max_retry: int = 3, delay: float = 2.0,
+    account_no: str = None,
 ) -> Optional[dict]:
     """
     해외 주식 체결 확인 (폴링) — 주문체결내역(TTTS3035R/VTTS3035R) 기준
@@ -364,11 +368,11 @@ async def check_order_execution(
     Returns:
         체결 정보 / None(아직 미체결) / UNSUPPORTED(조회 자체가 불가 - 모의 미지원 등)
     """
-    sim = await is_simulation(user_id, db)
+    sim = await is_simulation(user_id, db, account_no)
 
     for attempt in range(max_retry):
         try:
-            body = await get_inquire_ccnl_obj(user_id, db, excg_cd)
+            body = await get_inquire_ccnl_obj(user_id, db, excg_cd, account_no=account_no)
         except ExternalServiceError as e:
             # 모의는 TR 미지원 시 오류가 나므로 재시도 없이 '확인 불가'로 확정한다
             if sim:
@@ -423,14 +427,14 @@ async def check_order_execution(
 # 시세 조회
 # ============================================================
 
-async def get_inquire_price(user_id: str, code: str, db: AsyncSession, excd: str = "NAS"):
+async def get_inquire_price(user_id: str, code: str, db: AsyncSession, excd: str = "NAS", account_no: str = None):
     """해외 주식 현재가상세 조회 (HHDFS76200200) — excd: 정식코드 NYS/NAS/AMS
 ㅂ
     현재체결가(HHDFS00000300)와 달리 open/high/low 를 함께 제공하여
     실시간 지표(ATR 등) 계산에 필요한 당일 고가/저가를 얻을 수 있다.
     단, 현지통화 등락률 필드는 없으므로 (last-base)/base 로 계산해 사용한다.
     """
-    user_data, access_data = await _get_user_auth(user_id, db)
+    access_data = await _quote_auth(user_id, db, account_no)
     url = settings.DEV_API_URL if access_data.get("simulation_yn") == "Y" else settings.REAL_API_URL
     path = "uapi/overseas-price/v1/quotations/price-detail"
     api_url = f"{url}/{path}"
@@ -446,15 +450,17 @@ async def get_inquire_price(user_id: str, code: str, db: AsyncSession, excd: str
     return body.get("output")
 
 
-async def get_target_price(code: str, excd: str = "NAS"):
-    """해외 종목 일별 시세 조회 (관리자 토큰 사용)"""
-    redis = await get_redis()
-    access_data = await redis.hgetall("mgnt_access_token")
+async def get_target_price(user_id: str, code: str, db: AsyncSession, excd: str = "NAS",
+                           access_data: dict = None):
+    """해외 종목 일별 시세 조회 (배치용 — BATCH_USER_ID의 인증키로 조회)
 
-    if not access_data:
-        access_data = await oauth_token("mgnt", "Y", settings.API_KEY, settings.SECRET_KEY)
+    kis_api.get_target_price와 동일한 이유로 `mgnt` 전용 토큰 경로를 제거했다.
+    시세 TR은 계좌가 필요 없으므로 계좌 무관 토큰을 쓴다.
+    URL 규칙은 같은 TR(HHDFS76240000)을 쓰는 get_stock_data와 일치시킨다.
+    """
+    access_data = access_data or await _quote_auth(user_id, db)
 
-    url = settings.REAL_API_URL
+    url = settings.DEV_API_URL if access_data.get("simulation_yn") == "Y" else settings.REAL_API_URL
     path = 'uapi/overseas-price/v1/quotations/dailyprice'
     api_url = f"{url}/{path}"
 
@@ -470,12 +476,16 @@ async def get_target_price(code: str, excd: str = "NAS"):
     response = await fetch("GET", api_url, "KIS", params=query, headers=headers)
     body = response["body"]
     output = body.get("output2", [])
-    return output[0] if output else None
+    if not output:
+        # 조용히 None을 돌려주면 수집 배치가 '성공'으로 집계해 그날 미국 일봉이
+        # 로그 없이 비고, 그 구멍이 이후 지표 워밍업을 오염시킨다. 국내와 동일하게 실패로 올린다.
+        raise ExternalServiceError("KIS", f"{code}({excd}) 일별 시세 조회 실패")
+    return output[0]
 
 
-async def get_stock_data(user_id: str, code: str, start_date: str, end_date: str, db: AsyncSession, excd: str = "NAS"):
+async def get_stock_data(user_id: str, code: str, start_date: str, end_date: str, db: AsyncSession, excd: str = "NAS", account_no: str = None):
     """해외 주식 기간별 데이터 조회 (excd: 정식코드 NYS/NAS/AMS)"""
-    user_data, access_data = await _get_user_auth(user_id, db)
+    access_data = await _quote_auth(user_id, db, account_no)
     url = settings.DEV_API_URL if access_data.get("simulation_yn") == "Y" else settings.REAL_API_URL
     path = "uapi/overseas-price/v1/quotations/dailyprice"
     api_url = f"{url}/{path}"
@@ -517,9 +527,9 @@ async def get_stock_data(user_id: str, code: str, start_date: str, end_date: str
     return body
 
 
-async def get_inquire_asking_price(user_id: str, code: str, db: AsyncSession, excd: str = "NAS"):
+async def get_inquire_asking_price(user_id: str, code: str, db: AsyncSession, excd: str = "NAS", account_no: str = None):
     """해외 주식 호가 조회 (excd: 정식코드 NYS/NAS/AMS)"""
-    user_data, access_data = await _get_user_auth(user_id, db)
+    access_data = await _quote_auth(user_id, db, account_no)
     url = settings.DEV_API_URL if access_data.get("simulation_yn") == "Y" else settings.REAL_API_URL
     path = "uapi/overseas-price/v1/quotations/inquire-asking-price"
     api_url = f"{url}/{path}"
@@ -543,7 +553,8 @@ def _to_float(value) -> float:
         return 0.0
 
 
-async def get_best_quote(user_id: str, code: str, db: AsyncSession, excd: str = "NAS") -> Optional[dict]:
+async def get_best_quote(user_id: str, code: str, db: AsyncSession, excd: str = "NAS",
+                         account_no: str = None) -> Optional[dict]:
     """해외 주식 최우선 호가 조회 (매도1호가/매수1호가)
 
     미국은 지정가(ORD_DVSN "00")만 가능하므로 주문 단가를 직접 정해야 한다.
@@ -553,7 +564,7 @@ async def get_best_quote(user_id: str, code: str, db: AsyncSession, excd: str = 
     Returns:
         {"ask": 매도1호가, "bid": 매수1호가} 또는 None(조회/파싱 실패)
     """
-    body = await get_inquire_asking_price(user_id, code, db, excd)
+    body = await get_inquire_asking_price(user_id, code, db, excd, account_no=account_no)
     if not body:
         return None
 
@@ -589,9 +600,9 @@ async def get_best_quote(user_id: str, code: str, db: AsyncSession, excd: str = 
 # 순위 조회
 # ============================================================
 
-async def get_fluctuation_rank(user_id: str, db: AsyncSession, rank_sort_cls_code: str = "0", excd: str = "NAS"):
+async def get_fluctuation_rank(user_id: str, db: AsyncSession, rank_sort_cls_code: str = "0", excd: str = "NAS", account_no: str = None):
     """해외주식 등락률 순위"""
-    user_data, access_data = await _get_user_auth(user_id, db)
+    access_data = await _quote_auth(user_id, db, account_no)
     path = "uapi/overseas-stock/v1/ranking/price-fluct"
     url = settings.REAL_API_URL
     api_url = f"{url}/{path}"
@@ -610,9 +621,9 @@ async def get_fluctuation_rank(user_id: str, db: AsyncSession, rank_sort_cls_cod
     return body.get("output2")
 
 
-async def get_volume_rank(user_id: str, db: AsyncSession, excd: str = "NAS"):
+async def get_volume_rank(user_id: str, db: AsyncSession, excd: str = "NAS", account_no: str = None):
     """해외주식 거래량 순위 (excd: 정식코드 NYS/NAS/AMS)"""
-    user_data, access_data = await _get_user_auth(user_id, db)
+    access_data = await _quote_auth(user_id, db, account_no)
     path = "uapi/overseas-stock/v1/ranking/trade-vol"
     url = settings.REAL_API_URL
     api_url = f"{url}/{path}"
@@ -631,9 +642,9 @@ async def get_volume_rank(user_id: str, db: AsyncSession, excd: str = "NAS"):
     return body.get("output2")
 
 
-async def get_volume_power_rank(user_id: str, db: AsyncSession, excd: str = "NAS"):
+async def get_volume_power_rank(user_id: str, db: AsyncSession, excd: str = "NAS", account_no: str = None):
     """해외주식 체결강도 순위"""
-    user_data, access_data = await _get_user_auth(user_id, db)
+    access_data = await _quote_auth(user_id, db, account_no)
     path = "uapi/overseas-stock/v1/ranking/volume-power"
     url = settings.REAL_API_URL
     api_url = f"{url}/{path}"
