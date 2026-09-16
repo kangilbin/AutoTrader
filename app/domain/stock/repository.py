@@ -20,9 +20,12 @@ class StockRepository:
     def __init__(self, db: AsyncSession):
         self.db = db
 
-    async def find_by_code(self, code: str) -> Optional[dict]:
+    async def find_by_code(self, mrkt_code: str, st_code: str) -> Optional[dict]:
         """종목 코드로 조회"""
-        query = select(StockModel).filter(StockModel.ST_CODE == code)
+        query = select(StockModel).filter(
+            StockModel.MRKT_CODE == mrkt_code,
+            StockModel.ST_CODE == st_code
+        )
         result = await self.db.execute(query)
         db_stock = result.scalars().first()
         if not db_stock:
@@ -48,11 +51,11 @@ class StockRepository:
         rows = await self.db.execute(query, {"initial": initial})
         return [StockResponse.model_validate(row).model_dump() for row in rows]
 
-    async def update(self, st_code: str, data: dict) -> dict:
+    async def update(self, mrkt_code: str, st_code: str, data: dict) -> dict:
         """종목 정보 수정 (flush만 수행)"""
         query = (
             update(StockModel)
-            .filter(StockModel.ST_CODE == st_code)
+            .filter(StockModel.MRKT_CODE == mrkt_code, StockModel.ST_CODE == st_code)
             .values(**data)
             .execution_options(synchronize_session=False)
         )
@@ -75,11 +78,11 @@ class StockRepository:
         await self.db.flush()
         return len(history_data)
 
-    async def find_history(self, code: str, start_date: datetime) -> List[dict]:
+    async def find_history(self, mrkt_code: str, st_code: str, start_date: datetime) -> List[dict]:
         """일별 데이터 조회"""
         query = (
             select(StockHistoryModel)
-            .filter(StockHistoryModel.ST_CODE == code)
+            .filter(StockHistoryModel.MRKT_CODE == mrkt_code, StockHistoryModel.ST_CODE == st_code)
             .filter(StockHistoryModel.STCK_BSOP_DATE >= start_date.strftime('%Y%m%d'))
             .order_by(StockHistoryModel.STCK_BSOP_DATE.asc())
         )
@@ -88,7 +91,8 @@ class StockRepository:
 
     async def get_foreign_net_buy_sum(
         self,
-        symbol: str,
+        mrkt_code: str,
+        st_code: str,
         start_date: str,
         end_date: Optional[str] = None
     ) -> int:
@@ -96,7 +100,8 @@ class StockRepository:
         외국인 순매수량 합산
 
         Args:
-            symbol: 종목 코드
+            mrkt_code: 시장 코드
+            st_code: 종목 코드
             start_date: 시작일 (YYYYMMDD)
             end_date: 종료일 (YYYYMMDD, None이면 오늘까지)
 
@@ -104,7 +109,8 @@ class StockRepository:
             외국인 순매수량 합계
         """
         query = select(func.sum(StockHistoryModel.FRGN_NTBY_QTY))
-        query = query.where(StockHistoryModel.ST_CODE == symbol)
+        query = query.where(StockHistoryModel.MRKT_CODE == mrkt_code)
+        query = query.where(StockHistoryModel.ST_CODE == st_code)
         query = query.where(StockHistoryModel.STCK_BSOP_DATE >= start_date)
 
         if end_date:
@@ -115,7 +121,8 @@ class StockRepository:
 
     async def get_stock_volume_sum(
         self,
-        symbol: str,
+        mrkt_code: str,
+        st_code: str,
         start_date: str,
         end_date: Optional[str] = None
     ) -> tuple[int, int]:
@@ -123,7 +130,8 @@ class StockRepository:
         외국인 순매수량 및 누적 거래량 합산
 
         Args:
-            symbol: 종목 코드
+            mrkt_code: 시장 코드
+            st_code: 종목 코드
             start_date: 시작일 (YYYYMMDD)
             end_date: 종료일 (YYYYMMDD, None이면 오늘까지)
 
@@ -134,7 +142,8 @@ class StockRepository:
             func.sum(StockHistoryModel.FRGN_NTBY_QTY).label('total_frgn'),
             func.sum(StockHistoryModel.ACML_VOL).label('total_vol')
         )
-        query = query.where(StockHistoryModel.ST_CODE == symbol)
+        query = query.where(StockHistoryModel.MRKT_CODE == mrkt_code)
+        query = query.where(StockHistoryModel.ST_CODE == st_code)
         query = query.where(StockHistoryModel.STCK_BSOP_DATE >= start_date)
 
         if end_date:

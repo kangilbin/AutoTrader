@@ -1,7 +1,7 @@
 """
 데이터베이스 연결 및 ORM 모델 정의
 """
-from sqlalchemy import MetaData, Integer, Sequence, CHAR, Column, String, DateTime, DECIMAL
+from sqlalchemy import MetaData, Integer, Sequence, CHAR, Column, String, DateTime, DECIMAL, UniqueConstraint
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker, declarative_base
 from datetime import datetime
@@ -57,8 +57,8 @@ class StockModel(Base):
     """종목 정보 테이블"""
     __tablename__ = "STOCK_INFO"
 
-    MARKET_TYPE = Column(String(50), nullable=False, comment='종목 코드', primary_key=True)
-    ST_CODE = Column(String(50), nullable=False, comment='종목 코드', primary_key=True)
+    MRKT_CODE = Column(String(50), nullable=False, primary_key=True, comment='조건 시장 분류 코드(J:KRX, NX:NXT, UN:통합)')
+    ST_CODE = Column(String(50), nullable=False, primary_key=True, comment='종목 코드')
     SD_CODE = Column(String(50), nullable=False, comment='주식 표준 코드')
     ST_NM = Column(String(100), nullable=False, comment='종목명')
     DATA_YN = Column(CHAR(1), nullable=False, default='N', comment='데이터 적재 여부')
@@ -71,6 +71,7 @@ class StockHistoryModel(Base):
     """주식 일별 데이터 테이블"""
     __tablename__ = "STOCK_DAY_HISTORY"
 
+    MRKT_CODE = Column(String(50), nullable=False, primary_key=True, comment='조건 시장 분류 코드(J:KRX, NX:NXT, UN:통합)')
     ST_CODE = Column(String(50), nullable=False, primary_key=True, comment='종목 코드')
     STCK_BSOP_DATE = Column(String(8), nullable=False, primary_key=True, comment='주식 영업 일자')
     STCK_OPRC = Column(DECIMAL(15, 2), nullable=False, comment='주식 시가')
@@ -86,10 +87,14 @@ class StockHistoryModel(Base):
 class SwingModel(Base):
     """스윙 매매 테이블"""
     __tablename__ = "SWING_TRADE"
+    __table_args__ = (
+        UniqueConstraint('ACCOUNT_NO', 'MRKT_CODE', 'ST_CODE', name='uq_swing_account_stock'),
+    )
 
     SWING_ID = Column(Integer, Sequence('swing_id_seq'), primary_key=True, comment='스윙 ID')
-    ACCOUNT_NO = Column(String(50), nullable=False, primary_key=True, comment='계좌 번호')
-    ST_CODE = Column(String(50), nullable=False, primary_key=True, comment='종목 코드')
+    ACCOUNT_NO = Column(String(50), nullable=False, comment='계좌 번호')
+    MRKT_CODE = Column(String(50), nullable=False, comment='조건 시장 분류 코드(J:KRX, NX:NXT, UN:통합)')
+    ST_CODE = Column(String(50), nullable=False, comment='종목 코드')
     USE_YN = Column(CHAR(1), nullable=False, default='Y', comment='사용 여부')
     INIT_AMOUNT = Column(DECIMAL(15, 2), nullable=False, comment='초기 투자금')
     CUR_AMOUNT = Column(DECIMAL(15, 2), nullable=False, comment='현재 투자금')
@@ -126,6 +131,7 @@ class TradeHistoryModel(Base):
     TRADE_PRICE = Column(DECIMAL(15, 2), nullable=False, comment='거래 가격')
     TRADE_QTY = Column(Integer, nullable=False, comment='거래 수량')
     TRADE_AMOUNT = Column(DECIMAL(15, 2), nullable=False, comment='거래 금액')
+    TRADE_REASONS = Column(String(500), nullable=True, comment='매매 사유 JSON ["추세약화","추세반전","EMA 이탈"]')
     REG_DT = Column(DateTime, default=datetime.now, nullable=False, comment='등록일')
 
 

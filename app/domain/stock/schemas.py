@@ -9,7 +9,7 @@ from decimal import Decimal
 
 class StockResponse(BaseModel):
     """종목 정보 응답"""
-    MARKET_TYPE: str
+    MRKT_CODE: str
     ST_CODE: str
     SD_CODE: Optional[str] = None
     ST_NM: Optional[str] = None
@@ -28,6 +28,7 @@ class StockResponse(BaseModel):
 
 class StockHistoryResponse(BaseModel):
     """주식 일별 데이터 응답"""
+    MRKT_CODE: str
     ST_CODE: str
     STCK_BSOP_DATE: str
     STCK_OPRC: Decimal

@@ -16,13 +16,14 @@ logger = logging.getLogger(__name__)
 MAX_ITEMS_PER_REQUEST = 100
 
 
-async def fetch_and_store_3_years_data(user_id: str, code: str, stock_data: dict):
+async def fetch_and_store_3_years_data(user_id: str, mrkt_code: str, st_code: str, stock_data: dict):
     """
     3년치 주식 데이터를 백그라운드에서 병렬로 가져와서 DB에 저장하는 배치 작업
 
     Args:
         user_id: 사용자 ID
-        code: 주식 코드
+        mrkt_code: 시장 코드
+        st_code: 종목 코드
         stock_data: 주식 메타 정보
     """
     db = await Database.get_session()
@@ -30,8 +31,8 @@ async def fetch_and_store_3_years_data(user_id: str, code: str, stock_data: dict
         stock_service = StockService(db)
 
         # 상태 업데이트: 처리 중
-        await stock_service.update_stock(code, {"DATA_YN": 'P'})
-        logger.info(f"Started background data fetch for {code}")
+        await stock_service.update_stock(mrkt_code, st_code, {"DATA_YN": 'P'})
+        logger.info(f"Started background data fetch for {mrkt_code}/{st_code}")
 
         end_date = datetime.now().date()
         start_date = end_date - relativedelta(years=3)
@@ -56,7 +57,7 @@ async def fetch_and_store_3_years_data(user_id: str, code: str, stock_data: dict
             async with semaphore:
                 try:
                     response = await get_stock_data(
-                        user_id, code,
+                        user_id, st_code,
                         range_start.strftime('%Y%m%d'),
                         range_end.strftime('%Y%m%d')
                     )
@@ -93,7 +94,8 @@ async def fetch_and_store_3_years_data(user_id: str, code: str, stock_data: dict
                     history_data = []
                     for item in result:
                         history_data.append({
-                            "ST_CODE": code,
+                            "MRKT_CODE": mrkt_code,
+                            "ST_CODE": st_code,
                             "STCK_BSOP_DATE": item.get("STCK_BSOP_DATE"),
                             "STCK_OPRC": item.get("STCK_OPRC"),
                             "STCK_HGPR": item.get("STCK_HGPR"),
@@ -115,29 +117,30 @@ async def fetch_and_store_3_years_data(user_id: str, code: str, stock_data: dict
                 failed_tasks += 1
 
         # 상태 업데이트: 완료
-        await stock_service.update_stock(code, {"DATA_YN": 'Y'})
-        logger.info(f"Stock {code} updated to DATA_YN=Y, total {total_cnt} records")
+        await stock_service.update_stock(mrkt_code, st_code, {"DATA_YN": 'Y'})
+        logger.info(f"Stock {mrkt_code}/{st_code} updated to DATA_YN=Y, total {total_cnt} records")
 
     except Exception as e:
         try:
             stock_service = StockService(db)
-            await stock_service.update_stock(code, {"DATA_YN": 'E'})
-            logger.error(f"Updated {code} to DATA_YN=E due to error: {e}")
+            await stock_service.update_stock(mrkt_code, st_code, {"DATA_YN": 'E'})
+            logger.error(f"Updated {mrkt_code}/{st_code} to DATA_YN=E due to error: {e}")
         except Exception as update_error:
-            logger.error(f"Failed to update error status for {code}: {update_error}")
+            logger.error(f"Failed to update error status for {mrkt_code}/{st_code}: {update_error}")
 
-        logger.error(f"Background fetch failed for {code}: {e}")
+        logger.error(f"Background fetch failed for {mrkt_code}/{st_code}: {e}")
         raise
     finally:
         await db.close()
 
 
-async def get_batch_status(code: str) -> dict:
+async def get_batch_status(mrkt_code: str, st_code: str) -> dict:
     """
     배치 작업 상태 조회
 
     Args:
-        code: 종목 코드
+        mrkt_code: 시장 코드
+        st_code: 종목 코드
 
     Returns:
         dict: 상태 정보
@@ -145,14 +148,15 @@ async def get_batch_status(code: str) -> dict:
     db = await Database.get_session()
     try:
         stock_service = StockService(db)
-        stock_data = await stock_service.get_stock_info(code)
+        stock_data = await stock_service.get_stock_info(mrkt_code, st_code)
         return {
-            "code": code,
+            "mrkt_code": mrkt_code,
+            "st_code": st_code,
             "status": stock_data.get("DATA_YN"),
             "last_updated": stock_data.get("MOD_DT")
         }
     except Exception as e:
-        logger.error(f"Failed to get status for {code}: {e}")
+        logger.error(f"Failed to get status for {mrkt_code}/{st_code}: {e}")
         raise
     finally:
         await db.close()

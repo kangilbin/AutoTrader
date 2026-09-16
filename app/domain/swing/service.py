@@ -38,6 +38,7 @@ class SwingService:
             # 도메인 엔티티 생성 (비즈니스 검증)
             swing = SwingTrade.create(
                 account_no=request.ACCOUNT_NO,
+                mrkt_code=request.MRKT_CODE,
                 st_code=request.ST_CODE,
                 init_amount=Decimal(request.INIT_AMOUNT),
                 swing_type=request.SWING_TYPE,
@@ -63,13 +64,13 @@ class SwingService:
 
             # 데이터 적재 여부 확인 후 백그라운드 실행
             stock_service = StockService(self.db)
-            stock_info = await stock_service.get_stock_info(request.ST_CODE)
+            stock_info = await stock_service.get_stock_info(request.MRKT_CODE, request.ST_CODE)
 
             if stock_info.get("DATA_YN") == 'N':
                 asyncio.create_task(
-                    fetch_and_store_3_years_data(user_id, request.ST_CODE, stock_info)
+                    fetch_and_store_3_years_data(user_id, request.MRKT_CODE, request.ST_CODE, stock_info)
                 )
-                logger.info(f"[{request.ST_CODE}] 데이터 적재 백그라운드 태스크 시작")
+                logger.info(f"[{request.MRKT_CODE}/{request.ST_CODE}] 데이터 적재 백그라운드 태스크 시작")
 
             # 등록된 종목의 지표 캐싱
             await self.cache_single_indicators(request.ST_CODE)
@@ -138,8 +139,10 @@ class SwingService:
 
                 if st_code not in swing_dict:
                     # 새 스윙 등록
+                    mrkt_code = buy_item.get("mrkt_code", "J")
                     swing = SwingTrade.create(
                         account_no=account_no,
+                        mrkt_code=mrkt_code,
                         st_code=st_code,
                         init_amount=Decimal(0),
                         swing_type='S'

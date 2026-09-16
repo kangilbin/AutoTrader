@@ -24,18 +24,18 @@ class StockService:
         """종목 검색 (초성)"""
         return await self.repo.search_by_initial(query)
 
-    async def get_stock_info(self, code: str) -> dict:
+    async def get_stock_info(self, mrkt_code: str, st_code: str) -> dict:
         """종목 정보 조회"""
-        stock = await self.repo.find_by_code(code)
+        stock = await self.repo.find_by_code(mrkt_code, st_code)
         if not stock:
-            raise NotFoundError("종목", code)
+            raise NotFoundError("종목", st_code)
         return stock
 
-    async def update_stock(self, st_code: str, data: dict) -> dict:
+    async def update_stock(self, mrkt_code: str, st_code: str, data: dict) -> dict:
         """종목 정보 수정"""
         try:
             data["MOD_DT"] = datetime.now()
-            result = await self.repo.update(st_code, data)
+            result = await self.repo.update(mrkt_code, st_code, data)
             await self.db.commit()
             return result
         except SQLAlchemyError as e:
@@ -54,10 +54,10 @@ class StockService:
             logger.error(f"일별 데이터 저장 실패: {e}", exc_info=True)
             raise DatabaseError("일별 데이터 저장에 실패했습니다")
 
-    async def   get_stock_history(self, code: str, start_date: datetime) -> List[dict]:
+    async def get_stock_history(self, mrkt_code: str, st_code: str, start_date: datetime) -> List[dict]:
         """일별 데이터 조회"""
         try:
-            return await self.repo.find_history(code, start_date)
+            return await self.repo.find_history(mrkt_code, st_code, start_date)
         except SQLAlchemyError as e:
             logger.error(f"일별 데이터 조회 실패: {e}", exc_info=True)
             raise DatabaseError("일별 조회를 실패했습니다")
