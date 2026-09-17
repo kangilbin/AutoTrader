@@ -128,6 +128,17 @@ class AuthService:
             logger.error(f"인증키 수정 실패: {e}", exc_info=True)
             raise DatabaseError("인증키 수정에 실패했습니다", operation="update", original_error=e)
 
+    async def delete_impact(self, user_id: str, auth_id: int) -> dict:
+        """인증키 삭제 영향도 조회 (삭제 전 확인용)
+
+        소유권은 여기서 검증한다. 검증 없이 위임하면 남의 AUTH_ID로 계좌번호와
+        보유 종목을 엿볼 수 있다.
+        """
+        if not await self.repo.find_by_id(user_id, auth_id):
+            raise NotFoundError("인증키", auth_id)
+
+        return await self.account_service.delete_impact_by_auth(user_id, auth_id)
+
     async def delete_auth(self, user_id: str, auth_id: int) -> bool:
         """인증키 삭제 - 계좌·스윙 동반 삭제, 소유권 검증 포함
 

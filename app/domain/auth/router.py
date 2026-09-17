@@ -40,6 +40,17 @@ async def register_auth(
     return success_response("보안키 등록 완료", auth_info)
 
 
+@router.get("/{auth_id}/delete-impact")
+async def get_auth_delete_impact(
+    auth_id: int,
+    service: Annotated[AuthService, Depends(get_auth_service)],
+    user_id: Annotated[str, Depends(get_current_user)]
+):
+    """보안키 삭제 영향도 조회 (함께 삭제되는 계좌·자동매매)"""
+    impact = await service.delete_impact(user_id, auth_id)
+    return success_response("삭제 영향도 조회", impact)
+
+
 @router.delete("/{auth_id}")
 async def delete_auth(
     auth_id: int,

@@ -84,6 +84,41 @@ class AccountRepository:
         result = await self.db.execute(query)
         return list(result.scalars().all())
 
+    async def find_accounts_by_auth(self, user_id: str, auth_id: int) -> List:
+        """인증키에 묶인 계좌 행(ACCOUNT_ID, ACCOUNT_NO) 목록"""
+        query = select(Account.ACCOUNT_ID, Account.ACCOUNT_NO).filter(
+            Account.USER_ID == user_id, Account.AUTH_ID == auth_id
+        )
+        result = await self.db.execute(query)
+        return result.all()
+
+    async def find_surviving_account_nos(
+        self, account_nos: List[str], exclude_account_ids: List
+    ) -> List[str]:
+        """제외 대상 계좌 행을 빼고도 ACCOUNT에 남는 계좌번호
+
+        삭제 '전에' 영향도를 계산할 때 쓴다. 삭제 '후'에 같은 판단을 하는
+        find_existing_account_nos와 시점만 다르고 규칙은 같다 — 다른 인증키에도
+        묶여 있는 계좌는 삭제 대상에서 제외된다.
+
+        ⚠️ 두 메서드 모두 USER_ID로 범위를 좁히지 않는다. SWING_TRADE에 USER_ID가
+        없고 배치가 ACCOUNT_NO만으로 조인하므로(find_active_domestic_swings),
+        다른 사용자의 ACCOUNT 행이 남아 있으면 그 스윙은 실제로 계속 동작한다.
+        따라서 '남아 있다'로 보고 삭제하지 않는 쪽이 안전하다. 한쪽에만 USER_ID
+        조건을 넣으면 미리보기와 실제 삭제가 어긋나므로 반드시 함께 바꿀 것.
+        """
+        if not account_nos:
+            return []
+        query = (
+            select(Account.ACCOUNT_NO)
+            .filter(Account.ACCOUNT_NO.in_(account_nos))
+            .distinct()
+        )
+        if exclude_account_ids:
+            query = query.filter(Account.ACCOUNT_ID.notin_(exclude_account_ids))
+        result = await self.db.execute(query)
+        return list(result.scalars().all())
+
     async def find_existing_account_nos(self, account_nos: List[str]) -> List[str]:
         """주어진 계좌번호 중 ACCOUNT에 아직 남아 있는 것만 반환
 

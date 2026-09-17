@@ -10,12 +10,30 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.account.entity import Account
 from app.domain.account.repository import AccountRepository
-from app.domain.account.schemas import AccountCreateRequest, AccountResponse
+from app.domain.account.schemas import (
+    AccountCreateRequest,
+    AccountResponse,
+    DeleteImpactResponse,
+    SwingImpactItem,
+)
 from app.domain.swing.repository import SwingRepository
 from app.exceptions import NotFoundError, DatabaseError
 from app.external.kis_api import token_for_auth_id, verify_account_balance
 
 logger = logging.getLogger(__name__)
+
+
+def has_open_exposure(swing) -> bool:
+    """증권사에 실제 주식이 남아 있는지 (삭제 경고 기준)
+
+    SwingTrade.has_position()(SIGNAL 1·2)보다 넓다 — SIGNAL=0이어도 HOLD_QTY>0이면
+    편입 대기 중인 실보유다(auto_swing_batch.py:192와 동일 판정). 이름을 구분해 둔 건
+    entity 메서드로 "단순화"하는 순간 편입 대기 물량이 경고에서 빠지기 때문이다.
+
+    삭제 경고와 영향도 조회는 반드시 같은 기준을 써야 한다. 어긋나면
+    "경고에 없던 보유 포지션이 삭제되는" 경로가 생긴다.
+    """
+    return swing.SIGNAL in (1, 2) or (swing.HOLD_QTY or 0) > 0
 
 
 class AccountService:
@@ -75,6 +93,59 @@ class AccountService:
         await verify_account_balance(access_data, account_no)
         return {"account_no": account_no, "valid": True}
 
+    async def delete_impact(self, user_id: str, account_id: str) -> dict:
+        """계좌 삭제 영향도 조회 (삭제 전 확인용)"""
+        account_no = await self.repo.find_account_no_by_id(user_id, account_id)
+        if not account_no:
+            raise NotFoundError("계좌", account_id)
+
+        return await self._impact_of([account_id], [account_no])
+
+    async def delete_impact_by_auth(self, user_id: str, auth_id: int) -> dict:
+        """인증키 삭제 영향도 조회 (삭제 전 확인용)"""
+        rows = await self.repo.find_accounts_by_auth(user_id, auth_id)
+        return await self._impact_of(
+            [r.ACCOUNT_ID for r in rows], [r.ACCOUNT_NO for r in rows]
+        )
+
+    async def _impact_of(self, account_ids: List, account_nos: List[str]) -> dict:
+        """해당 계좌들을 지우면 무엇이 함께 사라지는지 계산 (읽기 전용)
+
+        실제 삭제(purge_orphaned_swings)와 같은 규칙으로 고아 계좌를 가린다.
+        다른 인증키에도 묶여 있어 살아남는 계좌의 스윙은 영향도에서 제외된다.
+        """
+        # 같은 계좌번호가 한 인증키에 중복 등록될 수 있다(유니크 제약 없음).
+        # ACCOUNT_ID는 행 단위로 다 넘겨야 제외가 정확하지만, 화면에 보여줄
+        # 계좌번호는 중복을 접는다 — 확인 창에 같은 계좌가 두 번 뜨지 않도록.
+        account_nos = list(dict.fromkeys(account_nos))
+        if not account_nos:
+            return DeleteImpactResponse().model_dump()
+
+        surviving = set(
+            await self.repo.find_surviving_account_nos(account_nos, account_ids)
+        )
+        orphan_nos = [no for no in account_nos if no not in surviving]
+
+        swings = await self.swing_repo.find_by_account_nos(orphan_nos)
+        items = [
+            SwingImpactItem(
+                SWING_ID=swing.SWING_ID,
+                ACCOUNT_NO=swing.ACCOUNT_NO,
+                ST_CODE=swing.ST_CODE,
+                MRKT_CODE=swing.MRKT_CODE,
+                HOLD_QTY=swing.HOLD_QTY or 0,
+                SIGNAL=swing.SIGNAL or 0,
+                HAS_POSITION=has_open_exposure(swing),
+            )
+            for swing in swings
+        ]
+
+        return DeleteImpactResponse(
+            ACCOUNT_NOS=account_nos,
+            SWINGS=items,
+            HAS_POSITION=any(item.HAS_POSITION for item in items),
+        ).model_dump()
+
     async def delete_account(self, user_id: str, account_id: str) -> bool:
         """계좌 삭제 - 스윙·이평선 옵션 동반 삭제, 소유권 검증 포함
 
@@ -122,7 +193,7 @@ class AccountService:
         # 보유 포지션이 있는 스윙을 지우면 실제 주식은 증권사에 남은 채 손절·익절
         # 평가만 멈춘다. 삭제는 요청대로 진행하되 추적 가능하도록 경고를 남긴다.
         for swing in await self.swing_repo.find_by_account_nos(orphan_nos):
-            if swing.SIGNAL in (1, 2) or (swing.HOLD_QTY or 0) > 0:
+            if has_open_exposure(swing):
                 logger.warning(
                     f"[SWING_ID={swing.SWING_ID}] 보유 포지션({swing.HOLD_QTY}주, "
                     f"SIGNAL={swing.SIGNAL}) 상태로 삭제 - 계좌 {swing.ACCOUNT_NO} "

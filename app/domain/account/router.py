@@ -48,6 +48,17 @@ async def register_account(
     account_info = await service.create_account(user_id, request)
     return success_response("계좌 등록 성공", account_info)
 
+@router.get("/{account_id}/delete-impact")
+async def get_account_delete_impact(
+    account_id: str,
+    service: Annotated[AccountService, Depends(get_account_service)],
+    user_id: Annotated[str, Depends(get_current_user)]
+):
+    """계좌 삭제 영향도 조회 (함께 삭제되는 자동매매)"""
+    impact = await service.delete_impact(user_id, account_id)
+    return success_response("삭제 영향도 조회", impact)
+
+
 @router.delete("/{account_id}")
 async def delete_account(
     account_id: str,

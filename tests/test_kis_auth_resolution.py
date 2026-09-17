@@ -320,36 +320,56 @@ class RevokedAuthCacheTest(unittest.IsolatedAsyncioTestCase):
 
 
 class FakeAccountRepoRW:
-    """인증키↔계좌 바인딩 대역. bound: {auth_id: [account_no]}"""
+    """ACCOUNT 테이블 대역
 
-    def __init__(self):
-        self.bound = {}
-        self.by_id = {}                 # (user_id, account_id) -> account_no
+    rows: [SimpleNamespace(ACCOUNT_ID, ACCOUNT_NO, AUTH_ID, USER_ID)]
+    같은 계좌번호가 여러 인증키에 묶이는 중복 등록을 표현할 수 있어야 하므로
+    행 단위로 들고 있는다.
+    """
+
+    def __init__(self, rows=None):
+        self.rows = list(rows or [])
         self.deleted_by_auth = []
 
-    async def find_account_no_by_id(self, user_id, account_id):
-        return self.by_id.get((user_id, account_id))
-
-    async def delete(self, user_id, account_id):
-        account_no = self.by_id.pop((user_id, account_id), None)
-        if account_no is None:
-            return False
-        for nos in self.bound.values():
-            if account_no in nos:
-                nos.remove(account_no)
-        return True
+    def _owned(self, user_id):
+        return [r for r in self.rows if r.USER_ID == user_id]
 
     async def find_account_nos_by_auth(self, user_id, auth_id):
-        return list(self.bound.get(auth_id, []))
+        return [r.ACCOUNT_NO for r in self._owned(user_id) if r.AUTH_ID == auth_id]
+
+    async def find_accounts_by_auth(self, user_id, auth_id):
+        return [r for r in self._owned(user_id) if r.AUTH_ID == auth_id]
+
+    async def find_account_no_by_id(self, user_id, account_id):
+        return next(
+            (r.ACCOUNT_NO for r in self._owned(user_id) if r.ACCOUNT_ID == account_id), None
+        )
 
     async def delete_by_auth(self, user_id, auth_id):
+        keep = [r for r in self.rows if not (r.USER_ID == user_id and r.AUTH_ID == auth_id)]
+        removed = len(self.rows) - len(keep)
+        self.rows = keep
         self.deleted_by_auth.append((user_id, auth_id))
-        return len(self.bound.pop(auth_id, []))
+        return removed
+
+    async def delete(self, user_id, account_id):
+        keep = [r for r in self.rows if not (r.USER_ID == user_id and r.ACCOUNT_ID == account_id)]
+        if len(keep) == len(self.rows):
+            return False
+        self.rows = keep
+        return True
 
     async def find_existing_account_nos(self, account_nos):
-        """삭제 후에도 다른 인증키에 남아 있는 계좌번호"""
-        alive = {no for nos in self.bound.values() for no in nos}
-        return [no for no in account_nos if no in alive]
+        """삭제 후에도 남아 있는 계좌번호"""
+        return [no for no in account_nos if any(r.ACCOUNT_NO == no for r in self.rows)]
+
+    async def find_surviving_account_nos(self, account_nos, exclude_account_ids):
+        """삭제 전 시점: 제외 대상 행을 빼고도 남는 계좌번호"""
+        excluded = set(exclude_account_ids)
+        return [
+            no for no in account_nos
+            if any(r.ACCOUNT_NO == no and r.ACCOUNT_ID not in excluded for r in self.rows)
+        ]
 
 
 class FakeSwingRepoRW:
@@ -438,7 +458,10 @@ class AuthDeletionCacheCleanupTest(unittest.IsolatedAsyncioTestCase):
         계좌만 남기면 배치가 인증키 없는 계좌의 스윙을 매 주기 집어 실패한다
         (find_active_domestic_swings의 JOIN AUTH_KEY가 깨진다).
         """
-        self.accounts.bound = {3: ["acc-a", "acc-b"]}
+        self.accounts.rows = [
+            SimpleNamespace(ACCOUNT_ID="1", ACCOUNT_NO="acc-a", AUTH_ID=3, USER_ID="u1"),
+            SimpleNamespace(ACCOUNT_ID="2", ACCOUNT_NO="acc-b", AUTH_ID=3, USER_ID="u1"),
+        ]
         self.swings.rows = [
             SimpleNamespace(SWING_ID=1, ACCOUNT_NO="acc-a", SIGNAL=0, HOLD_QTY=0),
             SimpleNamespace(SWING_ID=2, ACCOUNT_NO="acc-b", SIGNAL=1, HOLD_QTY=5),
@@ -463,7 +486,10 @@ class AuthDeletionCacheCleanupTest(unittest.IsolatedAsyncioTestCase):
         (ACCOUNT에 (USER_ID, ACCOUNT_NO) 유니크 제약 없음). 이때 배치는 남은
         바인딩으로 계속 동작하므로, 스윙을 지우면 멀쩡한 매매가 사라진다.
         """
-        self.accounts.bound = {3: ["acc-a"], 9: ["acc-a"]}      # 9번 인증키에도 동일 계좌
+        self.accounts.rows = [                                  # 9번 인증키에도 동일 계좌
+            SimpleNamespace(ACCOUNT_ID="1", ACCOUNT_NO="acc-a", AUTH_ID=3, USER_ID="u1"),
+            SimpleNamespace(ACCOUNT_ID="2", ACCOUNT_NO="acc-a", AUTH_ID=9, USER_ID="u1"),
+        ]
         self.swings.rows = [SimpleNamespace(SWING_ID=1, ACCOUNT_NO="acc-a", SIGNAL=1, HOLD_QTY=3)]
 
         await self.service.delete_auth(self.USER, 3)
@@ -510,8 +536,7 @@ class AccountDeletionCascadeTest(unittest.IsolatedAsyncioTestCase):
         self.service.swing_repo = self.swings
 
         # ACCOUNT_ID 5 = 계좌 acc-a (인증키 3에 묶임)
-        self.accounts.bound = {3: ["acc-a"]}
-        self.accounts.by_id = {("u1", "5"): "acc-a"}
+        self.accounts.rows = [SimpleNamespace(ACCOUNT_ID="5", ACCOUNT_NO="acc-a", AUTH_ID=3, USER_ID="u1")]
         self.swings.rows = [SimpleNamespace(SWING_ID=1, ACCOUNT_NO="acc-a", SIGNAL=0, HOLD_QTY=0)]
 
     async def test_delete_account_cascades_swings_and_ema(self):
@@ -528,6 +553,133 @@ class AccountDeletionCascadeTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertIsNone(self.swings.deleted_nos)
         self.assertFalse(self.committed)
+
+
+class DeleteImpactTest(unittest.IsolatedAsyncioTestCase):
+    """삭제 영향도 조회가 실제 삭제 대상과 일치하는지 고정
+
+    영향도는 프론트 경고 문구의 근거다. 실제 삭제와 판단이 어긋나면
+    "경고에 없던 스윙이 지워지는" 경로가 생긴다 — 보유 포지션이라면 손절선이
+    사라진 주식이 증권사에 남는다.
+    """
+
+    USER = "u1"
+
+    def _service(self, rows, swings):
+        from app.domain.account import service as acc_svc
+
+        class FakeDB:
+            async def commit(self_inner):
+                pass
+
+            async def rollback(self_inner):
+                pass
+
+        service = acc_svc.AccountService(FakeDB())
+        service.repo = FakeAccountRepoRW(rows)
+        service.swing_repo = FakeSwingRepoRW()
+        service.swing_repo.rows = swings
+        return service
+
+    def _account(self, account_id, account_no, auth_id):
+        return SimpleNamespace(
+            ACCOUNT_ID=account_id, ACCOUNT_NO=account_no,
+            AUTH_ID=auth_id, USER_ID=self.USER,
+        )
+
+    def _swing(self, swing_id, account_no, signal=0, hold_qty=0):
+        return SimpleNamespace(
+            SWING_ID=swing_id, ACCOUNT_NO=account_no, ST_CODE="AMD",
+            MRKT_CODE="NAS", SIGNAL=signal, HOLD_QTY=hold_qty,
+        )
+
+    async def test_impact_reports_position_for_warning(self):
+        """보유 포지션이 있으면 HAS_POSITION으로 알린다 (경고 알럿 근거)"""
+        service = self._service(
+            [self._account("5", "acc-a", 3)],
+            [self._swing(1, "acc-a", signal=1, hold_qty=5)],
+        )
+
+        impact = await service.delete_impact(self.USER, "5")
+
+        self.assertEqual(impact["ACCOUNT_NOS"], ["acc-a"])
+        self.assertEqual(len(impact["SWINGS"]), 1)
+        self.assertEqual(impact["SWINGS"][0]["HOLD_QTY"], 5)
+        self.assertTrue(impact["HAS_POSITION"], "보유 포지션이 경고로 전달되지 않았다")
+
+    async def test_impact_excludes_swings_of_surviving_account(self):
+        """다른 인증키에도 묶인 계좌의 스윙은 영향도에서 빠진다
+
+        실제 삭제(purge_orphaned_swings)가 그 스윙을 남기므로, 영향도가
+        '삭제된다'고 알리면 사용자에게 거짓 경고를 띄우게 된다.
+        """
+        service = self._service(
+            [self._account("5", "acc-a", 3), self._account("6", "acc-a", 9)],
+            [self._swing(1, "acc-a", signal=1, hold_qty=3)],
+        )
+
+        impact = await service.delete_impact_by_auth(self.USER, 3)
+
+        self.assertEqual(impact["SWINGS"], [], "살아남는 계좌의 스윙이 삭제 예정으로 표시됐다")
+        self.assertFalse(impact["HAS_POSITION"])
+
+    async def test_impact_matches_actual_deletion(self):
+        """영향도가 알린 스윙과 실제로 삭제되는 스윙이 같다"""
+        rows = [self._account("5", "acc-a", 3), self._account("6", "acc-b", 3)]
+        swings = [self._swing(1, "acc-a"), self._swing(2, "acc-b", signal=2, hold_qty=1)]
+
+        preview = await self._service(rows, swings).delete_impact_by_auth(self.USER, 3)
+
+        service = self._service(rows, swings)
+        await service.delete_accounts_by_auth(self.USER, 3)
+
+        self.assertEqual(
+            sorted(s["SWING_ID"] for s in preview["SWINGS"]), [1, 2],
+        )
+        self.assertEqual(sorted(service.swing_repo.deleted_nos), ["acc-a", "acc-b"])
+
+    async def test_duplicate_registration_is_listed_once(self):
+        """같은 계좌가 한 인증키에 중복 등록돼 있어도 계좌번호는 한 번만 보여준다
+
+        ACCOUNT에 유니크 제약이 없고 계좌 등록도 중복을 막지 않는다. 확인 창에
+        같은 계좌가 두 번 뜨면 사용자가 계좌 수를 오해한다.
+        """
+        service = self._service(
+            [self._account("5", "acc-a", 3), self._account("6", "acc-a", 3)],
+            [self._swing(1, "acc-a")],
+        )
+
+        impact = await service.delete_impact_by_auth(self.USER, 3)
+
+        self.assertEqual(impact["ACCOUNT_NOS"], ["acc-a"])
+        self.assertEqual([s["SWING_ID"] for s in impact["SWINGS"]], [1])
+
+    async def test_impact_rejects_other_users_account(self):
+        """남의 계좌 ID로는 영향도를 볼 수 없다 (계좌번호·보유 종목 노출 차단)"""
+        service = self._service([self._account("5", "acc-a", 3)], [])
+
+        with self.assertRaises(NotFoundError):
+            await service.delete_impact("intruder", "5")
+
+
+class AuthImpactOwnershipTest(unittest.IsolatedAsyncioTestCase):
+    """인증키 영향도 조회의 소유권 검증"""
+
+    async def test_unknown_auth_is_rejected(self):
+        from app.domain.auth import service as auth_svc
+
+        class FakeAuthRepoEmpty:
+            def __init__(self_inner, db):
+                pass
+
+            async def find_by_id(self_inner, user_id, auth_id):
+                return None
+
+        service = auth_svc.AuthService(object())
+        service.repo = FakeAuthRepoEmpty(None)
+
+        with self.assertRaises(NotFoundError):
+            await service.delete_impact("u1", 99)
 
 
 class AuthRegistrationTokenSlotTest(unittest.IsolatedAsyncioTestCase):
