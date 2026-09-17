@@ -128,13 +128,54 @@ class BatchOrphanPositionTest(SwingScenarioBase):
         self.assertEqual(self.notifications, [], "편입이 매수 체결 알림으로 오인됨")
 
     async def test_skipped_when_entry_price_missing(self):
-        """평단이 없으면 손절/익절 기준을 세울 수 없다 → 상태 변경 없이 스킵"""
+        """평단을 얻을 수 없으면 손절/익절 기준을 세울 수 없다 → 상태 변경 없이 스킵"""
         self._make_orphan(cur_amount=3_000_000, entry_price=None)
         await self.run_cycles(1)
 
         self.assertEqual(self.swing.SIGNAL, 0)
         self.assertEqual(self.swing.HOLD_QTY, 100)
         self.assertEqual(Market.orders, [], "편입 불가 상태에서 주문이 나갔습니다")
+
+    # --- 편입 기준값은 DB가 아니라 증권사 ---
+
+    async def test_adopts_broker_qty_over_stale_db_qty(self):
+        """DB 스냅샷이 낡았을 때(매핑 후 사용자가 직접 일부 매도) 증권사 실보유로 편입한다.
+
+        DB 수량으로 편입하면 보유하지 않은 40주까지 매도 주문에 실려
+        매 사이클 거절되고 자가 회복되지 않는다.
+        """
+        self._make_orphan(entry_price=90.0)  # DB: 100주 @ 90
+        self.broker_position = lambda: {"qty": 60, "avg_price": 88.0, "prpr": 101.0}
+
+        await self.run_cycles(1)
+
+        self.assertEqual(self.swing.SIGNAL, 1, "편입되지 않았습니다")
+        self.assertEqual(self.swing.HOLD_QTY, 60, "낡은 DB 수량으로 편입됨")
+        self.assertEqual(float(self.swing.ENTRY_PRICE), 88.0, "낡은 DB 평단으로 편입됨")
+        self.assertEqual(Market.buys(), [])
+
+    async def test_cleared_when_broker_holds_nothing(self):
+        """사용자가 증권사에서 직접 전량 매도 → 없는 주식을 편입하지 않고 매수대기로 정리"""
+        self._make_orphan(entry_price=90.0)
+        self.broker_position = lambda: {"qty": 0, "avg_price": 0.0, "prpr": 101.0}
+
+        await self.run_cycles(1)
+
+        self.assertEqual(self.swing.SIGNAL, 0, "없는 포지션이 편입됨")
+        self.assertEqual(self.swing.HOLD_QTY, 0, "잔여 수량이 정리되지 않음")
+        self.assertIsNone(self.swing.ENTRY_PRICE)
+        self.assertEqual(Market.sells(), [], "보유하지 않은 주식에 매도가 나갔습니다")
+
+    async def test_skipped_when_broker_fetch_fails(self):
+        """실보유 조회 실패 시 낡은 DB값으로 편입하지 않고 다음 사이클로 미룬다"""
+        self._make_orphan(entry_price=90.0)
+        self.broker_position = lambda: None
+
+        await self.run_cycles(1)
+
+        self.assertEqual(self.swing.SIGNAL, 0, "조회 실패인데 편입됨")
+        self.assertEqual(self.swing.HOLD_QTY, 100, "상태가 변경됨")
+        self.assertEqual(Market.orders, [], "편입 보류 상태에서 주문이 나갔습니다")
 
     async def test_orphan_without_indicator_cache_logs_error(self):
         """지표 캐시가 없으면 편입 전에 return된다 — SIGNAL=0이어도 무방비 포지션은 error로 알려야 한다"""

@@ -191,12 +191,15 @@ class SwingService:
         logger.info(f"[{mrkt_code}/{st_code}] 활성화 - 데이터 적재 + 캐싱 백그라운드 태스크 시작")
         return "PREPARING"
 
-    async def _fetch_broker_position(self, user_id: str, mrkt_code: str, st_code: str,
-                                     account_no: str = None) -> dict | None:
+    async def fetch_broker_position(self, user_id: str, mrkt_code: str, st_code: str,
+                                    account_no: str = None) -> dict | None:
         """증권사 실보유 수량/평단 조회 (포지션 편입 기준값)
 
         DB의 HOLD_QTY는 매핑 시점 스냅샷이므로 신뢰하지 않는다.
         (그 사이 사용자가 증권사 앱에서 직접 매도/추가매수했을 수 있음)
+
+        활성화 시점(_adopt_position_on_activate)과 배치 진입 가드(auto_swing_batch)
+        양쪽에서 쓴다 — 포지션 편입의 기준값은 항상 증권사여야 한다.
 
         Returns:
             {"qty": int, "avg_price": float, "prpr": float} — 보유 목록에 없으면 qty=0
@@ -230,7 +233,7 @@ class SwingService:
         배치가 매수대기로 보아 손절/익절을 평가하지 않고, 투자금 증액 시엔
         신규 매수가 기존 수량/평단을 덮어써 포지션이 유실된다.
         """
-        position = await self._fetch_broker_position(
+        position = await self.fetch_broker_position(
             user_id, swing.MRKT_CODE, swing.ST_CODE, account_no=swing.ACCOUNT_NO
         )
         if position is None:

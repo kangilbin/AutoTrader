@@ -203,12 +203,26 @@ class SwingScenarioBase(unittest.IsolatedAsyncioTestCase):
         self.db = FakeDB()
 
         swing, db = self.swing, self.db
+
+        # 편입 가드(2-1)가 조회하는 증권사 실보유.
+        # 기본값은 DB와 일치시킨다 — 괴리 상황은 각 테스트가 self.broker_position을 덮어써 만든다.
+        # (None을 반환시키면 조회 실패 경로)
+        self.broker_position = lambda: {
+            "qty": swing.HOLD_QTY or 0,
+            "avg_price": float(swing.ENTRY_PRICE) if swing.ENTRY_PRICE else 0.0,
+            "prpr": 0.0,
+        }
+        test = self
+
         th.TradeHistoryService = FakeTradeService
         batch.TradeHistoryService = FakeTradeService
         batch.Database = type("D", (), {"get_session": staticmethod(lambda: _coro(db))})
         batch.SwingService = lambda _db: type("Svc", (), {
             "db": _db,
             "repo": type("R", (), {"find_by_id": staticmethod(lambda _id: _coro(swing))})(),
+            "fetch_broker_position": staticmethod(
+                lambda *a, **k: _coro(test.broker_position())
+            ),
         })()
         batch.foreign_api.get_inquire_price = Market.price_detail
         batch.is_market_open = lambda *a, **k: True

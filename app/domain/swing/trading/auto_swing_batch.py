@@ -31,6 +31,7 @@ from app.core.price import to_price
 from app.external.kis_api import get_target_price, get_inquire_price, get_quote_auth
 from app.external import foreign_api
 from app.common.database import Database
+from app.exceptions import ValidationError
 from app.domain.swing.service import SwingService
 from app.domain.stock.service import StockService
 from app.domain.stock.stock_data_batch import is_today_incomplete
@@ -384,23 +385,51 @@ async def process_single_swing(
             # === 2-1. 불변식 강제: SIGNAL 0(매수대기) + HOLD_QTY>0 은 성립할 수 없다 ===
             # 신규 진입으로 처리하면 transition_to_buy가 기존 수량/평단을 덮어써 포지션이 유실된다.
             # 발생원: 계좌 보유종목 자동등록분(mapping_swing) / 분할매수 중 partial_exec 키 소실
+            #
+            # 편입 기준값은 DB가 아니라 증권사다. DB의 HOLD_QTY/ENTRY_PRICE는
+            # - 자동등록분: 매핑 시점 스냅샷이고 이후 갱신되지 않아 활성화까지 몇 달 묵을 수 있다
+            # - Redis 키 소실분: 체결 일부가 DB에 반영되지 못한 상태일 수 있다
+            # 어긋난 수량으로 편입하면 과다 시 매도 주문이 매 사이클 거절되고(자가 회복 불가),
+            # 과소 시 reset_cycle이 잔여 주식을 추적 밖으로 흘린다.
             if swing.is_waiting() and (swing.HOLD_QTY or 0) > 0:
-                _entry_price = float(swing.ENTRY_PRICE) if swing.ENTRY_PRICE else 0
-                if _entry_price <= 0:
+                # adopt_position/clear_orphan_position이 HOLD_QTY를 덮어쓰므로 로그용으로 미리 잡는다
+                _db_qty = swing.HOLD_QTY or 0
+                position = await swing_service.fetch_broker_position(
+                    user_id, mrkt_code, st_code, account_no=swing.ACCOUNT_NO
+                )
+                if position is None:
                     logger.error(
-                        f"[{st_code}] SIGNAL=0 + {swing.HOLD_QTY}주 보유 + 평단 없음 "
-                        f"→ 편입 불가, 이번 사이클 스킵 (수동 확인 필요)"
+                        f"[{st_code}] SIGNAL=0 + DB {_db_qty}주 보유 + 실보유 조회 실패 "
+                        f"→ 편입 보류, 이번 사이클 스킵 (다음 사이클 재시도)"
                     )
                     return
-                swing.adopt_position(
-                    hold_qty=swing.HOLD_QTY,
-                    entry_price=_entry_price,
-                    current_price=float(current_price),
-                )
-                logger.warning(
-                    f"[{st_code}] 고아 포지션 편입: {swing.HOLD_QTY}주 @ {_entry_price:,.2f} "
-                    f"→ SIGNAL=1 (신규 매수 차단, 손절/익절 평가로 전환)"
-                )
+
+                if position["qty"] <= 0:
+                    # 사용자가 증권사에서 직접 전량 매도했거나, 분할매수가 한 주도 체결된 적 없음
+                    # → 잔여 수량 정보만 정리하고 SIGNAL 0 유지 (정상 매수대기로 진행)
+                    logger.warning(
+                        f"[{st_code}] DB {_db_qty}주 / 실보유 0주 "
+                        f"→ 잔여 수량 정리, 매수대기 유지"
+                    )
+                    swing.clear_orphan_position()
+                else:
+                    try:
+                        swing.adopt_position(
+                            hold_qty=position["qty"],
+                            entry_price=position["avg_price"],
+                            current_price=float(current_price),
+                        )
+                    except ValidationError as e:
+                        # 증권사가 qty>0인데 평단 0을 반환하는 등 — 손절/익절 기준을 세울 수 없다
+                        logger.error(
+                            f"[{st_code}] 포지션 편입 실패 → 이번 사이클 스킵 (수동 확인 필요): {e}"
+                        )
+                        return
+                    logger.warning(
+                        f"[{st_code}] 고아 포지션 편입: {position['qty']}주 "
+                        f"@ {position['avg_price']:,.2f} (DB {_db_qty}주) "
+                        f"→ SIGNAL=1 (신규 매수 차단, 손절/익절 평가로 전환)"
+                    )
                 # prev_signal 캡처보다 앞에 둔다 — 편입은 체결이 아니므로
                 # 0→1 전환을 매수 완료 푸시로 오인해서는 안 된다 (_fire_trade_notification)
 
