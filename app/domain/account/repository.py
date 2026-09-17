@@ -74,6 +74,42 @@ class AccountRepository:
 
         return auth_ids[0] if auth_ids else None
 
+    async def find_account_nos_by_auth(self, user_id: str, auth_id: int) -> List[str]:
+        """인증키에 묶인 계좌번호 목록 (인증키 삭제 시 동반 정리 대상)"""
+        query = (
+            select(Account.ACCOUNT_NO)
+            .filter(Account.USER_ID == user_id, Account.AUTH_ID == auth_id)
+            .distinct()
+        )
+        result = await self.db.execute(query)
+        return list(result.scalars().all())
+
+    async def find_existing_account_nos(self, account_nos: List[str]) -> List[str]:
+        """주어진 계좌번호 중 ACCOUNT에 아직 남아 있는 것만 반환
+
+        같은 계좌가 여러 인증키로 중복 등록될 수 있으므로(유니크 제약 없음),
+        '인증키 하나를 지웠다'와 '그 계좌가 사라졌다'는 다르다. 이 구분이 없으면
+        멀쩡한 바인딩이 남은 계좌의 스윙까지 지우게 된다.
+        """
+        if not account_nos:
+            return []
+        query = (
+            select(Account.ACCOUNT_NO)
+            .filter(Account.ACCOUNT_NO.in_(account_nos))
+            .distinct()
+        )
+        result = await self.db.execute(query)
+        return list(result.scalars().all())
+
+    async def delete_by_auth(self, user_id: str, auth_id: int) -> int:
+        """인증키에 묶인 계좌 일괄 삭제 (flush만 수행)"""
+        query = delete(Account).filter(
+            Account.USER_ID == user_id, Account.AUTH_ID == auth_id
+        )
+        result = await self.db.execute(query)
+        await self.db.flush()
+        return result.rowcount
+
     async def find_all_by_user(self, user_id: str) -> List[dict]:
         """사용자의 모든 계좌 조회"""
         query = text(
@@ -104,9 +140,22 @@ class AccountRepository:
         await self.db.flush()
         return await self.db.get(Account, account_id)
 
-    async def delete(self, account_id: str) -> bool:
-        """계좌 삭제 (flush만 수행)"""
-        query = delete(Account).filter(Account.ACCOUNT_ID == account_id)
+    async def find_account_no_by_id(self, user_id: str, account_id: str) -> Optional[str]:
+        """계좌 ID로 계좌번호 조회 (삭제 전 동반 정리 대상을 확보하는 용도)"""
+        query = select(Account.ACCOUNT_NO).filter(
+            Account.USER_ID == user_id, Account.ACCOUNT_ID == account_id
+        )
+        result = await self.db.execute(query)
+        return result.scalars().first()
+
+    async def delete(self, user_id: str, account_id: str) -> bool:
+        """계좌 삭제 (flush만 수행) - 소유권 검증 포함
+
+        USER_ID 조건이 없으면 ACCOUNT_ID만 아는 사용자가 남의 계좌를 지울 수 있다.
+        """
+        query = delete(Account).filter(
+            Account.USER_ID == user_id, Account.ACCOUNT_ID == account_id
+        )
         result = await self.db.execute(query)
         await self.db.flush()
         return result.rowcount > 0

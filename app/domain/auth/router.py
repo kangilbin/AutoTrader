@@ -10,7 +10,6 @@ from app.common.dependencies import get_current_user
 from app.core.response import success_response
 from app.domain.auth.service import AuthService
 from app.domain.auth.schemas import AuthCreateRequest, AuthChoiceRequest
-from app.external.kis_api import oauth_token
 
 router = APIRouter(prefix="/auths", tags=["Auth"])
 
@@ -36,15 +35,7 @@ async def register_auth(
     service: Annotated[AuthService, Depends(get_auth_service)],
     user_id: Annotated[str, Depends(get_current_user)]
 ):
-    """보안키 등록"""
-    # KIS API 검증
-    await oauth_token(
-        user_id,
-        request.SIMULATION_YN,
-        request.API_KEY,
-        request.SECRET_KEY
-    )
-
+    """보안키 등록 (KIS 토큰 발급 검증은 서비스에서 수행)"""
     auth_info = await service.create_auth(user_id, request)
     return success_response("보안키 등록 완료", auth_info)
 

@@ -55,5 +55,5 @@ async def delete_account(
     user_id: Annotated[str, Depends(get_current_user)]
 ):
     """계좌 삭제"""
-    await service.delete_account(account_id)
+    await service.delete_account(user_id, account_id)
     return success_response("계좌 삭제 성공")

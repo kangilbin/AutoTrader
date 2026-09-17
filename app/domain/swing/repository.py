@@ -110,9 +110,28 @@ class SwingRepository:
         await self.db.refresh(ema)
         return ema
 
-    async def delete_ema_option(self, swing_id: int) -> bool:
-        """스이평선 삭제 (flush만 수행)"""
-        query = delete(EmaOption).filter(EmaOption.SWING_ID == swing_id)
+    async def exists_by_account_stock(self, account_no: str, st_code: str) -> bool:
+        """계좌+종목에 남아 있는 스윙이 있는지 확인 (EMA_OPT 정리 판단용)
+
+        SWING_TRADE의 유니크 키는 (ACCOUNT_NO, MRKT_CODE, ST_CODE)지만 EMA_OPT는
+        (ACCOUNT_NO, ST_CODE)라 시장코드가 없다. 같은 계좌·종목의 J/NX/UN 스윙이
+        EMA_OPT 한 행을 공유하므로, 형제가 남아 있으면 지우면 안 된다.
+        """
+        query = select(SwingTrade.SWING_ID).filter(
+            SwingTrade.ACCOUNT_NO == account_no, SwingTrade.ST_CODE == st_code
+        ).limit(1)
+        result = await self.db.execute(query)
+        return result.scalars().first() is not None
+
+    async def delete_ema_option(self, account_no: str, st_code: str) -> bool:
+        """이평선 옵션 삭제 (flush만 수행)
+
+        EMA_OPT의 PK는 (ACCOUNT_NO, ST_CODE)다. 존재하지 않는 SWING_ID 컬럼으로
+        필터하면 AttributeError가 난다.
+        """
+        query = delete(EmaOption).filter(
+            EmaOption.ACCOUNT_NO == account_no, EmaOption.ST_CODE == st_code
+        )
         result = await self.db.execute(query)
         await self.db.flush()
         return result.rowcount > 0
@@ -136,6 +155,35 @@ class SwingRepository:
         result = await self.db.execute(query)
         await self.db.flush()
         return result.rowcount > 0
+
+    async def find_by_account_nos(self, account_nos: List[str]) -> List:
+        """계좌번호 목록에 속한 스윙 전체 조회 (동반 삭제 전 영향 확인용)"""
+        if not account_nos:
+            return []
+        query = select(SwingTrade).filter(SwingTrade.ACCOUNT_NO.in_(account_nos))
+        result = await self.db.execute(query)
+        return list(result.scalars().all())
+
+    async def delete_by_account_nos(self, account_nos: List[str]) -> int:
+        """계좌번호 목록에 속한 스윙 일괄 삭제 (flush만 수행)"""
+        if not account_nos:
+            return 0
+        query = delete(SwingTrade).filter(SwingTrade.ACCOUNT_NO.in_(account_nos))
+        result = await self.db.execute(query)
+        await self.db.flush()
+        return result.rowcount
+
+    async def delete_ema_options_by_account_nos(self, account_nos: List[str]) -> int:
+        """계좌번호 목록에 속한 이평선 옵션 일괄 삭제 (flush만 수행)
+
+        EMA_OPT의 PK는 (ACCOUNT_NO, ST_CODE)라 계좌 단위로 지울 수 있다.
+        """
+        if not account_nos:
+            return 0
+        query = delete(EmaOption).filter(EmaOption.ACCOUNT_NO.in_(account_nos))
+        result = await self.db.execute(query)
+        await self.db.flush()
+        return result.rowcount
 
     async def get_total_init_amount(
         self, account_no: str, overseas: bool = False, exclude_swing_id: int = None

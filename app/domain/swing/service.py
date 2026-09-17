@@ -345,15 +345,25 @@ class SwingService:
             raise DatabaseError("스윙 수정에 실패했습니다")
 
     async def delete_swing(self, swing_id: int, swing_type: str) -> bool:
-        """스윙 삭제"""
+        """스윙 삭제 - 이평선 옵션 동반 정리
+
+        EMA_OPT는 (ACCOUNT_NO, ST_CODE) 키라 계좌+종목을 알아야 지울 수 있다.
+        시장코드가 키에 없어 같은 계좌·종목의 J/NX/UN 스윙이 한 행을 공유하므로,
+        형제 스윙이 남아 있으면 지우지 않는다. swing_type은 클라이언트가 보내는
+        값이라 틀리면 행이 남으므로 판단 근거로 쓰지 않는다.
+        """
         try:
+            swing = await self.repo.find_by_id(swing_id)
+            if not swing:
+                raise NotFoundError("스윙 전략", swing_id)
+            account_no, st_code = swing.ACCOUNT_NO, swing.ST_CODE
+
             result = await self.repo.delete(swing_id)
 
-            if swing_type == 'A':
-                await self.repo.delete_ema_option(swing_id)
+            if not await self.repo.exists_by_account_stock(account_no, st_code):
+                await self.repo.delete_ema_option(account_no, st_code)
+
             await self.db.commit()
-            if not result:
-                raise NotFoundError("스윙 전략", swing_id)
             return result
         except SQLAlchemyError as e:
             await self.db.rollback()

@@ -6,7 +6,6 @@ test_main.py
 __pycache__/
 *.pyc
 auto_trader.egg-info/
-app/domain/swing/auto_swing_batch.py
 
 # 테스트 관련
 .pytest_cache/
@@ -14,3 +13,6 @@ app/domain/swing/auto_swing_batch.py
 htmlcov/
 *.cover
 .hypothesis/
+
+# 서버 전용 배포 파일 (평문 시크릿 포함)
+docker-compose.yml

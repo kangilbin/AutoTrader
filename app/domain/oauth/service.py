@@ -159,7 +159,7 @@ class OAuthService:
             })
             await redis.expire(user_id, int(settings.token_refresh_exp.total_seconds()))
 
-            logger.info(f"로그인 성공: {user_id}, {device_id}")
+            logger.debug(f"로그인 성공: {user_id}, {device_id}")
             return {
                 "status": "LOGIN_SUCCESS",
                 "access_token": access_token,

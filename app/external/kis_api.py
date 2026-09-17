@@ -7,7 +7,7 @@ import logging
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.exceptions import ExternalServiceError, NotFoundError
+from app.exceptions import ExternalServiceError, NotFoundError, ValidationError
 from app.core.config import get_settings
 from app.core.security import decrypt
 from app.external.headers import kis_headers, kis_error_message
@@ -119,18 +119,32 @@ async def oauth_token(user_id: str, simulation_yn: str, api_key: str, secret_key
         await redis.delete(lock_key)
 
 
-async def _token_for_auth_id(user_id: str, auth_id, db: AsyncSession) -> dict:
+async def invalidate_token_cache(user_id: str, auth_id) -> None:
+    """auth_id 슬롯의 토큰 캐시를 즉시 제거 (인증키 삭제/앱키 교체 시 호출)
+
+    캐시는 expires_in(최대 24h)까지 살아 있으므로, 지우지 않으면 폐기된 인증키로
+    발급된 토큰이 그 기간 내내 유효하게 쓰인다. 발급 중 락도 같이 지워
+    다음 요청이 남은 락을 기다리다 타임아웃되는 일을 막는다.
+    """
+    redis = await get_redis()
+    cache_key = _token_cache_key(user_id, auth_id)
+    await redis.delete(cache_key, f"{cache_key}:lock")
+
+
+async def token_for_auth_id(user_id: str, auth_id, db: AsyncSession) -> dict:
     """AUTH_KEY의 인증키로 토큰 확보 (캐시 우선, 없으면 발급)
 
     캐시 슬롯이 auth_id별로 분리되어 있어 모의/실전 토큰이 공존한다.
-    """
-    redis = await get_redis()
-    access_data = await redis.hgetall(_token_cache_key(user_id, auth_id))
-    if access_data:
-        return access_data
 
+    캐시를 먼저 보고 반환하지 않고 AUTH_KEY를 먼저 조회한다. 캐시만 보면
+    삭제된 인증키·교체된 앱키의 토큰이 TTL 동안 그대로 쓰이기 때문이다.
+    캐시 재사용 여부는 앱키 일치까지 확인하는 oauth_token이 판단한다
+    (조회 1회를 더 쓰는 대신, 폐기된 키로 주문이 나가는 경로를 없앤다).
+    """
     auth_data = await AuthRepository(db).find_by_id(user_id, int(auth_id))
     if not auth_data:
+        # DB에 없는 인증키 = 삭제됨. 남아 있는 캐시 슬롯도 함께 정리한다.
+        await invalidate_token_cache(user_id, auth_id)
         raise NotFoundError("인증키", auth_id)
 
     return await oauth_token(
@@ -153,7 +167,7 @@ async def _get_account_auth(user_id: str, account_no: str, db: AsyncSession):
     if not auth_id:
         raise NotFoundError("계좌", account_no)
 
-    access_data = await _token_for_auth_id(user_id, auth_id, db)
+    access_data = await token_for_auth_id(user_id, auth_id, db)
     return {"ACCOUNT_NO": account_no, "AUTH_ID": str(auth_id)}, access_data
 
 
@@ -174,7 +188,7 @@ async def _get_user_auth(user_id: str, db: AsyncSession, account_no: str = None)
         raise ExternalServiceError("KIS", "인증키가 선택되지 않았습니다. 인증키를 먼저 선택해주세요.")
 
     # 선택된 인증키 슬롯에서 토큰 조회 (모의/실전 전환해도 각자 캐시 유지)
-    access_data = await _token_for_auth_id(user_id, auth_id, db)
+    access_data = await token_for_auth_id(user_id, auth_id, db)
 
     return user_data, access_data
 
@@ -198,7 +212,7 @@ async def _quote_auth(user_id: str, db: AsyncSession, account_no: str = None) ->
     redis = await get_redis()
     auth_id = (await redis.hgetall(user_id)).get("AUTH_ID")
     if auth_id:
-        return await _token_for_auth_id(user_id, auth_id, db)
+        return await token_for_auth_id(user_id, auth_id, db)
 
     # 선택된 인증키 없음 (배치/세션 만료) → 계좌 무관 키로 조회
     return await get_quote_auth(user_id, db)
@@ -218,7 +232,7 @@ async def get_quote_auth(user_id: str, db: AsyncSession) -> dict:
         raise NotFoundError("인증키", user_id)
 
     auth = sorted(auths, key=lambda a: (a.SIMULATION_YN == "Y", a.AUTH_ID))[0]
-    return await _token_for_auth_id(user_id, auth.AUTH_ID, db)
+    return await token_for_auth_id(user_id, auth.AUTH_ID, db)
 
 
 async def is_simulation(user_id: str, db: AsyncSession, account_no: str = None) -> bool:
@@ -231,46 +245,41 @@ async def is_simulation(user_id: str, db: AsyncSession, account_no: str = None) 
     return access_data.get("simulation_yn") == "Y"
 
 
-# ============================================================
-# 토큰 발급 (캐싱 없음)
-# ============================================================
-
-async def issue_token(simulation_yn: str, api_key: str, secret_key: str) -> dict:
-    """KIS OAuth 토큰 발급 (Redis 캐싱 없이 즉시 발급)"""
-    path = "oauth2/tokenP"
-    if simulation_yn == "Y":
-        api_url = settings.DEV_API_URL
-    else:
-        api_url = settings.REAL_API_URL
-
-    url = f"{api_url}/{path}"
-    query = {
-        "grant_type": "client_credentials",
-        "appkey": api_key,
-        "appsecret": secret_key,
-    }
-
-    response = await fetch("POST", url, "KIS", json=query)
-    body = response["body"]
-    access_token = body.get("access_token")
-
-    if (not access_token) or (body.get("error_code")):
-        raise ExternalServiceError("KIS", kis_error_message(body, "토큰 발급 실패"))
-
-    return {
-        "access_token": access_token,
-        "api_key": api_key,
-        "secret_key": secret_key,
-        "simulation_yn": simulation_yn,
-    }
+# 토큰 발급은 oauth_token / token_for_auth_id 만 사용한다.
+# 캐시·분산락을 우회하는 별도 발급 함수를 두면 appkey별 1분 1회 제한(EGW00133)에
+# 걸려 정상 흐름이 403으로 막힌다. (계좌 검증이 실제로 그랬다)
 
 
 # ============================================================
 # 계좌 검증 관련
 # ============================================================
 
+# KIS 게이트웨이/인증 레벨 오류 코드군 (예: EGW00133 토큰 발급 1분 제한).
+# 사용자가 고칠 수 없고 운영이 개입해야 하므로 5xx로 올려 Sentry까지 보낸다.
+# 업무 거절(계좌 불일치 등)은 숫자 코드로 내려오므로 이 접두사에 걸리지 않는다.
+_KIS_INFRA_CODE_PREFIX = "EGW"
+
+
+def is_kis_infra_error(msg_cd: str) -> bool:
+    """KIS 오류 코드가 운영 개입이 필요한 인프라성인지 판별
+
+    관측되지 않은 코드가 나올 수 있으므로 접두사 기반으로 느슨하게 판별한다.
+    예외 케이스가 확인되면 이 함수에 명시 코드를 추가한다.
+    """
+    return (msg_cd or "").upper().startswith(_KIS_INFRA_CODE_PREFIX)
+
+
 async def verify_account_balance(access_data: dict, account_no: str):
-    """계좌번호 검증 - KIS 잔고 조회 API로 유효성 확인"""
+    """계좌번호 검증 - KIS 잔고 조회 API로 유효성 확인
+
+    Raises:
+        ValidationError (422)      - 계좌번호가 유효하지 않음 (사용자 입력 문제)
+        ExternalServiceError (5xx) - KIS 게이트웨이/인증 오류 (운영 개입 필요)
+
+    전송 계층 실패(타임아웃·네트워크·HTTP 오류)는 http_client.fetch가 이미
+    502/503/504로 올린다. 즉 여기 도달했다는 건 KIS가 정상 응답했다는 뜻이고,
+    rt_cd != "0" 은 "호출 실패"가 아니라 "증권사의 거절 답변"이다.
+    """
     path = "uapi/domestic-stock/v1/trading/inquire-balance"
     if access_data.get("simulation_yn") == "Y":
         url = settings.DEV_API_URL
@@ -303,7 +312,21 @@ async def verify_account_balance(access_data: dict, account_no: str):
     body = response["body"]
 
     if body.get("rt_cd") != "0":
-        raise ExternalServiceError("KIS", body.get("msg1", "계좌번호 검증 실패"))
+        msg_cd = body.get("msg_cd", "")
+        msg = (body.get("msg1") or "계좌번호 검증 실패").strip()
+
+        if is_kis_infra_error(msg_cd):
+            raise ExternalServiceError("KIS", msg, detail={"msg_cd": msg_cd})
+
+        # 계좌번호 오입력은 정상 시나리오의 일부다. 5xx로 올리면 클라이언트가
+        # 장애로 오인해 재시도하고, 스택 트레이스와 Sentry 이벤트까지 발생한다.
+        # (handlers.py: 5xx만 exc_info + capture_exception)
+        # field를 넘겨야 detail이 보존된다 (ValidationError.__init__ 조건식)
+        raise ValidationError(
+            f"계좌번호를 확인해주세요: {msg}",
+            field="ACCOUNT_NO",
+            detail={"field": "ACCOUNT_NO", "msg_cd": msg_cd},
+        )
 
 
 # ============================================================

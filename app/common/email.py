@@ -77,7 +77,7 @@ class EmailService:
                   </div>
 
                   <div style="margin: 20px 0; padding: 15px; background-color: #e7f3ff; border-left: 4px solid #2196F3; border-radius: 3px;">
-                    <p style="margin: 0;"><strong>📌 알림:</strong> 회원가입이 완료되었습니다. 디바이스를 수동으로 등록해주세요.</p>
+                    <p style="margin: 0;"><strong>📌 알림:</strong> 회원가입이 완료되었습니다. 디바이스를 활성화해 주세요.</p>
                   </div>
 
                   <hr style="border: none; border-top: 1px solid #ddd; margin: 20px 0;">
@@ -103,7 +103,7 @@ class EmailService:
             - 디바이스 ID: {device_id}
             - 디바이스 이름: {device_name}
             
-            알림: 회원가입이 완료되었습니다. 디바이스를 수동으로 등록해주세요.
+            알림: 회원가입이 완료되었습니다. 디바이스를 활성화 해주세요.
             
             발송 시간: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
             발송자: AutoTrader System

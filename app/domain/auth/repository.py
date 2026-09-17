@@ -50,17 +50,24 @@ class AuthRepository:
         await self.db.refresh(auth)
         return auth
 
-    async def update(self, auth_id: int, data: dict) -> Optional[Auth]:
-        """인증키 수정 (flush만 수행)"""
+    async def update(self, user_id: str, auth_id: int, data: dict) -> Optional[Auth]:
+        """인증키 수정 (flush만 수행) - 소유권 검증 포함
+
+        AUTH_KEY의 PK는 (AUTH_ID, USER_ID) 복합키다. get()에 단일 값을 넘기면
+        예외가 나므로 dict로 전달하고, populate_existing으로 방금 UPDATE한 값을
+        다시 읽는다 (synchronize_session=False라 세션 캐시가 낡아 있다).
+        """
         query = (
             update(Auth)
-            .filter(Auth.AUTH_ID == auth_id)
+            .filter(and_(Auth.USER_ID == user_id, Auth.AUTH_ID == auth_id))
             .values(**data)
             .execution_options(synchronize_session=False)
         )
         await self.db.execute(query)
         await self.db.flush()
-        return await self.db.get(Auth, auth_id)
+        return await self.db.get(
+            Auth, {"AUTH_ID": auth_id, "USER_ID": user_id}, populate_existing=True
+        )
 
     async def delete(self, user_id: str, auth_id: int) -> bool:
         """인증키 삭제 (flush만 수행) - 소유권 검증 포함"""

@@ -83,19 +83,19 @@ class DeviceAuthMiddleware(BaseHTTPMiddleware):
                     # 허용 (TTL 5분)
                     await redis_client.setex(cache_key, 300, "1")
                     is_allowed = "1"
-                    logger.info(f"디바이스 허용 (캐시 저장): {device_id}")
+                    logger.debug(f"디바이스 허용 (캐시 저장): {device_id}")
                 else:
                     # 거부 (TTL 1분 - 짧게 유지)
                     await redis_client.setex(cache_key, 60, "0")
                     is_allowed = "0"
-                    logger.warning(f"디바이스 거부 (캐시 저장): {device_id}")
+                    logger.debug(f"디바이스 거부 (캐시 저장): {device_id}")
 
             finally:
                 await db.close()
 
         # 검증
         if is_allowed != "1":
-            logger.warning(f"허용되지 않은 디바이스: {device_id}")
+            logger.debug(f"허용되지 않은 디바이스: {device_id}")
             raise DeviceNotAllowedError(device_id=device_id)
 
         # Request state에 디바이스 정보 저장 (선택적 활용)
