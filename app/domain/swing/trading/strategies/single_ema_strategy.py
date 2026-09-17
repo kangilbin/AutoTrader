@@ -337,7 +337,7 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
 
         if consecutive >= cls.CONSECUTIVE_REQUIRED:
             logger.info(f"[{symbol}] 1차 매수 신호 발생 (연속 {consecutive}회)")
-            return {'action': 'BUY', 'price': curr_price, 'reason': f"1차 매수 (연속 {consecutive}회)"}
+            return {'action': 'BUY', 'price': curr_price, 'reasons': ["1차 매수"]}
         elif current_signal:
             logger.info(f"[{symbol}] 매수 신호 대기 중 ({consecutive}/{cls.CONSECUTIVE_REQUIRED})")
 
@@ -362,7 +362,7 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
         result = await cls.check_immediate_sell_signal(
             redis_client, symbol, current_price, cached_indicators
         )
-        return result if result else {"action": "HOLD", "reason": "매도 조건 미충족"}
+        return result if result else {"action": "HOLD", "reasons": []}
 
     @classmethod
     async def check_second_buy_signal(
@@ -424,7 +424,7 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
                             return {
                                 'action': 'BUY',
                                 'price': curr_price,
-                                'reason': f"2차매수(추세강화)"
+                                'reasons': ["2차 매수"]
                             }
 
             # === 시나리오 B: 눌림목 반등 ===
@@ -457,7 +457,7 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
                                     return {
                                         'action': 'BUY',
                                         'price': curr_price,
-                                        'reason': f"2차매수(눌림목반등)"
+                                        'reasons': ["2차 매수"]
                                     }
                             else:
                                 # 최초 저가 기록
@@ -496,9 +496,15 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
         ema_atr_stop = realtime_ema20 - (atr * cls.ATR_MULTIPLIER)
         if curr_price <= ema_atr_stop:
             logger.warning(f"[{symbol}] 🚨 즉시 매도 신호: EMA-ATR손절(현재가≤{ema_atr_stop:,.0f})")
-            return {"action": "SELL", "reason": f"즉시매도: EMA-ATR손절(현재가≤{ema_atr_stop:,.0f})"}
+            return {
+                "action": "SELL",
+                "reasons": [
+                    "손절",
+                    f"EMA-ATR 이탈 (손절가: {ema_atr_stop:,.0f}원)"
+                ]
+            }
 
-        return {"action": "HOLD", "reason": "즉시 매도 조건 미충족"}
+        return {"action": "HOLD", "reasons": []}
 
     @classmethod
     async def update_eod_signals_to_db(

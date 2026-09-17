@@ -17,9 +17,7 @@ import logging
 import asyncio
 from datetime import datetime
 from decimal import Decimal
-
 from dateutil.relativedelta import relativedelta
-
 from app.domain.swing.indicators import TechnicalIndicators
 from app.external.kis_api import get_target_price, get_inquire_price
 from app.common.database import Database
@@ -147,10 +145,10 @@ async def process_single_swing(
             # === 2. 전략 클래스에 처리 위임 ===
             result = await strategy.process_trading_cycle(
                 swing=swing,
-                swing_service=swing_service,
                 redis_client=redis_client,
                 cached_indicators=cached_indicators,
-                current_price_data=current_price_data
+                current_price_data=current_price_data,
+                db=swing_service.db
             )
 
             # === 3. SIGNAL 상태 업데이트 ===
