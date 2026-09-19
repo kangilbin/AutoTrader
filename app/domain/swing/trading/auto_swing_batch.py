@@ -114,6 +114,13 @@ def _trading_allowed(mrkt_code: str, label: str) -> bool:
 # ===== 동시 실행 제어 =====
 _SEMAPHORE = asyncio.Semaphore(5)  # 동시에 최대 5개 종목 처리
 
+# 배치 처리 결과. process_single_swing이 예외를 내부에서 삼키므로 gather는 항상
+# 정상 반환을 받는다 — 반환값으로 구분하지 않으면 전부 실패해도 '성공'으로 집계되어
+# 매매가 멈춘 사실이 모니터링에서 사라진다 (실제로 그렇게 은폐됐다).
+RESULT_OK = "ok"
+RESULT_SKIPPED = "skipped"   # 판단 불가로 건너뜀 (지표 캐시 없음, 시세 없음 등)
+RESULT_FAILED = "failed"     # 예외 발생
+
 
 async def trade_job():
     """국내 매매 신호 확인 및 실행 (5분 단위) — 국내 종목만"""
@@ -138,12 +145,35 @@ async def trade_job():
     ]
     results = await asyncio.gather(*tasks, return_exceptions=True)
 
-    success_count = sum(1 for r in results if not isinstance(r, Exception))
-    error_count = len(results) - success_count
+    summary = _summarize(results)
     logger.info(
         f"[BATCH END] 배치 작업 완료 - "
-        f"성공: {success_count}, 실패: {error_count}, 총: {len(results)}"
+        f"성공: {summary['ok']}, 실패: {summary['failed']}, "
+        f"건너뜀: {summary['skipped']}, 총: {len(results)}"
     )
+    if summary["failed"]:
+        # 전량 실패는 개별 종목 문제가 아니라 인증·유량·네트워크 장애다.
+        logger.error(
+            f"[BATCH END] 실패 {summary['failed']}건 - "
+            f"{'전 종목 실패, 외부 연동 상태 확인 필요' if summary['failed'] == len(results) else '개별 종목 로그 확인'}"
+        )
+
+
+def _summarize(results) -> dict:
+    """배치 결과 집계
+
+    gather(return_exceptions=True)가 돌려준 예외는 process_single_swing 바깥에서
+    터진 것(세션 획득 실패 등)이므로 실패로 센다.
+    """
+    counts = {"ok": 0, "failed": 0, "skipped": 0}
+    for r in results:
+        if isinstance(r, Exception) or r == RESULT_FAILED:
+            counts["failed"] += 1
+        elif r == RESULT_SKIPPED:
+            counts["skipped"] += 1
+        else:
+            counts["ok"] += 1
+    return counts
 
 
 async def process_single_swing(
@@ -170,13 +200,13 @@ async def process_single_swing(
 
             if not user_id:
                 logger.warning(f"[SWING_ID={swing_id}] USER_ID가 없습니다. 계좌-인증키 연결을 확인하세요.")
-                return
+                return RESULT_SKIPPED
 
 
             swing = await swing_service.repo.find_by_id(swing_id)
             if not swing:
                 logger.warning(f"[{swing_id}] 스윙 엔티티 로드 실패")
-                return
+                return RESULT_SKIPPED
 
             # 전략 선택
             strategy = TradingStrategyFactory.get_strategy(swing_type)
@@ -197,7 +227,7 @@ async def process_single_swing(
                     )
                 else:
                     logger.warning(f"[{st_code}] 등록된 캐시 정보가 없습니다.")
-                return
+                return RESULT_SKIPPED
 
             if _overseas:
                 current_price_data = await foreign_api.get_inquire_price(
@@ -208,7 +238,7 @@ async def process_single_swing(
                 current_price_data = response.get("output", {}) if isinstance(response, dict) else response
             if not current_price_data:
                 logger.warning(f"[{st_code}] 현재가 조회 실패")
-                return
+                return RESULT_SKIPPED
 
             if _overseas:
                 current_price = Decimal(str(current_price_data.get("last", 0)))
@@ -490,12 +520,15 @@ async def process_single_swing(
                     prev_hold_qty=prev_hold_qty, current_price=float(current_price)
                 )
 
+            return RESULT_OK
+
         except Exception as e:
             await db.rollback()
             logger.error(
                 f"스윙 처리 실패 (SWING_ID={swing_row.SWING_ID}, ST_CODE={swing_row.ST_CODE}): {e}",
                 exc_info=True
             )
+            return RESULT_FAILED
         finally:
             await db.close()
 

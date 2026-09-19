@@ -36,6 +36,16 @@ class Settings(BaseSettings):
     DEV_API_URL: str = "https://openapivts.koreainvestment.com:29443"
     REAL_API_URL: str = "https://openapi.koreainvestment.com:9443"
 
+    # KIS 유량 제한 (앱키당 초당 호출 수). 초과하면 KIS가 즉시 거절하지 않고
+    # 응답을 수 초간 지연시킨 뒤 500을 주므로, 타임아웃과 겹쳐 배치가 통째로 실패한다.
+    #
+    # 한도와 같은 값을 쓰지 않는 이유: 리미터는 호출 간격을 1/rate로 벌리는데,
+    # rate=2.0(간격 0.5s)이면 t=0.0/0.5/1.0 세 건이 같은 1초 창에 들어간다.
+    # 어떤 1초 창에서도 한도 이하를 보장하려면 rate가 한도보다 작아야 한다.
+    # (모의 한도 2건/초 → 1.8, 실전 20건/초 → 10.0)
+    KIS_RATE_LIMIT_REAL: float = 10.0
+    KIS_RATE_LIMIT_SIM: float = 1.8
+
     # 시스템 배치 잡 사용자 ID (KIS 토큰 발급 컨텍스트)
     BATCH_USER_ID: Optional[str] = None
 

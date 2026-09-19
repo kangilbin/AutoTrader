@@ -9,6 +9,7 @@ from contextlib import asynccontextmanager
 
 from app.common.database import Database
 from app.common.redis import Redis
+from app.external.http_client import close_client
 from app.common.scheduler import schedule_start
 from app.common.middleware import DeviceAuthMiddleware
 from app.exceptions.handlers import register_exception_handlers
@@ -68,6 +69,7 @@ async def lifespan(app: FastAPI):
     finally:
         # 종료 시 리소스 정리
         logger.info("Shutting down AutoTrader API...")
+        await close_client()
         await Database.disconnect()
         await Redis.disconnect()
         logger.info("AutoTrader API shutdown complete")
