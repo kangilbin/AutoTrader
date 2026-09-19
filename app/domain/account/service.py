@@ -47,8 +47,28 @@ class AccountService:
         self.swing_repo = SwingRepository(db)
 
     async def create_account(self, user_id: str, request: AccountCreateRequest) -> dict:
-        """계좌 등록"""
+        """계좌 등록 - 이미 등록된 계좌면 인증키만 재바인딩
+
+        ACCOUNT에 (USER_ID, ACCOUNT_NO) 유니크 제약이 없어 그대로 INSERT하면
+        앱키 교체 때마다 같은 계좌가 여러 행으로 쌓인다. 폐기된 인증키를 가리키는
+        행이 남아 인증키 해석과 삭제 범위가 흔들리므로, 기존 행이 있으면
+        AUTH_ID만 갱신한다 (계좌 = 사용자당 1행이라는 규칙을 코드로 지킨다).
+        """
         try:
+            existing = await self.repo.find_latest_by_account_no(user_id, request.ACCOUNT_NO)
+            if existing:
+                db_account = await self.repo.update(
+                    user_id,
+                    existing.ACCOUNT_ID,
+                    {"AUTH_ID": request.AUTH_ID, "MOD_DT": datetime.now()},
+                )
+                await self.db.commit()
+                logger.info(
+                    f"계좌 재등록 → 인증키 재바인딩 (USER_ID={user_id}, "
+                    f"ACCOUNT_NO={request.ACCOUNT_NO}, AUTH_ID={request.AUTH_ID})"
+                )
+                return AccountResponse.model_validate(db_account).model_dump()
+
             # 도메인 엔티티 생성 (비즈니스 검증)
             account = Account.create(
                 user_id=user_id,
@@ -69,11 +89,13 @@ class AccountService:
         """계좌 목록 조회"""
         return await self.repo.find_all_by_user(user_id)
 
-    async def update_account(self, account_id: str, data: dict) -> dict:
-        """계좌 수정"""
+    async def update_account(self, user_id: str, account_id: str, data: dict) -> dict:
+        """계좌 수정 - 소유권 검증 포함"""
         try:
             data["MOD_DT"] = datetime.now()
-            result = await self.repo.update(account_id, data)
+            result = await self.repo.update(user_id, account_id, data)
+            if not result:
+                raise NotFoundError("계좌", account_id)
             await self.db.commit()
             return AccountResponse.model_validate(result).model_dump()
         except SQLAlchemyError as e:

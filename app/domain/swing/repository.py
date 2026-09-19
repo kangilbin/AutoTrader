@@ -80,11 +80,19 @@ class SwingRepository:
 
 
     async def find_active_swings(self) -> List:
-        """활성화된 스윙 목록 조회 (배치용)"""
+        """활성화된 스윙 목록 조회 (배치용)
+
+        ⚠️ ACCOUNT에 (USER_ID, ACCOUNT_NO) 유니크 제약이 없다. 계좌번호로만 조인하면
+        같은 계좌가 여러 인증키로 등록된 경우(앱키 교체 시 발생) 스윙 1건이 여러 행으로
+        불어나고, 배치는 중복 제거 없이 gather로 돌리므로 같은 스윙에 주문이 두 번 나간다.
+        ON 절에서 최신 ACCOUNT_ID 1건으로 고정해 이를 막는다
+        (find_auth_id_by_account_no의 '최신 등록분 사용' 규칙과 동일).
+        """
         query = text(
             "SELECT ST.*, A.USER_ID, U.API_KEY, U.SECRET_KEY "
             "FROM SWING_TRADE ST "
             "LEFT JOIN ACCOUNT A ON ST.ACCOUNT_NO = A.ACCOUNT_NO "
+            "AND A.ACCOUNT_ID = (SELECT MAX(A2.ACCOUNT_ID) FROM ACCOUNT A2 WHERE A2.ACCOUNT_NO = ST.ACCOUNT_NO) "
             "LEFT JOIN AUTH_KEY U ON A.USER_ID = U.USER_ID AND A.AUTH_ID = U.AUTH_ID "
             "WHERE ST.USE_YN = 'Y'"
         )
@@ -97,6 +105,7 @@ class SwingRepository:
             "SELECT ST.*, A.USER_ID, U.API_KEY, U.SECRET_KEY "
             "FROM SWING_TRADE ST "
             "JOIN ACCOUNT A ON ST.ACCOUNT_NO = A.ACCOUNT_NO "
+            "AND A.ACCOUNT_ID = (SELECT MAX(A2.ACCOUNT_ID) FROM ACCOUNT A2 WHERE A2.ACCOUNT_NO = ST.ACCOUNT_NO) "
             "JOIN AUTH_KEY U ON A.USER_ID = U.USER_ID AND A.AUTH_ID = U.AUTH_ID "
             "WHERE ST.USE_YN = 'Y' AND ST.MRKT_CODE IN ('J', 'NX', 'UN')"
         )
@@ -109,6 +118,7 @@ class SwingRepository:
             "SELECT ST.*, A.USER_ID, U.API_KEY, U.SECRET_KEY "
             "FROM SWING_TRADE ST "
             "JOIN ACCOUNT A ON ST.ACCOUNT_NO = A.ACCOUNT_NO "
+            "AND A.ACCOUNT_ID = (SELECT MAX(A2.ACCOUNT_ID) FROM ACCOUNT A2 WHERE A2.ACCOUNT_NO = ST.ACCOUNT_NO) "
             "JOIN AUTH_KEY U ON A.USER_ID = U.USER_ID AND A.AUTH_ID = U.AUTH_ID "
             "WHERE ST.USE_YN = 'Y' AND ST.MRKT_CODE IN ('NYS', 'NAS', 'AMS')"
         )

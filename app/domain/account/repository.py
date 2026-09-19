@@ -146,12 +146,20 @@ class AccountRepository:
         return result.rowcount
 
     async def find_all_by_user(self, user_id: str) -> List[dict]:
-        """사용자의 모든 계좌 조회"""
+        """사용자의 계좌 목록 조회
+
+        같은 계좌번호가 중복 등록돼 있으면(유니크 제약 없음) 최신 행만 보여준다.
+        목록에 같은 계좌가 두 번 뜨는 것도 문제지만, 더 중요한 건 배치가 실제로
+        사용하는 바인딩(최신 ACCOUNT_ID)과 화면이 보여주는 인증키를 일치시키는 것이다
+        — 어긋나면 사용자는 A키로 주문된다고 믿는데 실제로는 B키로 나간다.
+        """
         query = text(
             "SELECT AT.ACCOUNT_ID, AT.ACCOUNT_NO, AT.AUTH_ID, AK.SIMULATION_YN "
             "FROM ACCOUNT AT "
             "LEFT JOIN AUTH_KEY AK ON AT.AUTH_ID = AK.AUTH_ID "
-            "WHERE AT.USER_ID = :user_id"
+            "WHERE AT.USER_ID = :user_id "
+            "AND AT.ACCOUNT_ID = (SELECT MAX(A2.ACCOUNT_ID) FROM ACCOUNT A2 "
+            "WHERE A2.USER_ID = AT.USER_ID AND A2.ACCOUNT_NO = AT.ACCOUNT_NO)"
         )
         result = await self.db.execute(query, {"user_id": user_id})
         return [AccountResponse.model_validate(row).model_dump() for row in result]
@@ -163,17 +171,39 @@ class AccountRepository:
         await self.db.refresh(account)
         return account
 
-    async def update(self, account_id: str, data: dict) -> Optional[Account]:
-        """계좌 수정 (flush만 수행)"""
+    async def find_latest_by_account_no(self, user_id: str, account_no: str) -> Optional[Account]:
+        """사용자의 해당 계좌 행 (중복 등록 시 최신 등록분)
+
+        DB에 유니크 제약이 없으므로 중복 행이 존재할 수 있다. 배치 조회와 같은
+        규칙(최신 ACCOUNT_ID)을 써야 앱이 보는 바인딩과 매매가 쓰는 바인딩이 일치한다.
+        """
+        query = (
+            select(Account)
+            .filter(Account.USER_ID == user_id, Account.ACCOUNT_NO == account_no)
+            .order_by(Account.ACCOUNT_ID.desc())
+            .limit(1)
+        )
+        result = await self.db.execute(query)
+        return result.scalars().first()
+
+    async def update(self, user_id: str, account_id: str, data: dict) -> Optional[Account]:
+        """계좌 수정 (flush만 수행) - 소유권 검증 포함
+
+        ACCOUNT의 PK는 (ACCOUNT_ID, USER_ID) 복합키다. get()에 단일 값을 넘기면
+        예외가 나므로 dict로 전달하고, populate_existing으로 방금 UPDATE한 값을
+        다시 읽는다 (synchronize_session=False라 세션 캐시가 낡아 있다).
+        """
         query = (
             update(Account)
-            .filter(Account.ACCOUNT_ID == account_id)
+            .filter(Account.USER_ID == user_id, Account.ACCOUNT_ID == account_id)
             .values(**data)
             .execution_options(synchronize_session=False)
         )
         await self.db.execute(query)
         await self.db.flush()
-        return await self.db.get(Account, account_id)
+        return await self.db.get(
+            Account, {"ACCOUNT_ID": account_id, "USER_ID": user_id}, populate_existing=True
+        )
 
     async def find_account_no_by_id(self, user_id: str, account_id: str) -> Optional[str]:
         """계좌 ID로 계좌번호 조회 (삭제 전 동반 정리 대상을 확보하는 용도)"""
