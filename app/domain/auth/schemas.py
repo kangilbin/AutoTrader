@@ -14,14 +14,6 @@ class AuthCreateRequest(BaseModel):
     SECRET_KEY: str
 
 
-class AuthUpdateRequest(BaseModel):
-    """인증키 수정 요청"""
-    AUTH_NAME: Optional[str] = None
-    SIMULATION_YN: Optional[str] = None
-    API_KEY: Optional[str] = None
-    SECRET_KEY: Optional[str] = None
-
-
 class AuthChoiceRequest(BaseModel):
     """인증키 선택 요청"""
     AUTH_ID: int

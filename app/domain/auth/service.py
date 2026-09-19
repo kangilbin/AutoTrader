@@ -3,7 +3,6 @@ Auth Service - 비즈니스 로직 및 트랜잭션 관리
 """
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import SQLAlchemyError
-from datetime import datetime
 from typing import List
 import logging
 
@@ -98,35 +97,6 @@ class AuthService:
         )
 
         return AuthResponse.model_validate(auth_data).model_dump()
-
-    async def update_auth(self, user_id: str, auth_id: int, data: dict) -> dict:
-        """인증키 수정"""
-        try:
-            if "API_KEY" in data:
-                data["API_KEY"] = encrypt(data["API_KEY"])
-            if "SECRET_KEY" in data:
-                data["SECRET_KEY"] = encrypt(data["SECRET_KEY"])
-            data["MOD_DT"] = datetime.now()
-
-            # 캐시된 토큰은 발급 당시의 앱키에 묶여 있다. 앱키·모의실전 구분이
-            # 바뀌면 옛 토큰을 계속 쓰는 셈이 되므로 슬롯을 비운다.
-            # (불필요한 무효화는 재발급을 부르고 appkey당 1분 1회 제한에 걸리므로
-            #  인증 요소가 실제로 바뀐 경우에만 지운다)
-            auth_changed = any(k in data for k in ("API_KEY", "SECRET_KEY", "SIMULATION_YN"))
-
-            result = await self.repo.update(user_id, auth_id, data)
-            if not result:
-                raise NotFoundError("인증키", auth_id)
-            await self.db.commit()
-
-            if auth_changed:
-                await invalidate_token_cache(user_id, auth_id)
-
-            return AuthResponse.model_validate(result).model_dump()
-        except SQLAlchemyError as e:
-            await self.db.rollback()
-            logger.error(f"인증키 수정 실패: {e}", exc_info=True)
-            raise DatabaseError("인증키 수정에 실패했습니다", operation="update", original_error=e)
 
     async def delete_impact(self, user_id: str, auth_id: int) -> dict:
         """인증키 삭제 영향도 조회 (삭제 전 확인용)
