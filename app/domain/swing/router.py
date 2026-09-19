@@ -57,10 +57,11 @@ async def get_available_capital(
 @router.get("/{swing_id}")
 async def get_swing(
     swing_id: int,
-    service: Annotated[SwingService, Depends(get_swing_service)]
+    service: Annotated[SwingService, Depends(get_swing_service)],
+    user_id: Annotated[str, Depends(get_current_user)]
 ):
     """스윙 전략 조회"""
-    result = await service.get_swing(swing_id)
+    result = await service.get_swing(user_id, swing_id)
     return success_response("스윙 조회 완료", result)
 
 @router.put("/{swing_id}/settings")
@@ -84,5 +85,5 @@ async def delete_swing(
     user_id: Annotated[str, Depends(get_current_user)]
 ):
     """스윙 전략 삭제"""
-    await service.delete_swing(swing_id, swing_type)
+    await service.delete_swing(user_id, swing_id, swing_type)
     return success_response("스윙 삭제 완료")

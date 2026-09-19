@@ -8,6 +8,7 @@ from decimal import Decimal
 from app.core.market_code import is_overseas, US_MARKETS
 from app.domain.swing.entity import SwingTrade, EmaOption
 from app.domain.stock.entity import Stock
+from app.domain.account.entity import Account
 from app.domain.swing.schemas import SwingResponse
 from datetime import datetime
 import logging
@@ -24,6 +25,24 @@ class SwingRepository:
     async def find_by_id(self, swing_id: int) -> Optional[SwingTrade]:
         """스윙 조회"""
         query = select(SwingTrade).filter(SwingTrade.SWING_ID == swing_id)
+        result = await self.db.execute(query)
+        return result.scalars().first()
+
+    async def find_by_id_with_ownership(self, user_id: str, swing_id: int) -> Optional[SwingTrade]:
+        """스윙 조회 + 소유권 검증
+
+        SWING_TRADE에는 USER_ID가 없다. 소유자는 ACCOUNT_NO로 ACCOUNT를 조인해야
+        나온다 — 이 조인을 빼면 스윙 ID만 아는 사용자가 남의 스윙을 읽고 고칠 수 있다.
+
+        scalar_one_or_none()을 쓰지 않는 이유: ACCOUNT에 (USER_ID, ACCOUNT_NO)
+        유니크 제약이 없어 같은 계좌가 여러 인증키로 등록될 수 있고(앱키 교체 시
+        실제로 발생), 그때 조인 결과가 2행이 되어 MultipleResultsFound로 터진다.
+        """
+        query = (
+            select(SwingTrade)
+            .join(Account, SwingTrade.ACCOUNT_NO == Account.ACCOUNT_NO)
+            .filter(SwingTrade.SWING_ID == swing_id, Account.USER_ID == user_id)
+        )
         result = await self.db.execute(query)
         return result.scalars().first()
 

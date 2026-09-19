@@ -215,6 +215,10 @@ class FakeRepo:
     async def find_by_id(self, swing_id):
         return self.swing
 
+    async def find_by_id_with_ownership(self, user_id, swing_id):
+        """소유권 검증 경로. 소유자만 스윙을 받는다 (ACCOUNT 조인 대역)"""
+        return self.swing if user_id == "tester" else None
+
     async def update(self, swing_id, data):
         self.db_state.update(data)
         return self.swing

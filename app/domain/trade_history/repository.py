@@ -162,4 +162,7 @@ class TradeHistoryRepository:
             )
         )
         result = await self.db.execute(query)
-        return result.scalar_one_or_none()
+        # scalar_one_or_none()을 쓰지 않는다: ACCOUNT에 (USER_ID, ACCOUNT_NO)
+        # 유니크 제약이 없어 같은 계좌가 여러 인증키로 등록될 수 있고(앱키 교체 시
+        # 실제로 발생), 그때 조인이 2행을 내어 MultipleResultsFound로 500이 난다.
+        return result.scalars().first()

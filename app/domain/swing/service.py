@@ -264,17 +264,25 @@ class SwingService:
 
         await self.db.commit()
 
-    async def get_swing(self, swing_id: int) -> dict:
-        """스윙 조회"""
-        swing = await self.repo.find_by_id(swing_id)
+    async def get_swing(self, user_id: str, swing_id: int) -> dict:
+        """스윙 조회 - 소유권 검증 포함
+
+        남의 스윙은 '없음'으로 응답한다. 403으로 구분하면 해당 ID의 스윙이
+        존재한다는 사실 자체가 노출된다.
+        """
+        swing = await self.repo.find_by_id_with_ownership(user_id, swing_id)
         if not swing:
             raise NotFoundError("스윙 전략", swing_id)
         return SwingResponse.model_validate(swing).model_dump()
 
-    async def update_swing(self, swing_id: int, data: dict, user_id: str = None) -> dict:
-        """스윙 수정"""
+    async def update_swing(self, swing_id: int, data: dict, user_id: str) -> dict:
+        """스윙 수정 - 소유권 검증 포함
+
+        user_id는 자본 한도 검증뿐 아니라 소유권 확인에도 쓰이므로 필수다.
+        (기본값 None이던 시절엔 호출자가 빠뜨리면 검증이 통째로 꺼졌다)
+        """
         try:
-            swing = await self.repo.find_by_id(swing_id)
+            swing = await self.repo.find_by_id_with_ownership(user_id, swing_id)
             if not swing:
                 raise NotFoundError("스윙 전략", swing_id)
 
@@ -344,8 +352,8 @@ class SwingService:
             logger.error(f"스윙 수정 실패: {e}", exc_info=True)
             raise DatabaseError("스윙 수정에 실패했습니다")
 
-    async def delete_swing(self, swing_id: int, swing_type: str) -> bool:
-        """스윙 삭제 - 이평선 옵션 동반 정리
+    async def delete_swing(self, user_id: str, swing_id: int, swing_type: str) -> bool:
+        """스윙 삭제 - 소유권 검증 + 이평선 옵션 동반 정리
 
         EMA_OPT는 (ACCOUNT_NO, ST_CODE) 키라 계좌+종목을 알아야 지울 수 있다.
         시장코드가 키에 없어 같은 계좌·종목의 J/NX/UN 스윙이 한 행을 공유하므로,
@@ -353,7 +361,7 @@ class SwingService:
         값이라 틀리면 행이 남으므로 판단 근거로 쓰지 않는다.
         """
         try:
-            swing = await self.repo.find_by_id(swing_id)
+            swing = await self.repo.find_by_id_with_ownership(user_id, swing_id)
             if not swing:
                 raise NotFoundError("스윙 전략", swing_id)
             account_no, st_code = swing.ACCOUNT_NO, swing.ST_CODE
