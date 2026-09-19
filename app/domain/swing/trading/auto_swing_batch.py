@@ -838,6 +838,42 @@ async def _execute_full_sell(
 # ==================== 기타 배치 작업 ====================
 
 
+# STOCK_DAY_HISTORY 의 OHLCV 컬럼은 전부 NOT NULL 이다(stock/entity.py). 저장을 잡당 1회로
+# 모은 뒤에는 불량 행 하나가 그날 INSERT 전체를 롤백시키므로, 행을 만드는 시점에 걸러낸다.
+_REQUIRED_HISTORY_FIELDS = (
+    "STCK_BSOP_DATE", "STCK_OPRC", "STCK_HGPR", "STCK_LWPR", "STCK_CLPR", "ACML_VOL",
+)
+
+
+async def _store_collected_rows(stock_service: StockService, results: list, tag: str) -> None:
+    """수집 결과를 한 번에 저장하고 집계를 남긴다 (국내·미국 공통)
+
+    종목별로 저장하지 않는 이유: 코루틴들이 잡의 AsyncSession 을 공유하므로 각자 commit 하면,
+    한쪽의 commit 이 MySQL 왕복에서 await 로 멈춘 사이 다른 쪽이 같은 트랜잭션 상태를 바꿔
+    세션이 깨진다 (IllegalStateChangeError — 2026-09-18 06:40 운영 장애).
+    저장 주체를 잡 한 곳으로 모으면 경합 자체가 성립하지 않고, 5종목 쓰기가 한 트랜잭션에
+    뒤섞여 한쪽 롤백이 다른 쪽 행을 지우던 문제도 함께 사라진다.
+
+    저장 실패를 삼키는 이유: 여기서 예외를 올리면 잡의 except 가 받아 같은 내용을 두 번
+    기록할 뿐이고, 이미 수집은 끝난 상태라 되돌릴 것도 없다. 다음 날 재적재로 복구된다.
+    """
+    rows = [r for r in results if isinstance(r, dict)]
+    failed = sum(1 for r in results if isinstance(r, Exception))
+    skipped = len(results) - len(rows) - failed
+
+    saved = 0
+    if rows:
+        try:
+            saved = await stock_service.save_history_bulk(rows)
+        except Exception as e:
+            logger.error(f"{tag} 일별 데이터 저장 실패 ({len(rows)}건): {e}", exc_info=True)
+
+    logger.info(
+        f"{tag} 데이터 수집 완료 - "
+        f"수집: {len(rows)}, 저장: {saved}, 실패: {failed}, 건너뜀: {skipped}, 총: {len(results)}"
+    )
+
+
 async def day_collect_job():
     """
     국내 일별 데이터 수집 (일봉 확정 15:35 + 여유 → 15:40 KST 실행)
@@ -863,8 +899,8 @@ async def day_collect_job():
         stock_service = StockService(db)
 
         # 시세 토큰은 잡 진입 시 한 번만 해석한다. 종목마다 해석하면 gather로
-        # 동시 실행되는 코루틴들이 공유 AsyncSession에 SELECT를 몰아넣어,
-        # 다른 종목의 save_history_bulk 커밋과 겹치면 세션이 깨진다.
+        # 동시 실행되는 코루틴들이 공유 AsyncSession에 SELECT를 몰아넣는다
+        # (저장은 _store_collected_rows 가 잡 끝에서 1회만 수행한다).
         access_data = await get_quote_auth(user_id, db)
 
         data_target_stocks = await stock_service.get_data_target_stocks(overseas=False)
@@ -878,14 +914,8 @@ async def day_collect_job():
 
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        # 결과 로깅
-        success_count = sum(1 for r in results if not isinstance(r, Exception))
-        error_count = len(results) - success_count
-
-        logger.info(
-            f"[DAY COLLECT KR] 데이터 수집 완료 - "
-            f"성공: {success_count}, 실패: {error_count}, 총: {len(results)}"
-        )
+        # 저장은 여기서 단 한 번. 종목별 commit 이 공유 세션을 깨뜨리던 경로를 없앤다.
+        await _store_collected_rows(stock_service, results, "[DAY COLLECT KR]")
 
     except Exception as e:
         logger.error(f"[DAY COLLECT KR] day_collect_job 실패: {e}", exc_info=True)
@@ -928,13 +958,8 @@ async def us_day_collect_job():
 
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        success_count = sum(1 for r in results if not isinstance(r, Exception))
-        error_count = len(results) - success_count
-
-        logger.info(
-            f"[DAY COLLECT US] 데이터 수집 완료 - "
-            f"성공: {success_count}, 실패: {error_count}, 총: {len(results)}"
-        )
+        # 국내 잡과 동일 — 수집은 병렬, 저장은 1회
+        await _store_collected_rows(stock_service, results, "[DAY COLLECT US]")
 
     except Exception as e:
         logger.error(f"[DAY COLLECT US] us_day_collect_job 실패: {e}", exc_info=True)
@@ -951,6 +976,11 @@ async def collect_single_stock(stock, stock_service: StockService, user_id: str,
         stock_service: StockService 인스턴스
         user_id: 시세 조회에 사용할 인증키 소유자 (BATCH_USER_ID)
         access_data: 잡 진입 시 1회 해석한 시세 토큰 (종목별 DB/Redis 재조회 방지)
+
+    Returns:
+        dict | None: 저장할 STOCK_DAY_HISTORY 행. 저장은 하지 않는다 —
+        잡이 gather 결과를 모아 한 번에 기록한다 (_store_collected_rows 참고).
+        세션 미완료·필드 누락이면 None.
     """
     async with _SEMAPHORE:
         code = stock.ST_CODE
@@ -973,7 +1003,7 @@ async def collect_single_stock(stock, stock_service: StockService, user_id: str,
 
             if response:
                 if _overseas:
-                    history_data = [{
+                    history_row = {
                         "MRKT_CODE": mrkt_code,
                         "ST_CODE": code,
                         # KIS 응답의 실제 거래일(xymd, ET 기준) 사용 — 서버 시계 무관. 누락 시 ET 오늘로 폴백
@@ -985,9 +1015,9 @@ async def collect_single_stock(stock, stock_service: StockService, user_id: str,
                         "ACML_VOL": response.get('tvol'),
                         "FRGN_NTBY_QTY": 0,
                         "REG_DT": datetime.now()
-                    }]
+                    }
                 else:
-                    history_data = [{
+                    history_row = {
                         "MRKT_CODE": mrkt_code,
                         "ST_CODE": code,
                         # KIS 응답의 실제 거래일(stck_bsop_date) 사용. 누락 시 KST 오늘로 폴백
@@ -999,9 +1029,19 @@ async def collect_single_stock(stock, stock_service: StockService, user_id: str,
                         "ACML_VOL": response.get('acml_vol'),
                         "FRGN_NTBY_QTY": response.get('frgn_ntby_qty'),
                         "REG_DT": datetime.now()
-                    }]
-                await stock_service.save_history_bulk(history_data)
-                logger.debug(f"[DAY COLLECT] 데이터 저장 완료: {code}")
+                    }
+
+                missing = [f for f in _REQUIRED_HISTORY_FIELDS if history_row.get(f) in (None, "")]
+                if missing:
+                    logger.warning(f"[DAY COLLECT] {code} 응답 필드 누락 {missing} — 저장 대상에서 제외")
+                    return None
+
+                return history_row
+
+            # 빈 응답도 침묵하지 않는다. 집계의 '건너뜀' 숫자만으로는 어느 종목이
+            # 왜 빠졌는지 추적할 수 없어, 수집이 조용히 비어가는 것을 놓친다.
+            logger.warning(f"[DAY COLLECT] {code} 시세 응답 없음 — 저장 대상에서 제외")
+            return None
 
         except Exception as e:
             logger.error(f"[DAY COLLECT] 데이터 수집 실패 ({code}): {e}")
