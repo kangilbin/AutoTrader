@@ -5,10 +5,20 @@ import pandas as pd
 from typing import Dict
 from .base_strategy import BacktestStrategy
 from app.domain.swing.tech_analysis import ichimoku_swing_signals
+from app.domain.swing.tech_analysis import ICHIMOKU_MIN_BARS
 
 
 class IchimokuStrategy(BacktestStrategy):
     """일목균형표 전략"""
+
+    def min_bars(self, params: dict) -> int:
+        """선행스팬 시프트까지 반영한 최소 봉 수 (= 79)
+
+        이보다 짧으면 ichimoku_swing_signals 가 모든 신호를 False 로 돌려준다.
+        그 결과는 '거래 0건'이라는 정상 결과처럼 보이므로 사전에 막아야 한다.
+        """
+        return ICHIMOKU_MIN_BARS
+
 
     def __init__(self):
         super().__init__("일목균형표 전략")

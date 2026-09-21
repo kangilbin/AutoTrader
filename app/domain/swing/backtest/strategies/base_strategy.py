@@ -44,6 +44,16 @@ class BacktestStrategy(ABC):
     def __init__(self, name: str):
         self.name = name
 
+    def min_bars(self, params: Dict) -> int:
+        """이 전략이 신호를 낼 수 있는 최소 봉 수
+
+        지표 기간을 아는 전략 자신이 답한다. 서비스에 전략별 표를 두면
+        전략의 기간이 바뀔 때 조용히 어긋난다.
+
+        기본값은 가장 긴 EMA 기간 + 1 (교차 판정에 직전 봉이 필요).
+        """
+        return int(params.get("long_term") or 60) + 1
+
     @abstractmethod
     def compute(self, prices_df: pd.DataFrame, params: Dict) -> Dict:
         """

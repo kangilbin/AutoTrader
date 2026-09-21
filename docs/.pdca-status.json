@@ -1,6 +1,6 @@
 {
   "version": "2.0",
-  "lastUpdated": "2026-07-03T15:49:14.218Z",
+  "lastUpdated": "2026-09-20T01:00:00.000Z",
   "activeFeatures": [
     "foreign-swing",
     "foreign-stock",
@@ -30,10 +30,23 @@
     "conviction-sizing Gap 분석",
     "oauth",
     "tmp",
-    "tests"
+    "tests",
+    "AutotradeMobile",
+    "(tabs)",
+    "scratchpad",
+    "a874c8d1-75bf-4a28-b8d9-0df3c05201f4"
   ],
-  "primaryFeature": "foreign-margin-balance",
+  "primaryFeature": "backtest-data-sufficiency",
   "features": {
+    "us-market-expansion": {
+      "phase": "archived",
+      "phaseNumber": 6,
+      "matchRate": 100,
+      "iterationCount": 0,
+      "startedAt": "2026-07-21T00:00:00.000Z",
+      "archivedAt": "2026-07-21T00:00:00.000Z",
+      "archivedTo": "docs/archive/2026-07/us-market-expansion/"
+    },
     "foreign-margin-balance": {
       "phase": "archived",
       "phaseNumber": 6,
@@ -133,9 +146,9 @@
       },
       "timestamps": {
         "started": "2026-02-28T03:35:36.461Z",
-        "lastUpdated": "2026-05-24T09:57:29.570Z"
+        "lastUpdated": "2026-08-17T10:40:53.285Z"
       },
-      "lastFile": "/Users/apple/IdeaProjects/AutoTrader/app/domain/swing/trading/strategies/single_ema_strategy.py"
+      "lastFile": "/Users/apple/IdeaProjects/AutoTrader/app/domain/swing/trading/strategies/base_single_ema.py"
     },
     "swing": {
       "phase": "do",
@@ -146,7 +159,7 @@
       "documents": {},
       "timestamps": {
         "started": "2026-02-28T03:36:02.099Z",
-        "lastUpdated": "2026-07-03T15:39:48.093Z"
+        "lastUpdated": "2026-09-17T12:14:13.192Z"
       },
       "lastFile": "/Users/apple/IdeaProjects/AutoTrader/app/domain/swing/service.py"
     },
@@ -159,7 +172,7 @@
       "documents": {},
       "timestamps": {
         "started": "2026-03-09T12:43:59.614Z",
-        "lastUpdated": "2026-06-17T12:40:43.612Z"
+        "lastUpdated": "2026-08-15T13:30:27.329Z"
       },
       "lastFile": "/Users/apple/IdeaProjects/AutoTrader/app/core/config.py"
     },
@@ -185,7 +198,7 @@
       "documents": {},
       "timestamps": {
         "started": "2026-03-13T05:08:33.831Z",
-        "lastUpdated": "2026-05-30T09:54:40.358Z"
+        "lastUpdated": "2026-08-15T12:10:12.502Z"
       },
       "lastFile": "/Users/apple/IdeaProjects/AutoTrader/app/domain/order/service.py"
     },
@@ -198,7 +211,7 @@
       "documents": {},
       "timestamps": {
         "started": "2026-03-13T05:32:59.682Z",
-        "lastUpdated": "2026-07-03T15:41:47.819Z"
+        "lastUpdated": "2026-09-17T12:16:32.625Z"
       },
       "lastFile": "/Users/apple/IdeaProjects/AutoTrader/app/domain/swing/trading/auto_swing_batch.py"
     },
@@ -237,7 +250,7 @@
       "documents": {},
       "timestamps": {
         "started": "2026-03-13T06:07:32.554Z",
-        "lastUpdated": "2026-07-03T15:49:14.218Z"
+        "lastUpdated": "2026-08-15T13:42:29.629Z"
       },
       "lastFile": "/Users/apple/IdeaProjects/AutoTrader/app/common/scheduler.py"
     },
@@ -250,7 +263,7 @@
       "documents": {},
       "timestamps": {
         "started": "2026-03-13T15:37:46.509Z",
-        "lastUpdated": "2026-03-29T08:36:26.058Z"
+        "lastUpdated": "2026-09-17T14:02:33.121Z"
       },
       "lastFile": "/Users/apple/IdeaProjects/AutoTrader/app/domain/account/service.py"
     },
@@ -263,9 +276,9 @@
       "documents": {},
       "timestamps": {
         "started": "2026-03-13T15:37:51.601Z",
-        "lastUpdated": "2026-03-28T13:01:20.058Z"
+        "lastUpdated": "2026-07-21T15:19:28.810Z"
       },
-      "lastFile": "/Users/apple/IdeaProjects/AutoTrader/app/domain/auth/router.py"
+      "lastFile": "/Users/apple/IdeaProjects/AutoTrader/app/domain/auth/service.py"
     },
     "stock": {
       "phase": "do",
@@ -276,9 +289,9 @@
       "documents": {},
       "timestamps": {
         "started": "2026-03-13T15:38:00.494Z",
-        "lastUpdated": "2026-06-17T12:43:10.346Z"
+        "lastUpdated": "2026-08-15T13:41:46.031Z"
       },
-      "lastFile": "/Users/apple/IdeaProjects/AutoTrader/app/domain/stock/price_adjustment_batch.py"
+      "lastFile": "/Users/apple/IdeaProjects/AutoTrader/app/domain/stock/stock_data_batch.py"
     },
     "device": {
       "phase": "do",
@@ -302,9 +315,9 @@
       "documents": {},
       "timestamps": {
         "started": "2026-03-13T16:07:44.994Z",
-        "lastUpdated": "2026-06-24T12:30:55.945Z"
+        "lastUpdated": "2026-09-17T14:02:59.999Z"
       },
-      "lastFile": "/Users/apple/IdeaProjects/AutoTrader/app/external/foreign_api.py"
+      "lastFile": "/Users/apple/IdeaProjects/AutoTrader/app/external/kis_api.py"
     },
     "notification": {
       "phase": "do",
@@ -479,9 +492,112 @@
       "documents": {},
       "timestamps": {
         "started": "2026-06-17T13:52:18.332Z",
-        "lastUpdated": "2026-06-24T11:22:48.688Z"
+        "lastUpdated": "2026-09-17T14:05:20.820Z"
       },
-      "lastFile": "/Users/apple/IdeaProjects/AutoTrader/tests/test_swing_entity.py"
+      "lastFile": "/Users/apple/IdeaProjects/AutoTrader/tests/test_kis_auth_resolution.py"
+    },
+    "AutotradeMobile": {
+      "phase": "do",
+      "phaseNumber": 3,
+      "matchRate": null,
+      "iterationCount": 0,
+      "requirements": [],
+      "documents": {},
+      "timestamps": {
+        "started": "2026-07-20T16:07:46.423Z",
+        "lastUpdated": "2026-07-21T15:02:18.890Z"
+      },
+      "lastFile": "/Users/apple/WebstormProjects/AutotradeMobile/components/TopHeader.tsx"
+    },
+    "(tabs)": {
+      "phase": "do",
+      "phaseNumber": 3,
+      "matchRate": null,
+      "iterationCount": 0,
+      "requirements": [],
+      "documents": {},
+      "timestamps": {
+        "started": "2026-07-21T15:02:32.948Z",
+        "lastUpdated": "2026-07-21T15:04:25.018Z"
+      },
+      "lastFile": "/Users/apple/WebstormProjects/AutotradeMobile/app/(tabs)/home.tsx"
+    },
+    "scratchpad": {
+      "phase": "do",
+      "phaseNumber": 3,
+      "matchRate": null,
+      "iterationCount": 0,
+      "requirements": [],
+      "documents": {},
+      "timestamps": {
+        "started": "2026-08-12T14:30:33.287Z",
+        "lastUpdated": "2026-09-17T13:25:29.846Z"
+      },
+      "lastFile": "/private/tmp/claude-501/-Users-apple-IdeaProjects-AutoTrader/e43fb5bb-ec54-4778-9f41-ecd1235fd682/scratchpad/smtp_probe.py"
+    },
+    "a874c8d1-75bf-4a28-b8d9-0df3c05201f4": {
+      "phase": "do",
+      "phaseNumber": 3,
+      "matchRate": null,
+      "iterationCount": 0,
+      "requirements": [],
+      "documents": {},
+      "timestamps": {
+        "started": "2026-08-15T12:42:47.235Z",
+        "lastUpdated": "2026-08-17T09:12:06.898Z"
+      },
+      "lastFile": "/private/tmp/claude-501/-Users-apple-IdeaProjects-AutoTrader/a874c8d1-75bf-4a28-b8d9-0df3c05201f4/scenario_e2e.py"
+    },
+    "swing-mapped-position-adoption": {
+      "phase": "archived",
+      "phaseNumber": 6,
+      "matchRate": 97,
+      "iterationCount": 0,
+      "startedAt": "2026-08-26T14:30:00.000Z",
+      "archivedAt": "2026-08-26T17:00:00.000Z",
+      "archivedTo": "docs/archive/2026-08/swing-mapped-position-adoption/"
+    },
+    "day-collect-bulk-save": {
+      "phase": "check",
+      "phaseNumber": 4,
+      "matchRate": 100,
+      "iterationCount": 1,
+      "requirements": [
+        "FR-01",
+        "FR-02",
+        "FR-03",
+        "FR-04",
+        "FR-05"
+      ],
+      "documents": {
+        "plan": "docs/01-plan/features/day-collect-bulk-save.plan.md",
+        "analysis": "docs/03-analysis/day-collect-bulk-save.analysis.md"
+      },
+      "timestamps": {
+        "started": "2026-09-19T14:30:00.000Z",
+        "lastUpdated": "2026-09-20T00:30:00.000Z"
+      }
+    },
+    "backtest-data-sufficiency": {
+      "phase": "plan",
+      "matchRate": null,
+      "iterationCount": 0,
+      "startedAt": "2026-09-20T01:00:00.000Z",
+      "phaseNumber": 1,
+      "requirements": [
+        "FR-01",
+        "FR-02",
+        "FR-03",
+        "FR-04",
+        "FR-05"
+      ],
+      "documents": {
+        "plan": "docs/01-plan/features/backtest-data-sufficiency.plan.md"
+      },
+      "timestamps": {
+        "started": "2026-09-20T01:00:00.000Z",
+        "lastUpdated": "2026-09-20T01:00:00.000Z"
+      }
     }
   },
   "pipeline": {
@@ -492,7 +608,7 @@
   "session": {
     "startedAt": "2026-02-28T03:08:34.644Z",
     "onboardingCompleted": false,
-    "lastActivity": "2026-07-03T15:49:14.218Z"
+    "lastActivity": "2026-09-17T14:05:20.820Z"
   },
   "history": [
     {
@@ -5520,6 +5636,2094 @@
     {
       "timestamp": "2026-07-03T15:49:14.218Z",
       "feature": "AutoTrader",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-20T15:22:40.339Z",
+      "feature": "external",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-20T15:23:01.251Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-20T15:51:15.742Z",
+      "feature": "core",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-20T15:51:20.656Z",
+      "feature": "external",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-20T15:51:23.144Z",
+      "feature": "order",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-20T15:51:24.040Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-20T15:51:31.181Z",
+      "feature": "external",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-20T15:52:03.979Z",
+      "feature": "core",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-20T15:52:18.347Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-20T15:52:28.716Z",
+      "feature": "external",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-20T15:52:42.064Z",
+      "feature": "external",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-20T15:52:44.066Z",
+      "feature": "external",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-20T15:52:50.788Z",
+      "feature": "external",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-20T15:52:58.054Z",
+      "feature": "external",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-20T15:53:07.952Z",
+      "feature": "external",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-20T15:53:10.033Z",
+      "feature": "external",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-20T15:53:12.464Z",
+      "feature": "external",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-20T15:53:14.710Z",
+      "feature": "external",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-20T15:53:19.554Z",
+      "feature": "external",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-20T15:53:21.857Z",
+      "feature": "external",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-20T15:53:24.329Z",
+      "feature": "external",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-20T15:53:26.158Z",
+      "feature": "external",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-20T15:53:41.896Z",
+      "feature": "external",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-20T15:54:05.087Z",
+      "feature": "order",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-20T15:54:07.637Z",
+      "feature": "order",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-20T15:54:26.963Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-20T15:54:29.422Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-20T15:54:42.961Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-20T15:54:44.959Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-20T15:54:47.312Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-20T15:54:56.804Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-20T15:55:08.414Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-20T15:55:39.155Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-20T15:55:41.381Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-20T15:55:49.924Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-20T15:55:51.922Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-20T15:55:53.923Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-20T15:56:10.778Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-20T15:56:12.167Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-20T15:56:40.965Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-20T15:56:44.883Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-20T15:56:55.780Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-20T15:56:57.436Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-20T15:57:02.825Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-20T15:57:14.986Z",
+      "feature": "stock",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-20T15:57:17.045Z",
+      "feature": "stock",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-20T15:57:27.832Z",
+      "feature": "stock",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-20T15:57:30.145Z",
+      "feature": "stock",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-20T15:57:32.168Z",
+      "feature": "stock",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-20T15:57:43.324Z",
+      "feature": "stock",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-20T15:57:54.615Z",
+      "feature": "stock",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-20T15:57:57.344Z",
+      "feature": "stock",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-20T15:58:00.829Z",
+      "feature": "stock",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-20T15:58:03.901Z",
+      "feature": "stock",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-20T15:58:06.875Z",
+      "feature": "stock",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-20T15:58:09.640Z",
+      "feature": "stock",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-20T15:58:22.258Z",
+      "feature": "order",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-20T15:58:23.758Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-20T15:58:25.354Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-20T16:07:46.423Z",
+      "feature": "AutotradeMobile",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-20T16:08:08.927Z",
+      "feature": "AutotradeMobile",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-20T16:08:24.056Z",
+      "feature": "AutotradeMobile",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-20T16:08:26.566Z",
+      "feature": "AutotradeMobile",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-20T16:08:34.369Z",
+      "feature": "AutotradeMobile",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-20T16:08:36.912Z",
+      "feature": "AutotradeMobile",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-20T16:08:37.743Z",
+      "feature": "AutotradeMobile",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-20T16:08:43.686Z",
+      "feature": "AutotradeMobile",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-20T16:08:46.003Z",
+      "feature": "AutotradeMobile",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-20T16:08:55.007Z",
+      "feature": "AutotradeMobile",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-20T16:08:57.018Z",
+      "feature": "AutotradeMobile",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-20T16:08:59.536Z",
+      "feature": "AutotradeMobile",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-20T16:09:06.651Z",
+      "feature": "AutotradeMobile",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-20T16:09:17.782Z",
+      "feature": "stock",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-20T16:09:19.698Z",
+      "feature": "stock",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-20T16:09:34.764Z",
+      "feature": "stock",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-20T16:09:36.021Z",
+      "feature": "stock",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-20T16:10:00.217Z",
+      "feature": "AutotradeMobile",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-20T16:10:02.277Z",
+      "feature": "AutotradeMobile",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-20T16:10:04.181Z",
+      "feature": "AutotradeMobile",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-20T16:10:06.378Z",
+      "feature": "AutotradeMobile",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-20T16:10:20.797Z",
+      "feature": "AutotradeMobile",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-20T16:10:30.070Z",
+      "feature": "AutotradeMobile",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-20T16:10:35.485Z",
+      "feature": "AutotradeMobile",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-21T14:56:07.652Z",
+      "feature": "core",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-21T14:57:03.307Z",
+      "feature": "core",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-21T14:57:40.949Z",
+      "feature": "stock",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-21T14:57:45.434Z",
+      "feature": "stock",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-21T14:57:47.852Z",
+      "feature": "stock",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-21T15:01:11.540Z",
+      "feature": "AutotradeMobile",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-21T15:01:14.794Z",
+      "feature": "AutotradeMobile",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-21T15:01:36.500Z",
+      "feature": "AutotradeMobile",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-21T15:01:53.704Z",
+      "feature": "AutotradeMobile",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-21T15:02:03.501Z",
+      "feature": "AutotradeMobile",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-21T15:02:18.890Z",
+      "feature": "AutotradeMobile",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-21T15:02:32.948Z",
+      "feature": "(tabs)",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-21T15:02:35.649Z",
+      "feature": "(tabs)",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-21T15:02:53.082Z",
+      "feature": "(tabs)",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-21T15:03:16.780Z",
+      "feature": "(tabs)",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-21T15:03:30.491Z",
+      "feature": "(tabs)",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-21T15:03:35.286Z",
+      "feature": "(tabs)",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-21T15:03:58.434Z",
+      "feature": "(tabs)",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-21T15:04:13.379Z",
+      "feature": "(tabs)",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-21T15:04:15.697Z",
+      "feature": "(tabs)",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-21T15:04:25.018Z",
+      "feature": "(tabs)",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-21T15:05:12.627Z",
+      "feature": "stock",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-21T15:05:17.489Z",
+      "feature": "stock",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-21T15:08:26.430Z",
+      "feature": "core",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-21T15:08:49.743Z",
+      "feature": "core",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-21T15:09:07.458Z",
+      "feature": "external",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-21T15:09:10.758Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-21T15:09:20.335Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-21T15:10:52.497Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-21T15:18:14.873Z",
+      "feature": "external",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-21T15:18:39.597Z",
+      "feature": "external",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-21T15:18:48.977Z",
+      "feature": "external",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-21T15:19:09.465Z",
+      "feature": "external",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-21T15:19:28.810Z",
+      "feature": "auth",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-21T15:24:07.610Z",
+      "feature": "external",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-21T15:25:15.895Z",
+      "feature": "external",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-21T15:25:43.346Z",
+      "feature": "AutoTrader",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-21T15:25:54.523Z",
+      "feature": "AutoTrader",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-21T15:33:25.216Z",
+      "feature": "external",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-21T15:34:07.574Z",
+      "feature": "external",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-21T15:34:39.641Z",
+      "feature": "external",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-21T15:35:48.542Z",
+      "feature": "external",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-21T15:36:09.047Z",
+      "feature": "external",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-23T14:49:06.516Z",
+      "feature": "external",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-23T14:49:51.206Z",
+      "feature": "AutoTrader",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-23T14:50:04.331Z",
+      "feature": "AutoTrader",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-23T15:32:21.836Z",
+      "feature": "stock",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-23T15:33:06.675Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-07-23T15:38:32.177Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-11T13:12:47.305Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-11T13:15:35.314Z",
+      "feature": "strategies",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-11T13:15:41.839Z",
+      "feature": "strategies",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-11T13:15:53.504Z",
+      "feature": "strategies",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-11T13:16:01.078Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-11T13:16:16.526Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-11T13:16:22.759Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-11T13:16:38.061Z",
+      "feature": "strategies",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-11T13:16:48.598Z",
+      "feature": "strategies",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-11T15:15:10.322Z",
+      "feature": "strategies",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-11T15:15:24.148Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-11T15:15:32.981Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-11T15:15:48.061Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-11T15:15:54.555Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-11T15:16:02.399Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-11T15:16:10.912Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-11T15:16:15.557Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-11T15:16:20.596Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-11T15:16:31.499Z",
+      "feature": "strategies",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-11T15:16:40.644Z",
+      "feature": "strategies",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-11T15:16:58.420Z",
+      "feature": "strategies",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-11T15:17:05.752Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-11T15:17:11.667Z",
+      "feature": "strategies",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-11T15:17:19.505Z",
+      "feature": "strategies",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-11T15:39:50.326Z",
+      "feature": "strategies",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-12T12:05:52.338Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-12T12:05:59.710Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-12T12:06:06.140Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-12T12:06:15.102Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-12T12:06:23.287Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-12T12:06:31.439Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-12T12:06:38.109Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-12T12:06:47.128Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-12T12:06:54.054Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-12T12:07:04.746Z",
+      "feature": "strategies",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-12T12:07:10.208Z",
+      "feature": "strategies",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-12T12:07:16.375Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-12T13:17:37.751Z",
+      "feature": "stock",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-12T13:17:44.967Z",
+      "feature": "stock",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-12T13:17:52.692Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-12T13:18:03.705Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-12T14:23:29.398Z",
+      "feature": "external",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-12T14:24:25.568Z",
+      "feature": "external",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-12T14:24:43.946Z",
+      "feature": "external",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-12T14:24:53.645Z",
+      "feature": "external",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-12T14:25:16.653Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-12T14:25:26.496Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-12T14:26:44.473Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-12T14:26:57.158Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-12T14:27:07.281Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-12T14:27:16.943Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-12T14:27:42.122Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-12T14:28:23.765Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-12T14:28:38.770Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-12T14:28:55.166Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-12T14:29:08.718Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-12T14:29:23.487Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-12T14:29:35.017Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-12T14:29:48.596Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-12T14:30:33.287Z",
+      "feature": "scratchpad",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-15T12:04:23.337Z",
+      "feature": "core",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-15T12:04:39.128Z",
+      "feature": "core",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-15T12:04:49.067Z",
+      "feature": "core",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-15T12:05:04.921Z",
+      "feature": "core",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-15T12:05:18.058Z",
+      "feature": "core",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-15T12:05:50.081Z",
+      "feature": "external",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-15T12:06:05.849Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-15T12:06:13.442Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-15T12:06:41.065Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-15T12:06:52.064Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-15T12:07:02.985Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-15T12:07:13.702Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-15T12:07:24.704Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-15T12:07:41.942Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-15T12:08:06.484Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-15T12:08:19.832Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-15T12:08:33.211Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-15T12:09:18.597Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-15T12:09:29.936Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-15T12:09:44.016Z",
+      "feature": "external",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-15T12:09:58.948Z",
+      "feature": "order",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-15T12:10:12.502Z",
+      "feature": "order",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-15T12:10:57.141Z",
+      "feature": "scratchpad",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-15T12:14:44.589Z",
+      "feature": "scratchpad",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-15T12:35:03.265Z",
+      "feature": "external",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-15T12:36:08.586Z",
+      "feature": "external",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-15T12:36:32.035Z",
+      "feature": "external",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-15T12:37:56.265Z",
+      "feature": "external",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-15T12:39:22.728Z",
+      "feature": "external",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-15T12:41:17.639Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-15T12:41:41.848Z",
+      "feature": "external",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-15T12:42:47.235Z",
+      "feature": "a874c8d1-75bf-4a28-b8d9-0df3c05201f4",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-15T12:43:40.505Z",
+      "feature": "scratchpad",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-15T12:45:54.900Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-15T12:46:52.108Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-15T12:47:35.879Z",
+      "feature": "a874c8d1-75bf-4a28-b8d9-0df3c05201f4",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-15T12:50:29.254Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-15T12:51:03.880Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-15T12:51:26.275Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-15T12:51:45.836Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-15T12:52:31.274Z",
+      "feature": "a874c8d1-75bf-4a28-b8d9-0df3c05201f4",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-15T12:53:20.370Z",
+      "feature": "a874c8d1-75bf-4a28-b8d9-0df3c05201f4",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-15T12:57:01.592Z",
+      "feature": "strategies",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-15T12:57:19.111Z",
+      "feature": "strategies",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-15T12:57:37.478Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-15T12:57:51.024Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-15T12:58:06.969Z",
+      "feature": "strategies",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-15T12:58:21.274Z",
+      "feature": "strategies",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-15T12:58:52.396Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-15T12:59:24.011Z",
+      "feature": "a874c8d1-75bf-4a28-b8d9-0df3c05201f4",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-15T12:59:54.213Z",
+      "feature": "a874c8d1-75bf-4a28-b8d9-0df3c05201f4",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-15T13:05:15.783Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-15T13:05:37.920Z",
+      "feature": "core",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-15T13:06:28.848Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-15T13:07:05.709Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-15T13:07:25.348Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-15T13:07:42.894Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-15T13:08:10.277Z",
+      "feature": "AutoTrader",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-15T13:08:57.747Z",
+      "feature": "a874c8d1-75bf-4a28-b8d9-0df3c05201f4",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-15T13:30:27.329Z",
+      "feature": "core",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-15T13:30:46.052Z",
+      "feature": "AutoTrader",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-15T13:30:57.734Z",
+      "feature": "AutoTrader",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-15T13:36:02.347Z",
+      "feature": "stock",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-15T13:41:25.864Z",
+      "feature": "stock",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-15T13:41:46.031Z",
+      "feature": "stock",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-15T13:42:03.447Z",
+      "feature": "AutoTrader",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-15T13:42:15.042Z",
+      "feature": "AutoTrader",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-15T13:42:29.629Z",
+      "feature": "AutoTrader",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-15T13:42:45.794Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-15T13:42:58.718Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-15T13:43:41.508Z",
+      "feature": "a874c8d1-75bf-4a28-b8d9-0df3c05201f4",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-15T13:44:37.027Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-15T13:48:38.082Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-15T13:48:56.515Z",
+      "feature": "strategies",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-15T13:49:14.362Z",
+      "feature": "strategies",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-15T13:49:28.364Z",
+      "feature": "strategies",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-15T13:49:43.520Z",
+      "feature": "strategies",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-15T13:50:01.187Z",
+      "feature": "strategies",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-15T13:50:23.241Z",
+      "feature": "strategies",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-15T13:50:48.284Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-15T13:51:04.320Z",
+      "feature": "strategies",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-15T13:51:48.407Z",
+      "feature": "a874c8d1-75bf-4a28-b8d9-0df3c05201f4",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-15T13:52:18.834Z",
+      "feature": "a874c8d1-75bf-4a28-b8d9-0df3c05201f4",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-15T13:53:25.824Z",
+      "feature": "a874c8d1-75bf-4a28-b8d9-0df3c05201f4",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-17T08:36:40.556Z",
+      "feature": "strategies",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-17T08:37:13.540Z",
+      "feature": "strategies",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-17T08:37:35.374Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-17T08:37:57.088Z",
+      "feature": "strategies",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-17T08:38:15.829Z",
+      "feature": "strategies",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-17T08:38:41.755Z",
+      "feature": "a874c8d1-75bf-4a28-b8d9-0df3c05201f4",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-17T08:47:31.590Z",
+      "feature": "external",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-17T09:02:46.088Z",
+      "feature": "external",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-17T09:09:01.988Z",
+      "feature": "a874c8d1-75bf-4a28-b8d9-0df3c05201f4",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-17T09:12:06.898Z",
+      "feature": "a874c8d1-75bf-4a28-b8d9-0df3c05201f4",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-17T09:24:46.360Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-17T09:25:26.638Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-17T09:30:09.644Z",
+      "feature": "tests",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-17T10:40:11.152Z",
+      "feature": "strategies",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-17T10:40:53.285Z",
+      "feature": "strategies",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-08-26T14:30:00.000Z",
+      "feature": "swing-mapped-position-adoption",
+      "phase": "plan",
+      "action": "created"
+    },
+    {
+      "timestamp": "2026-08-26T14:55:00.000Z",
+      "feature": "swing-mapped-position-adoption",
+      "phase": "design",
+      "action": "created"
+    },
+    {
+      "timestamp": "2026-08-26T15:20:00.000Z",
+      "feature": "swing-mapped-position-adoption",
+      "phase": "do",
+      "action": "completed"
+    },
+    {
+      "timestamp": "2026-08-26T16:10:00.000Z",
+      "feature": "swing-mapped-position-adoption",
+      "phase": "check",
+      "action": "completed"
+    },
+    {
+      "timestamp": "2026-08-26T16:45:00.000Z",
+      "feature": "swing-mapped-position-adoption",
+      "phase": "completed",
+      "action": "report"
+    },
+    {
+      "timestamp": "2026-08-26T17:00:00.000Z",
+      "feature": "swing-mapped-position-adoption",
+      "phase": "archived",
+      "action": "archived"
+    },
+    {
+      "timestamp": "2026-09-15T15:21:41.270Z",
+      "feature": "external",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-09-15T15:23:30.827Z",
+      "feature": "external",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-09-15T15:23:50.928Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-09-15T15:23:58.003Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-09-15T15:24:09.485Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-09-15T15:24:41.240Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-09-15T15:27:49.239Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-09-15T15:27:56.377Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-09-15T15:28:13.151Z",
+      "feature": "external",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-09-15T15:28:38.575Z",
+      "feature": "external",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-09-15T15:30:27.605Z",
+      "feature": "external",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-09-15T15:43:06.888Z",
+      "feature": "account",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-09-15T15:47:08.819Z",
+      "feature": "external",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-09-15T15:49:43.286Z",
+      "feature": "external",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-09-15T15:50:27.289Z",
+      "feature": "external",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-09-15T15:51:06.237Z",
+      "feature": "external",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-09-15T15:51:26.125Z",
+      "feature": "external",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-09-15T15:54:02.040Z",
+      "feature": "external",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-09-15T15:54:13.915Z",
+      "feature": "external",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-09-15T15:54:29.164Z",
+      "feature": "external",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-09-15T15:54:41.799Z",
+      "feature": "external",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-09-15T15:54:54.025Z",
+      "feature": "external",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-09-15T15:55:10.286Z",
+      "feature": "external",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-09-15T15:58:03.701Z",
+      "feature": "external",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-09-15T16:04:55.927Z",
+      "feature": "external",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-09-15T16:14:49.664Z",
+      "feature": "external",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-09-15T16:15:13.818Z",
+      "feature": "account",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-09-15T16:16:25.955Z",
+      "feature": "external",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-09-15T16:29:25.218Z",
+      "feature": "tests",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-09-15T16:35:42.227Z",
+      "feature": "tests",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-09-17T12:13:37.702Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-09-17T12:14:13.192Z",
+      "feature": "swing",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-09-17T12:14:43.169Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-09-17T12:15:17.396Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-09-17T12:16:10.445Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-09-17T12:16:20.028Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-09-17T12:16:27.090Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-09-17T12:16:32.625Z",
+      "feature": "trading",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-09-17T12:17:19.669Z",
+      "feature": "scratchpad",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-09-17T12:18:40.208Z",
+      "feature": "tests",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-09-17T12:20:59.318Z",
+      "feature": "tests",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-09-17T13:25:29.846Z",
+      "feature": "scratchpad",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-09-17T13:54:57.998Z",
+      "feature": "external",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-09-17T13:55:53.135Z",
+      "feature": "external",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-09-17T13:56:31.037Z",
+      "feature": "external",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-09-17T13:56:38.617Z",
+      "feature": "external",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-09-17T13:57:45.026Z",
+      "feature": "tests",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-09-17T14:01:34.553Z",
+      "feature": "account",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-09-17T14:02:33.121Z",
+      "feature": "account",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-09-17T14:02:59.999Z",
+      "feature": "external",
+      "phase": "do",
+      "action": "updated"
+    },
+    {
+      "timestamp": "2026-09-17T14:05:20.820Z",
+      "feature": "tests",
       "phase": "do",
       "action": "updated"
     }

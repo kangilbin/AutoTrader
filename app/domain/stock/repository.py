@@ -62,15 +62,21 @@ class StockRepository:
         query = text(f"""
             SELECT *
             FROM STOCK_INFO
-            WHERE ST_NM RLIKE make_search_pattern(:initial)
+            WHERE (ST_NM RLIKE make_search_pattern(:initial)
+                   OR ST_CODE RLIKE make_search_pattern(:initial))
             {mrkt_filter}
             ORDER BY
                 CASE
-                    WHEN REGEXP_INSTR(ST_NM, make_search_pattern(:initial)) = 1 THEN 1
-                    WHEN REGEXP_INSTR(ST_NM, make_search_pattern(:initial)) > 1 THEN 2
+                    WHEN REGEXP_INSTR(ST_NM, make_search_pattern(:initial)) = 1
+                      OR REGEXP_INSTR(ST_CODE, make_search_pattern(:initial)) = 1 THEN 1
+                    WHEN REGEXP_INSTR(ST_NM, make_search_pattern(:initial)) > 1
+                      OR REGEXP_INSTR(ST_CODE, make_search_pattern(:initial)) > 1 THEN 2
                     ELSE 3
                 END,
-                REGEXP_INSTR(ST_NM, make_search_pattern(:initial)),
+                LEAST(
+                    NULLIF(REGEXP_INSTR(ST_NM, make_search_pattern(:initial)), 0),
+                    NULLIF(REGEXP_INSTR(ST_CODE, make_search_pattern(:initial)), 0)
+                ),
                 ST_NM
             LIMIT 20
         """)

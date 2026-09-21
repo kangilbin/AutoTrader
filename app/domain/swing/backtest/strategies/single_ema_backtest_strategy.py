@@ -15,6 +15,12 @@ from app.domain.swing.trading.strategies.base_single_ema import BaseSingleEMAStr
 class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
     """단일 20EMA 백테스팅 전략"""
 
+    EMA_LONG_PERIOD = 120            # 추세 필터용 장기 EMA (최소 봉 수를 좌우한다)
+
+    def min_bars(self, params: dict) -> int:
+        """장기 EMA(120) 워밍업 + 교차 판정용 직전 봉"""
+        return self.EMA_LONG_PERIOD + 1
+
     # === 백테스팅 전용 파라미터 ===
     CONSECUTIVE_REQUIRED = 1     # 백테스팅에서는 연속 확인 불필요
 
@@ -146,7 +152,7 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
         return TechnicalIndicators.prepare_full_indicators_for_single_ema(
             df,
             ema_short=self.EMA_PERIOD,
-            ema_long=120,
+            ema_long=self.EMA_LONG_PERIOD,
             atr_period=14,
             adx_period=14,
             obv_lookback=self.OBV_LOOKBACK,

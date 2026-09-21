@@ -1,9 +1,9 @@
 {
-  "sessionCount": 90,
+  "sessionCount": 123,
   "lastSession": {
-    "startedAt": "2026-07-03T15:09:46.201Z",
+    "startedAt": "2026-09-21T15:03:00.898Z",
     "platform": "claude",
-    "level": "Starter"
+    "level": "Enterprise"
   },
   "features": {
     "swing-reg": {
@@ -29,6 +29,26 @@
       "startedAt": "2026-03-22T14:00:00.000Z",
       "archivedAt": "2026-03-22T18:00:00.000Z",
       "archivedTo": "docs/archive/2026-03/trading-fix/"
+    },
+    "swing-mapped-position-adoption": {
+      "phase": "archived",
+      "matchRate": 97,
+      "iterationCount": 0,
+      "startedAt": "2026-08-26T14:30:00.000Z",
+      "archivedAt": "2026-08-26T17:00:00.000Z",
+      "archivedTo": "docs/archive/2026-08/swing-mapped-position-adoption/"
+    },
+    "day-collect-bulk-save": {
+      "phase": "check",
+      "matchRate": 100,
+      "iterationCount": 1,
+      "startedAt": "2026-09-19T14:30:00.000Z"
+    },
+    "backtest-data-sufficiency": {
+      "phase": "plan",
+      "matchRate": null,
+      "iterationCount": 0,
+      "startedAt": "2026-09-20T01:00:00.000Z"
     }
   }
 }

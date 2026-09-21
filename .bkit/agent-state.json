@@ -2,12 +2,12 @@
   "version": "1.0",
   "enabled": false,
   "teamName": "",
-  "feature": "price-adjustment-reload",
-  "pdcaPhase": "archived",
+  "feature": "backtest-data-sufficiency",
+  "pdcaPhase": "plan",
   "orchestrationPattern": "leader",
   "ctoAgent": "opus",
-  "startedAt": "2026-06-24T12:39:08.614Z",
-  "lastUpdated": "2026-07-03T15:55:04.548Z",
+  "startedAt": "2026-09-19T19:08:00.157Z",
+  "lastUpdated": "2026-09-21T15:07:14.977Z",
   "teammates": [],
   "progress": {
     "totalTasks": 0,
@@ -17,5 +17,5 @@
     "pendingTasks": 0
   },
   "recentMessages": [],
-  "sessionId": "0c997e5d-158a-48f6-bc47-2dfcdbbde91b"
+  "sessionId": "df7d1842-83f3-4745-b59d-b8a2a6cb351b"
 }

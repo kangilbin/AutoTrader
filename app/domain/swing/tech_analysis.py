@@ -173,6 +173,17 @@ def ema_swing_signals(df: pd.DataFrame, short_line: int, mid_line: int, long_lin
     return first_buy_signal, second_buy_signal, first_sell_signal, stop_loss_signal
 
 
+# 일목균형표 기간 — 함수 밖에서도 읽어야 한다. 백테스트가 실행 전에 "이 데이터로
+# 계산이 되는가"를 판정하려면 같은 값을 봐야 하고, 두 곳에 적으면 언젠가 어긋난다.
+TENKAN_PERIOD = 9
+KIJUN_PERIOD = 26
+SENKOU_B_PERIOD = 52
+SENKOU_SHIFT = 26
+
+# 선행스팬 시프트까지 반영한 최소 봉 수. 이보다 짧으면 신호 판정 자체가 불가능하다.
+ICHIMOKU_MIN_BARS = max(SENKOU_B_PERIOD, KIJUN_PERIOD, TENKAN_PERIOD) + SENKOU_SHIFT + 1
+
+
 def ichimoku_swing_signals(df: pd.DataFrame) -> tuple[bool, bool, bool, bool]:
     """
     일목균형표 기반 신호 생성:
@@ -183,9 +194,6 @@ def ichimoku_swing_signals(df: pd.DataFrame) -> tuple[bool, bool, bool, bool]:
     - 손절: min(기준선, 구름 하단) - 1.5*ATR(롱 관점)
     Returns: (buy1, buy2, sell1, sell2, stop_loss)
     """
-    TENKAN_PERIOD = 9
-    KIJUN_PERIOD = 26
-    SENKOU_B_PERIOD = 52
     ATR_PERIOD = 14
 
     if df is None or len(df) == 0:
@@ -203,7 +211,7 @@ def ichimoku_swing_signals(df: pd.DataFrame) -> tuple[bool, bool, bool, bool]:
     close = df["STCK_CLPR"]
 
     # 데이터 길이/NaN 가드 (선행스팬 26 시프트 반영)
-    min_needed = max(SENKOU_B_PERIOD, KIJUN_PERIOD, TENKAN_PERIOD) + 26 + 1
+    min_needed = ICHIMOKU_MIN_BARS
     if len(df) < min_needed:
         return False, False, False, False
 
