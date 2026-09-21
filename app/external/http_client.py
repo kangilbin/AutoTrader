@@ -168,6 +168,23 @@ async def fetch(method: str, url: str, service_name: str = "External API", **kwa
                 },
             )
         except httpx.RequestError as e:
+            # 재사용하려던 연결을 서버가 이미 닫은 경우(RemoteProtocolError:
+            # "Server disconnected without sending a response")가 대부분이다.
+            # 풀은 FIN 을 못 보고 살아 있는 연결로 들고 있다가 요청을 보내고 끊긴다.
+            # 다음 시도는 풀이 그 연결을 버리고 새로 맺으므로 대개 성공한다.
+            #
+            # GET 만 재시도한다. ConnectTimeout 과 달리 요청이 전송된 뒤 끊긴 것이라,
+            # POST(주문)는 서버가 이미 접수했을 수 있고 재시도하면 중복 주문이 된다.
+            # 주문의 미확인 상태는 order_executor 의 체결 재확인이 맡는다.
+            if method == "GET" and attempt < MAX_CONNECT_RETRIES:
+                delay = CONNECT_RETRY_DELAY + random.uniform(0, RATE_LIMIT_JITTER)
+                logger.warning(
+                    f"[{service_name}] 연결 끊김({type(e).__name__}), {delay:.1f}초 후 재시도 "
+                    f"({attempt + 1}/{MAX_CONNECT_RETRIES})"
+                )
+                await asyncio.sleep(delay)
+                continue
+
             raise ExternalServiceError(
                 service=service_name,
                 message=f"요청 실패: {str(e)}",
