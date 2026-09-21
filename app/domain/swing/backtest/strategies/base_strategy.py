@@ -38,6 +38,37 @@ def floor_tick(price: float) -> float:
     return math.floor(price / t) * t
 
 
+def records_without_nan(df: pd.DataFrame, columns: List[str]) -> List[Dict]:
+    """선택 컬럼을 JSON 레코드로 변환하되 NaN 을 None 으로 바꾼다.
+
+    `Series.where(cond, None)` 은 float 컬럼에서 None 을 다시 NaN 으로 캐스팅하므로
+    NaN 가드로 쓸 수 없다 (JSONResponse 는 allow_nan=False 라 그대로 500 이 된다).
+    변환은 to_dict 이후 파이썬 스칼라 단계에서 해야 실제로 null 이 나간다.
+    """
+    records = df[columns].to_dict(orient="records")
+    for row in records:
+        for key, value in row.items():
+            if isinstance(value, float) and math.isnan(value):
+                row[key] = None
+    return records
+
+
+def first_eval_date(prices_df: pd.DataFrame, eval_df: pd.DataFrame, eval_start) -> pd.Timestamp:
+    """실제로 평가된 첫 봉의 날짜 (요청한 평가 시작일이 아니라)
+
+    보유 데이터가 평가 구간보다 짧으면 평가는 요청 시작일이 아니라 데이터
+    시작점부터 이뤄진다. 요청값을 그대로 응답에 쓰면 1년치 결과를 2년
+    백테스트로 읽게 되므로, 구간 길이가 결과 해석을 좌우한다.
+    """
+    source = eval_df if eval_df is not None else prices_df
+    dates = source["STCK_BSOP_DATE"]
+    if not pd.api.types.is_datetime64_any_dtype(dates):
+        dates = pd.to_datetime(dates, format="%Y%m%d")   # DB 원본은 String(8)
+
+    evaluated = dates[dates >= pd.Timestamp(eval_start)]
+    return evaluated.min() if not evaluated.empty else pd.Timestamp(eval_start)
+
+
 class BacktestStrategy(ABC):
     """백테스트 전략 베이스 클래스"""
 
@@ -120,7 +151,7 @@ class BacktestStrategy(ABC):
 
         result = {
             "strategy_name": self.name,
-            "start_date": params["eval_start"].strftime("%Y-%m-%d"),
+            "start_date": first_eval_date(prices_df, eval_df, params["eval_start"]).strftime("%Y-%m-%d"),
             "end_date": str(prices_df["STCK_BSOP_DATE"].max()),
             "initial_capital": initial_capital,
             "final_capital": final_capital,
@@ -136,11 +167,14 @@ class BacktestStrategy(ABC):
         if eval_df is not None and "ema20" in eval_df.columns:
             chart_df = eval_df.copy()
             chart_df["STCK_BSOP_DATE"] = chart_df["STCK_BSOP_DATE"].dt.strftime("%Y%m%d")
-            result["price_history"] = chart_df[
-                ["STCK_BSOP_DATE", "STCK_OPRC", "STCK_HGPR", "STCK_LWPR", "STCK_CLPR", "ACML_VOL"]
-            ].to_dict(orient="records")
-            result["ema20_history"] = chart_df[["STCK_BSOP_DATE", "ema20"]].assign(
-                ema20=chart_df["ema20"].round(2).where(chart_df["ema20"].notna(), None)
-            ).to_dict(orient="records")
+            chart_df["ema20"] = chart_df["ema20"].round(2)
+            # 평가 구간이 데이터 시작점과 겹치면(보유 2년 미만) EMA20 워밍업 19봉이
+            # 여기 포함되어 NaN 으로 남는다. 날짜 축을 price_history 와 맞춰야 하므로
+            # 행을 지우지 않고 null 로 내보낸다 (차트에서 선이 끊긴 구간으로 보인다).
+            result["price_history"] = records_without_nan(
+                chart_df,
+                ["STCK_BSOP_DATE", "STCK_OPRC", "STCK_HGPR", "STCK_LWPR", "STCK_CLPR", "ACML_VOL"],
+            )
+            result["ema20_history"] = records_without_nan(chart_df, ["STCK_BSOP_DATE", "ema20"])
 
         return result
