@@ -138,9 +138,10 @@ app.include_router(notification_router)
 @app.get("/", tags=["Root"])
 async def root(request: Request):
     """API 루트"""
-    # [임시 프로브] 60초 주기로 들어오는 GET / 의 발신자 추적용. 정체 확인 후 제거할 것.
-    # tailscaled(Funnel)가 NAT 하므로 액세스 로그의 172.18.0.1 은 호스트일 뿐이고,
-    # 원 발신 IP 는 프록시가 붙여준 X-Forwarded-For 에만 남는다.
+    # / 는 device 인증 제외 경로이고 Funnel 로 인터넷에 열려 있어, 누가 치는지 남겨둔다.
+    # tailscaled(Funnel)가 NAT 하므로 액세스 로그의 소스 IP 는 항상 도커 게이트웨이(172.18.0.1)로
+    # 뭉쳐 발신자를 알 수 없다. 원 IP 는 프록시가 붙여준 X-Forwarded-For 에만 남는다.
+    # 현재 정상 발신자는 Sentry Uptime 봇(60초 주기) 하나다 — 그 외가 찍히면 확인할 것.
     # UA 는 클라이언트가 임의로 넣는 값 → 미들웨어와 동일하게 120자로 자른다.
     logger.info(
         f"root ping: xff={request.headers.get('x-forwarded-for', '-')} "
