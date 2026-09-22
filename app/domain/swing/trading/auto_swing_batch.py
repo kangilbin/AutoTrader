@@ -112,7 +112,21 @@ def _trading_allowed(mrkt_code: str, label: str) -> bool:
 
 
 # ===== 동시 실행 제어 =====
-_SEMAPHORE = asyncio.Semaphore(5)  # 동시에 최대 5개 종목 처리
+# 동시에 최대 5개 종목 처리. 이 값은 병렬성 손잡이이자 **동시 DB 세션 상한**이다 —
+# process_single_swing 이 슬롯마다 세션을 열고, 풀은 DB_POOL_SIZE(10)+DB_MAX_OVERFLOW(20)
+# 이라 5를 배치가 쓰고 나머지를 사용자 요청이 쓴다. 올리기 전에 풀 여유부터 봐야 한다.
+#
+# 유량 제한은 여기가 아니라 앱키별 슬라이딩 창(rate_limiter)이 맡는다. 같은 계좌의
+# 종목은 그 창이 먼저 묶으므로 이 값을 올려도 빨라지지 않고, 계좌가 다르면 창이
+# 서로 독립이라 이 값이 그대로 상한이 된다.
+_SEMAPHORE = asyncio.Semaphore(5)
+
+# 배치 주기(초). scheduler.py 의 trade_job cron(minute='*/5')과 같은 값이어야 한다.
+# 소요 시간이 이 값에 가까워지면 다음 트리거가 스킵된다 — APScheduler 기본값이
+# max_instances=1, misfire_grace_time=1 이라 이전 실행이 안 끝나면 다음 사이클이
+# 경고 한 줄만 남기고 통째로 사라진다. "느려짐"이 아니라 "매매 누락"으로 나타난다.
+_CYCLE_SEC = 300
+_CYCLE_WARN_RATIO = 0.5
 
 # 배치 처리 결과. process_single_swing이 예외를 내부에서 삼키므로 gather는 항상
 # 정상 반환을 받는다 — 반환값으로 구분하지 않으면 전부 실패해도 '성공'으로 집계되어
@@ -126,6 +140,8 @@ async def trade_job():
     """국내 매매 신호 확인 및 실행 (5분 단위) — 국내 종목만"""
     if not _trading_allowed("J", "BATCH"):
         return
+
+    started = asyncio.get_running_loop().time()
 
     db = await Database.get_session()
     try:
@@ -145,16 +161,37 @@ async def trade_job():
     ]
     results = await asyncio.gather(*tasks, return_exceptions=True)
 
+    _log_batch_end("BATCH", results, asyncio.get_running_loop().time() - started)
+
+
+def _log_batch_end(label: str, results, elapsed: float) -> None:
+    """배치 마감 집계 + 주기 사용률 기록
+
+    소요 시간을 남기는 이유: 동시 실행 상한(_SEMAPHORE)을 언제 올려야 하는지는
+    종목 수가 아니라 '주기를 얼마나 쓰고 있는지'로 판단해야 한다. 종목당 최악
+    소요는 조회 타임아웃 재시도까지 포함해 40초대이고, 주기를 넘기는 순간
+    다음 사이클이 조용히 사라지므로 넘기기 전에 알아야 한다.
+    """
     summary = _summarize(results)
+    ratio = elapsed / _CYCLE_SEC if _CYCLE_SEC else 0
     logger.info(
-        f"[BATCH END] 배치 작업 완료 - "
+        f"[{label} END] 배치 작업 완료 - "
         f"성공: {summary['ok']}, 실패: {summary['failed']}, "
-        f"건너뜀: {summary['skipped']}, 총: {len(results)}"
+        f"건너뜀: {summary['skipped']}, 총: {len(results)}, "
+        f"소요: {elapsed:.1f}초 (주기의 {ratio:.0%})"
     )
+
+    if ratio > _CYCLE_WARN_RATIO:
+        logger.warning(
+            f"[{label} END] 소요 {elapsed:.1f}초가 주기({_CYCLE_SEC}초)의 "
+            f"{_CYCLE_WARN_RATIO:.0%}를 넘었다 — 동시 실행 상한(_SEMAPHORE={_SEMAPHORE._value}) "
+            f"상향을 검토할 시점. 주기를 넘기면 다음 사이클이 스킵된다."
+        )
+
     if summary["failed"]:
         # 전량 실패는 개별 종목 문제가 아니라 인증·유량·네트워크 장애다.
         logger.error(
-            f"[BATCH END] 실패 {summary['failed']}건 - "
+            f"[{label} END] 실패 {summary['failed']}건 - "
             f"{'전 종목 실패, 외부 연동 상태 확인 필요' if summary['failed'] == len(results) else '개별 종목 로그 확인'}"
         )
 
@@ -1124,6 +1161,8 @@ async def us_trade_job():
     if not _trading_allowed("NAS", "US BATCH"):
         return
 
+    started = asyncio.get_running_loop().time()
+
     db = await Database.get_session()
     try:
         swing_service = SwingService(db)
@@ -1140,12 +1179,7 @@ async def us_trade_job():
     tasks = [process_single_swing(swing_row, redis_client) for swing_row in swing_list]
     results = await asyncio.gather(*tasks, return_exceptions=True)
 
-    success_count = sum(1 for r in results if not isinstance(r, Exception))
-    error_count = len(results) - success_count
-    logger.info(
-        f"[US BATCH END] 배치 작업 완료 - "
-        f"성공: {success_count}, 실패: {error_count}, 총: {len(results)}"
-    )
+    _log_batch_end("US BATCH", results, asyncio.get_running_loop().time() - started)
 
 
 async def us_ema_cache_warmup_job():
