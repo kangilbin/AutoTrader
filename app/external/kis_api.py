@@ -841,9 +841,16 @@ async def get_volume_power_rank(user_id: str, db: AsyncSession, input_iscd: str 
 
 async def get_rev_split_schedule(
     user_id: str, from_date: str, to_date: str, db: AsyncSession,
-    account_no: str = None,
 ) -> dict:
     """예탁원정보 액면교체일정 조회 (액면분할/병합)
+
+    KSD 예탁원정보 TR 은 실전 도메인에만 있어 모의 앱키로는 호출할 수 없다
+    ("실전투자 도메인은 모의투자 앱키로 호출하실 수 없습니다"). 그래서 세션에
+    선택된 키를 따르는 _quote_auth 를 쓰지 않는다 — 배치 실행 시각에 사용자가
+    모의키를 골라둔 상태면 조회가 통째로 실패한다. 실전키를 먼저 고르는
+    get_quote_auth 를 쓴다.
+
+    CANO 를 쓰지 않는 계좌 무관 TR 이라 account_no 를 받지 않는다.
 
     Args:
         user_id: KIS 토큰 컨텍스트 사용자
@@ -854,7 +861,7 @@ async def get_rev_split_schedule(
     Returns:
         KIS 응답 body (output1 배열 포함)
     """
-    access_data = await _quote_auth(user_id, db, account_no)
+    access_data = await get_quote_auth(user_id, db)
     url = settings.REAL_API_URL
     path = "uapi/domestic-stock/v1/ksdinfo/rev-split"
     api_url = f"{url}/{path}"
@@ -874,9 +881,10 @@ async def get_rev_split_schedule(
 
 async def get_merger_split_schedule(
     user_id: str, from_date: str, to_date: str, db: AsyncSession,
-    account_no: str = None,
 ) -> dict:
     """예탁원정보 합병/분할일정 조회
+
+    인증키 선택 규칙은 get_rev_split_schedule 과 같다 (실전 전용 TR).
 
     Args:
         user_id: KIS 토큰 컨텍스트 사용자
@@ -887,7 +895,7 @@ async def get_merger_split_schedule(
     Returns:
         KIS 응답 body (output1 배열 포함)
     """
-    access_data = await _quote_auth(user_id, db, account_no)
+    access_data = await get_quote_auth(user_id, db)
     url = settings.REAL_API_URL
     path = "uapi/domestic-stock/v1/ksdinfo/merger-split"
     api_url = f"{url}/{path}"

@@ -11,6 +11,7 @@ from datetime import datetime
 
 from app.common.database import Database
 from app.core.config import get_settings
+from app.exceptions import ExternalServiceError
 from app.domain.stock.service import StockService
 from app.domain.stock.stock_data_batch import fetch_and_store_3_years_data
 from app.external.kis_api import (
@@ -30,18 +31,41 @@ def _normalize_date(s: str) -> str:
 
 
 async def collect_today_adjustment_events(user_id: str, today: str, db) -> set[str]:
-    """rev-split + merger-split 응답에서 list_dt==today 종목코드 set 반환"""
+    """rev-split + merger-split 응답에서 list_dt==today 종목코드 set 반환
+
+    둘 다 실패하면 예외를 올린다. 빈 set 을 돌려주면 호출부가 "당일 이벤트 없음"
+    으로 정상 종료해, 조회를 못 한 것과 이벤트가 정말 없는 것이 로그에서 구분되지
+    않는다 — 모의 앱키로 실전 전용 TR 을 호출해 둘 다 실패한 날 잡이 조용히
+    끝난 적이 있다. 재적재가 조용히 스킵되면 분할 전 가격이 그대로 남아 지표가
+    틀어지므로, 모르고 지나가는 쪽이 실패로 끝나는 쪽보다 나쁘다.
+
+    한쪽만 실패하면 그 유형의 이벤트만 놓치므로 나머지 결과로 진행한다.
+    """
+    failures: list[str] = []
+
     try:
         rev = await get_rev_split_schedule(user_id, today, today, db)
     except Exception as e:
         logger.error(f"[PRICE ADJ] rev-split 조회 실패: {e}")
+        failures.append("rev-split")
         rev = {}
 
     try:
         mer = await get_merger_split_schedule(user_id, today, today, db)
     except Exception as e:
         logger.error(f"[PRICE ADJ] merger-split 조회 실패: {e}")
+        failures.append("merger-split")
         mer = {}
+
+    if len(failures) == 2:
+        raise ExternalServiceError(
+            "KIS", f"수정주가 이벤트 조회 전부 실패 ({', '.join(failures)})"
+        )
+    if failures:
+        logger.warning(
+            f"[PRICE ADJ] {failures[0]} 조회 실패 - 나머지 결과로만 진행 "
+            f"(해당 유형 이벤트는 놓칠 수 있음)"
+        )
 
     codes: set[str] = set()
     for row in (rev.get("output1") or []):
