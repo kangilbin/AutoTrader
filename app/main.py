@@ -3,7 +3,7 @@ FastAPI 애플리케이션 진입점
 """
 import logging
 from pathlib import Path
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse
 from contextlib import asynccontextmanager
 
@@ -136,8 +136,16 @@ app.include_router(notification_router)
 
 
 @app.get("/", tags=["Root"])
-async def root():
+async def root(request: Request):
     """API 루트"""
+    # [임시 프로브] 60초 주기로 들어오는 GET / 의 발신자 추적용. 정체 확인 후 제거할 것.
+    # tailscaled(Funnel)가 NAT 하므로 액세스 로그의 172.18.0.1 은 호스트일 뿐이고,
+    # 원 발신 IP 는 프록시가 붙여준 X-Forwarded-For 에만 남는다.
+    # UA 는 클라이언트가 임의로 넣는 값 → 미들웨어와 동일하게 120자로 자른다.
+    logger.info(
+        f"root ping: xff={request.headers.get('x-forwarded-for', '-')} "
+        f"ua={request.headers.get('user-agent', '-')[:120]}"
+    )
     return {
         "message": "Welcome to AutoTrader API",
         "docs": "/docs",
