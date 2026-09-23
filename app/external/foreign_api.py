@@ -152,6 +152,9 @@ async def get_us_holdings(user_id: str, db: AsyncSession, account_no: str = None
 
     - 실전: OVRS_EXCG_CD="NASD"(미국전체) 1회 호출
     - 모의: 미국전체 미지원 → NASD/NYSE/AMEX 순회 후 output1 병합
+      ⚠️ 모의 NASD 조회는 거래소 필터를 무시하고 NYSE 종목까지 돌려준다
+         (예: NYSE 상장 CRCL이 NASD·NYSE 양쪽 응답에 등장). pdno 기준으로 중복을 제거한다.
+         중복을 두면 mapping_swing 목록에 같은 종목이 두 번 나오고 평가합계도 이중 계산된다.
 
     소비처(mapping_swing)는 output1만 사용(평가합계 재계산, 현금은 해외증거금 별도)하므로
     output2는 빈 dict로 반환한다.
@@ -162,7 +165,7 @@ async def get_us_holdings(user_id: str, db: AsyncSession, account_no: str = None
     if not sim:
         return await get_stock_balance(user_id, db, excg_cd="NASD", account_no=account_no)  # 미국전체 1회
 
-    merged: List = []
+    merged: dict = {}
     for i, excg in enumerate(US_TRADE_EXCG):  # ("NASD", "NYSE", "AMEX")
         if i > 0:
             await asyncio.sleep(0.3)  # 호출 사이 간격 — KIS 초당 거래건수 제한 회피
@@ -171,8 +174,8 @@ async def get_us_holdings(user_id: str, db: AsyncSession, account_no: str = None
             # 응답에 거래소코드가 없으면 조회한 거래소로 보정 (종목별 시장 구분 보존)
             if not it.get("ovrs_excg_cd"):
                 it["ovrs_excg_cd"] = excg
-        merged.extend(r["output1"])
-    return {"output1": merged, "output2": {}}
+            merged.setdefault(it.get("pdno"), it)  # 먼저 나온 행 유지 (응답의 ovrs_excg_cd는 실제 거래소)
+    return {"output1": list(merged.values()), "output2": {}}
 
 
 # ============================================================

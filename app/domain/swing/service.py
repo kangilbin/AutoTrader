@@ -406,6 +406,7 @@ class SwingService:
                 holdings = await foreign_api.get_us_holdings(user_id, self.db, account_no=account_no)
                 margin = await foreign_api.get_foreign_margin(user_id, self.db, account_no=account_no)
                 buy_list = holdings["output1"]
+
                 # 035에는 평가금액/손익이 없어 보유종목(TTTS3012R)을 합산해 summary용 output2를 구성
                 evlu_sum = sum((_to_decimal(i.get("evlu_amt")) for i in buy_list), Decimal(0))
                 pfls_sum = sum((_to_decimal(i.get("evlu_pfls_amt")) for i in buy_list), Decimal(0))
@@ -427,90 +428,54 @@ class SwingService:
                 buy_list = balance_data["output1"]
                 output2 = balance_data["output2"]
 
-            swing_dict = {swing["ST_CODE"]: swing for swing in swing_list}
             buy_dict = {item.get("pdno"): item for item in buy_list if item.get("pdno")}
-            results = []
+            swing_codes = {swing["ST_CODE"] for swing in swing_list}
 
-            # 1. buy_list 기준으로 처리 (기존 로직)
-            for buy_item in buy_list:
-                st_code = buy_item.get("pdno")
-                if not st_code:
+            # 1. 스윙 미등록 보유 종목 자동 등록 (USE_YN='N')
+            #    buy_dict 기준이라 증권사 응답에 같은 종목이 중복돼도 1회만 등록한다.
+            inserted = False
+            for st_code, buy_item in buy_dict.items():
+                if st_code in swing_codes:
                     continue
-
-                if st_code not in swing_dict:
-                    # 새 스윙 등록 — 매입금액을 초기 투자금으로 설정
-                    # 해외: 요청값(mrkt_code='US' 그룹)이 아니라 종목의 실제 거래소(ovrs_excg_cd)를
-                    #       정식코드(NYS/NAS/AMS)로 역매핑해 저장
-                    if overseas:
-                        item_mrkt_code = from_ovrs_excg_cd(buy_item.get("ovrs_excg_cd") or "NASD")
-                    else:
-                        item_mrkt_code = buy_item.get("mrkt_code", "J")
-                    pchs_amt = _to_decimal(buy_item.get("pchs_amt", 0))
-                    try:
-                        async with self.db.begin_nested():
-                            swing = SwingTrade.create(
-                                account_no=account_no,
-                                mrkt_code=item_mrkt_code,
-                                st_code=st_code,
-                                init_amount=pchs_amt,
-                                swing_type='S'
-                            )
-                            swing.CUR_AMOUNT = Decimal(0)  # 이미 매수 완료 상태
-                            swing.ENTRY_PRICE = _to_decimal(buy_item.get("pchs_avg_pric", 0))
-                            swing.HOLD_QTY = int(float(buy_item.get("hldg_qty", 0) or 0))
-                            swing.USE_YN = 'N'
-                            db_swing = await self.repo.save(swing)
-                    except IntegrityError:
-                        db_swing = await self.repo.find_by_account_and_stock(account_no, item_mrkt_code, st_code)
-                        if not db_swing:
-                            continue
-
-                    # 목록 조회는 보유종목 전체를 USE_YN='N'으로 자동 등록하는 경로다.
-                    # 여기서 적재하면 활성화하지 않을 종목까지 3년치를 받고
-                    # DATA_YN='Y'가 되어 day_collect_job이 영구히 매일 수집한다.
-                    # → 적재는 활성화 시점(update_swing)으로 미룬다.
-                    swing_result = SwingResponse.model_validate(db_swing).model_dump()
-                    result_data = {
-                        **swing_result,
-                        "ST_NM": buy_item.get("prdt_name"),
-                        "HLDG_QTY": buy_item.get("hldg_qty"),
-                        "EVLU_AMT": _to_amount(buy_item.get("evlu_amt", 0)),
-                        "EVLU_PFLS_RT": float(buy_item.get("evlu_pfls_rt", 0) or 0),
-                        "EVLU_PFLS_AMT": _to_amount(buy_item.get("evlu_pfls_amt", 0)),
-                        "PRPR": float(buy_item.get("prpr", 0) or 0),
-                    }
-                    results.append(result_data)
+                # 새 스윙 등록 — 매입금액을 초기 투자금으로 설정
+                # 해외: 요청값(mrkt_code='US' 그룹)이 아니라 종목의 실제 거래소(ovrs_excg_cd)를
+                #       정식코드(NYS/NAS/AMS)로 역매핑해 저장
+                if overseas:
+                    item_mrkt_code = from_ovrs_excg_cd(buy_item.get("ovrs_excg_cd") or "NASD")
                 else:
-                    # 기존 데이터 merge
-                    data = swing_dict[st_code]
-                    evlu_amt_dec = _to_decimal(buy_item.get("evlu_amt", 0))
+                    item_mrkt_code = buy_item.get("mrkt_code", "J")
+                try:
+                    async with self.db.begin_nested():
+                        swing = SwingTrade.create(
+                            account_no=account_no,
+                            mrkt_code=item_mrkt_code,
+                            st_code=st_code,
+                            init_amount=_to_decimal(buy_item.get("pchs_amt", 0)),
+                            swing_type='S'
+                        )
+                        swing.CUR_AMOUNT = Decimal(0)  # 이미 매수 완료 상태
+                        swing.ENTRY_PRICE = _to_decimal(buy_item.get("pchs_avg_pric", 0))
+                        swing.HOLD_QTY = int(float(buy_item.get("hldg_qty", 0) or 0))
+                        swing.USE_YN = 'N'
+                        await self.repo.save(swing)
+                except IntegrityError:
+                    pass  # 동시 요청이 먼저 등록함 — 아래 재조회에 포함된다
+                inserted = True
 
-                    if data["INIT_AMOUNT"]:
-                        # INIT_AMOUNT > 0: 자체 계산 (서비스에서 등록/매매한 종목)
-                        init_amount = data["INIT_AMOUNT"]
-                        total_asset = data["CUR_AMOUNT"] + evlu_amt_dec
-                        rate = float((total_asset - init_amount) / init_amount * 100) if init_amount else 0.0
-                        pfls_amt_dec = total_asset - init_amount
-                        pfls_amt = _to_amount(pfls_amt_dec)
-                    else:
-                        # INIT_AMOUNT = 0: KIS API 값 사용 (외부 매수 자동 등록 종목)
-                        rate = float(buy_item.get("evlu_pfls_rt", 0) or 0)
-                        pfls_amt = _to_amount(buy_item.get("evlu_pfls_amt", 0))
+            # 목록 조회는 보유종목 전체를 USE_YN='N'으로 자동 등록하는 경로다.
+            # 여기서 적재하면 활성화하지 않을 종목까지 3년치를 받고
+            # DATA_YN='Y'가 되어 day_collect_job이 영구히 매일 수집한다.
+            # → 적재는 활성화 시점(update_swing)으로 미룬다.
+            if inserted:
+                # 재조회로 신규 행도 기존 행과 같은 형태(ST_NM 조인 등)로 맞춘다
+                swing_list = await self.repo.find_all_by_account_no(account_no, mrkt_code)
 
-                    result_data = {
-                        **data,
-                        "ST_NM": buy_item.get("prdt_name"),
-                        "HLDG_QTY": buy_item.get("hldg_qty"),
-                        "EVLU_AMT": _to_amount(evlu_amt_dec),
-                        "EVLU_PFLS_RT": rate,
-                        "EVLU_PFLS_AMT": pfls_amt,
-                        "PRPR": float(buy_item.get("prpr", 0) or 0),
-                    }
-                    results.append(result_data)
-
-            # 2. swing_list에만 있는 항목 추가 (보유 주식 없음, evlu_amt = 0)
+            # 2. 스윙 리스트 기준 머지 — 스윙 1행 = 결과 1건
+            results = []
             for swing in swing_list:
-                if swing["ST_CODE"] not in buy_dict:
+                buy_item = buy_dict.get(swing["ST_CODE"])
+                if buy_item is None:
+                    # 보유 주식 없음 (evlu_amt = 0)
                     if swing["INIT_AMOUNT"]:
                         init_amount = swing["INIT_AMOUNT"]
                         rate = float((swing["CUR_AMOUNT"] - init_amount) / init_amount * 100)
@@ -518,12 +483,35 @@ class SwingService:
                     else:
                         rate = 0.0
                         pfls_amt = 0.0 if overseas else 0
-                    result_data = {
+                    results.append({
                         **swing,
                         "EVLU_PFLS_RT": rate,
                         "EVLU_PFLS_AMT": pfls_amt,
-                    }
-                    results.append(result_data)
+                    })
+                    continue
+
+                # 보유 주식 있음 — 증권사 값 merge
+                evlu_amt_dec = _to_decimal(buy_item.get("evlu_amt", 0))
+                if swing["INIT_AMOUNT"]:
+                    # INIT_AMOUNT > 0: 자체 계산 (서비스에서 등록/매매한 종목)
+                    init_amount = swing["INIT_AMOUNT"]
+                    total_asset = swing["CUR_AMOUNT"] + evlu_amt_dec
+                    rate = float((total_asset - init_amount) / init_amount * 100) if init_amount else 0.0
+                    pfls_amt = _to_amount(total_asset - init_amount)
+                else:
+                    # INIT_AMOUNT = 0: KIS API 값 사용 (외부 매수 자동 등록 종목)
+                    rate = float(buy_item.get("evlu_pfls_rt", 0) or 0)
+                    pfls_amt = _to_amount(buy_item.get("evlu_pfls_amt", 0))
+
+                results.append({
+                    **swing,
+                    "ST_NM": buy_item.get("prdt_name"),
+                    "HLDG_QTY": buy_item.get("hldg_qty"),
+                    "EVLU_AMT": _to_amount(evlu_amt_dec),
+                    "EVLU_PFLS_RT": rate,
+                    "EVLU_PFLS_AMT": pfls_amt,
+                    "PRPR": float(buy_item.get("prpr", 0) or 0),
+                })
 
             await self.db.commit()
 
