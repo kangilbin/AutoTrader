@@ -42,6 +42,27 @@ logging.basicConfig(level=logging.DEBUG if get_settings().DEBUG else logging.INF
 for _noisy in ("httpx", "httpcore", "asyncio", "apscheduler.executors"):
     logging.getLogger(_noisy).setLevel(logging.WARNING)
 
+
+class _RootPingAccessFilter(logging.Filter):
+    """uvicorn 액세스 로그에서 GET / 줄을 뺀다.
+
+    / 는 Sentry Uptime 봇이 60초마다 쳐서 운영 로그를 채운다. 액세스 로그에는 UA 가
+    없어 봇만 골라낼 수 없고, 소스 IP 도 NAT 로 항상 172.18.0.1 이라 정보가 없다.
+    발신자 확인은 root 핸들러의 'root ping' 로그(XFF+UA)가 대신 맡는다.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        args = record.args
+        # uvicorn access args: (client_addr, method, full_path, http_version, status_code)
+        if isinstance(args, tuple) and len(args) >= 3:
+            method, full_path = args[1], str(args[2])
+            if method == "GET" and full_path.split("?", 1)[0] == "/":
+                return False
+        return True
+
+
+logging.getLogger("uvicorn.access").addFilter(_RootPingAccessFilter())
+
 logger = logging.getLogger(__name__)
 
 # Sentry 초기화 (FastAPI 앱 생성 전에 호출해야 ASGI 미들웨어 자동 등록)
@@ -143,10 +164,14 @@ async def root(request: Request):
     # 뭉쳐 발신자를 알 수 없다. 원 IP 는 프록시가 붙여준 X-Forwarded-For 에만 남는다.
     # 현재 정상 발신자는 Sentry Uptime 봇(60초 주기) 하나다 — 그 외가 찍히면 확인할 것.
     # UA 는 클라이언트가 임의로 넣는 값 → 미들웨어와 동일하게 120자로 자른다.
-    logger.info(
-        f"root ping: xff={request.headers.get('x-forwarded-for', '-')} "
-        f"ua={request.headers.get('user-agent', '-')[:120]}"
-    )
+    # Sentry 봇은 60초마다 와서 로그를 채우므로 뺀다 — 찍혔다 = Sentry 외 발신자.
+    # (UA 는 위조 가능하나 / 는 정적 JSON 만 주므로 봇 위장까지 잡을 값어치는 없다)
+    ua = request.headers.get('user-agent', '-')
+    if not ua.startswith("SentryUptimeBot"):
+        logger.info(
+            f"root ping: xff={request.headers.get('x-forwarded-for', '-')} "
+            f"ua={ua[:120]}"
+        )
     return {
         "message": "Welcome to AutoTrader API",
         "docs": "/docs",
