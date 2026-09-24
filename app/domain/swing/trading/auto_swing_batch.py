@@ -31,7 +31,7 @@ from app.core.price import to_price
 from app.external.kis_api import get_target_price, get_inquire_price, get_quote_auth
 from app.external import foreign_api
 from app.common.database import Database
-from app.exceptions import ValidationError
+from app.exceptions import ValidationError, ExternalServiceError
 from app.domain.swing.service import SwingService
 from app.domain.stock.service import StockService
 from app.domain.stock.stock_data_batch import is_today_incomplete
@@ -559,6 +559,15 @@ async def process_single_swing(
 
             return RESULT_OK
 
+        except ExternalServiceError as e:
+            # 외부 연동 실패(타임아웃·KIS 오류 응답)는 http_client 가 원인을 메시지에
+            # 담아 올린 '예상된 실패'라 트레이스백이 진단에 보태는 게 없다. 한 줄로만
+            # 남겨, 트레이스백이 찍혔다 = 코드 버그 로 로그만 보고 구분되게 한다.
+            await db.rollback()
+            logger.error(
+                f"스윙 처리 실패 - 외부 연동 (SWING_ID={swing_row.SWING_ID}, ST_CODE={swing_row.ST_CODE}): {e}"
+            )
+            return RESULT_FAILED
         except Exception as e:
             await db.rollback()
             logger.error(
