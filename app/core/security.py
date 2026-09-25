@@ -6,17 +6,14 @@
 """
 import base64
 import os
-from datetime import datetime
-from typing import Optional
-
 import bcrypt
 import jwt
+from datetime import datetime
+from typing import Optional
 from jwt.exceptions import ExpiredSignatureError
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.backends import default_backend
 from pydantic import BaseModel
-from fastapi import HTTPException, status
-
 from app.exceptions import AuthenticationError
 from app.core.config import get_settings
 

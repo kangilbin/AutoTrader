@@ -9,6 +9,8 @@ from app.domain.stock.router import router as stock_router
 from app.domain.order.router import router as order_router
 from app.domain.swing.router import router as swing_router
 from app.domain.device.router import router as device_router
+from app.domain.oauth.router import router as oauth_router
+from app.domain.external_api.router import router as external_api_router
 from app.domain.routers.backtest_router import router as backtest_router
 from app.domain.routers.health_router import router as health_router
 
@@ -20,6 +22,8 @@ __all__ = [
     "order_router",
     "swing_router",
     "device_router",
+    "oauth_router",
+    "external_api_router",
     "backtest_router",
     "health_router",
 ]
