@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional
 
-from app.exceptions import DatabaseError, ValidationError
+from app.exceptions import ValidationError
 
 
 @dataclass
@@ -16,8 +16,9 @@ class User:
     phone: Optional[str] = None
     email: Optional[str] = None
     password: Optional[str] = None
-    oauth_provider: Optional[str] = None
-    oauth_id: Optional[str] = None
+    google_access_token: Optional[str] = None
+    google_refresh_token: Optional[str] = None
+    google_token_expires_at: Optional[datetime] = None
     reg_dt: Optional[datetime] = field(default_factory=datetime.now)
     mod_dt: Optional[datetime] = None
 
@@ -25,7 +26,7 @@ class User:
 
     def is_oauth_user(self) -> bool:
         """OAuth 사용자 여부 확인"""
-        return self.oauth_provider is not None
+        return self.google_refresh_token is not None
 
     def validate_password_strength(self, password: str) -> None:
         """비밀번호 강도 검증"""
@@ -77,15 +78,25 @@ class User:
         return user
 
     @classmethod
-    def create_oauth_user(cls, user_id: str, user_name: str, email: str, oauth_provider: str, oauth_id: str, phone: Optional[str] = None) -> "User":
-        """OAuth 사용자 생성 (phone은 선택사항)"""
+    def create_oauth_user(
+        cls,
+        user_id: str,
+        user_name: str,
+        email: str,
+        google_access_token: str,
+        google_refresh_token: str,
+        google_token_expires_at: datetime,
+        phone: Optional[str] = None
+    ) -> "User":
+        """OAuth 사용자 생성"""
         user = cls(
             user_id=user_id,
             user_name=user_name,
             email=email,
             phone=phone,
             password=None,
-            oauth_provider=oauth_provider,
-            oauth_id=oauth_id
+            google_access_token=google_access_token,
+            google_refresh_token=google_refresh_token,
+            google_token_expires_at=google_token_expires_at
         )
         return user

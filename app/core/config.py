@@ -42,6 +42,7 @@ class Settings(BaseSettings):
     # Google OAuth
     GOOGLE_CLIENT_ID: Optional[str] = None
     GOOGLE_CLIENT_SECRET: Optional[str] = None
+    GOOGLE_REDIRECT_URI: str = "http://localhost:8000/oauth/google/callback"
 
     # Email
     SMTP_HOST: str = "smtp.gmail.com"  # Gmail SMTP 서버

@@ -32,8 +32,9 @@ class UserModel(Base):
     EMAIL = Column(String(100), nullable=True, unique=True, comment='이메일 주소')
     PHONE = Column(CHAR(11), nullable=True, comment='휴대폰 번호 (OAuth 사용자는 나중에 입력)')
     PASSWORD = Column(String(100), nullable=True, comment='비밀 번호 (OAuth 사용자는 NULL)')
-    OAUTH_PROVIDER = Column(String(20), nullable=True, comment='OAuth 제공자 (google, null=traditional)')
-    OAUTH_ID = Column(String(100), nullable=True, comment='Google 사용자 ID (sub claim)')
+    GOOGLE_ACCESS_TOKEN = Column(String(2000), nullable=True, comment='Google OAuth access token (Gemini용)')
+    GOOGLE_REFRESH_TOKEN = Column(String(500), nullable=True, comment='Google OAuth refresh token')
+    GOOGLE_TOKEN_EXPIRES_AT = Column(DateTime, nullable=True, comment='Google access token 만료 시점')
     REG_DT = Column(DateTime, default=datetime.now, nullable=False, comment='등록일')
     MOD_DT = Column(DateTime, comment='수정일')
 
