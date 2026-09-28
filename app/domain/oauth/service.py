@@ -5,20 +5,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import SQLAlchemyError
 from datetime import datetime, timedelta
 from typing import Optional
-import httpx
 import logging
 
 from app.domain.user.repository import UserRepository
 from app.domain.user.entity import User
 from app.core.security import create_access_token, create_refresh_token
 from app.core.config import get_settings
-from app.exceptions import AuthenticationError, DatabaseError
+from app.exceptions import AuthenticationError, DatabaseError, ExternalServiceError
 from app.common.redis import get_redis
+from app.external.http_client import fetch
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
+GOOGLE_USERINFO_URL = "https://www.googleapis.com/oauth2/v3/userinfo"
 
 
 class OAuthService:
@@ -28,23 +29,36 @@ class OAuthService:
         self.db = db
         self.user_repo = UserRepository(db)
 
-    async def oauth_login(
+    async def google_login(
         self,
-        email: str,
-        user_name: str,
         google_access_token: str,
         google_refresh_token: Optional[str],
         expires_in: int
     ) -> tuple[str, str]:
         """
         Google OAuth 로그인
-        - 기존 사용자: Google 토큰 업데이트 + 우리 JWT 발급
-        - 신규 사용자: 계정 생성 + 우리 JWT 발급
+        1. Google access_token으로 사용자 정보 조회
+        2. 기존 사용자: Google 토큰 업데이트 + 우리 JWT 발급
+        3. 신규 사용자: 계정 생성 + 우리 JWT 발급
         """
         try:
+            # 1. Google API로 사용자 정보 조회
+            response = await fetch(
+                method="GET",
+                url=GOOGLE_USERINFO_URL,
+                service_name="Google OAuth",
+                headers={"Authorization": f"Bearer {google_access_token}"}
+            )
+            userinfo = response["body"]
+            email = userinfo.get("email")
+            user_name = userinfo.get("name", email.split("@")[0] if email else "User")
+
+            if not email:
+                raise AuthenticationError("이메일 정보를 가져올 수 없습니다", reason="no_email")
+
             expires_at = datetime.now() + timedelta(seconds=expires_in)
 
-            # 기존 사용자 조회
+            # 2. 기존 사용자 조회
             user_info = await self.user_repo.find_by_email(email)
 
             if user_info:
@@ -72,7 +86,7 @@ class OAuthService:
                 await self.user_repo.save(user)
                 await self.db.commit()
 
-            # 우리 JWT 토큰 발급
+            # 3. JWT 토큰 발급
             access_token = create_access_token(
                 user_id,
                 user_info={"USER_NAME": user_name, "EMAIL": email}
@@ -90,6 +104,8 @@ class OAuthService:
 
             return access_token, refresh_token
 
+        except ExternalServiceError:
+            raise AuthenticationError("Google 토큰이 유효하지 않습니다", reason="invalid_token")
         except SQLAlchemyError as e:
             await self.db.rollback()
             logger.error(f"OAuth 로그인 실패: {e}", exc_info=True)
@@ -106,22 +122,19 @@ class OAuthService:
             raise AuthenticationError("Google 재로그인이 필요합니다", reason="no_refresh_token")
 
         try:
-            async with httpx.AsyncClient() as client:
-                response = await client.post(
-                    GOOGLE_TOKEN_URL,
-                    data={
-                        "client_id": settings.GOOGLE_CLIENT_ID,
-                        "client_secret": settings.GOOGLE_CLIENT_SECRET,
-                        "refresh_token": user_info["GOOGLE_REFRESH_TOKEN"],
-                        "grant_type": "refresh_token"
-                    }
-                )
+            response = await fetch(
+                method="POST",
+                url=GOOGLE_TOKEN_URL,
+                service_name="Google OAuth",
+                data={
+                    "client_id": settings.GOOGLE_CLIENT_ID,
+                    "client_secret": settings.GOOGLE_CLIENT_SECRET,
+                    "refresh_token": user_info["GOOGLE_REFRESH_TOKEN"],
+                    "grant_type": "refresh_token"
+                }
+            )
 
-            if response.status_code != 200:
-                logger.warning(f"Google 토큰 갱신 실패: {response.text}")
-                raise AuthenticationError("Google 재로그인이 필요합니다", reason="refresh_failed")
-
-            token_data = response.json()
+            token_data = response["body"]
             new_access_token = token_data["access_token"]
             expires_in = token_data.get("expires_in", 3600)
             expires_at = datetime.now() + timedelta(seconds=expires_in)
@@ -137,9 +150,9 @@ class OAuthService:
 
             return new_access_token
 
-        except httpx.HTTPError as e:
-            logger.error(f"Google API 호출 실패: {e}", exc_info=True)
-            raise AuthenticationError("Google 재로그인이 필요합니다", reason="api_error")
+        except ExternalServiceError as e:
+            logger.warning(f"Google 토큰 갱신 실패: {e}")
+            raise AuthenticationError("Google 재로그인이 필요합니다", reason="refresh_failed")
 
     async def get_valid_google_token(self, user_id: str) -> str:
         """
