@@ -316,10 +316,15 @@ class SwingService:
                 check_amount = data.get("INIT_AMOUNT", int(swing.INIT_AMOUNT))
                 # 모의투자 등 가용자본 추적 불가(available_capital=None) 시 한도 검증 생략
                 if capital_info.get("available_capital") is not None and check_amount > capital_info["available_capital"]:
+                    # 통화 표기: 미국=달러(센트 2자리), 국내=원
+                    if is_overseas(swing.MRKT_CODE):
+                        fmt = lambda amount: f"${amount:,.2f}"
+                    else:
+                        fmt = lambda amount: f"{amount:,}원"
                     raise BusinessRuleError(
                         f"투자 가능 금액을 초과했습니다. "
-                        f"가용 자본: {capital_info['available_capital']:,}원, "
-                        f"요청 금액: {check_amount:,}원",
+                        f"가용 자본: {fmt(capital_info['available_capital'])}, "
+                        f"요청 금액: {fmt(check_amount)}",
                         rule="CAPITAL_LIMIT_EXCEEDED",
                         detail={
                             "available_capital": capital_info["available_capital"],
