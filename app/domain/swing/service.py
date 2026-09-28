@@ -75,31 +75,41 @@ class SwingService:
         """가용 자본 조회"""
         overseas = is_overseas(mrkt_code)
 
+        def _to_amount(value: Decimal):
+            """출력용 금액 (KRW=int, USD=float 2자리 — mapping_swing과 동일 규칙)"""
+            return round(float(value), 2) if overseas else int(value)
+
+        def _to_decimal(value) -> Decimal:
+            try:
+                return Decimal(str(value or 0))
+            except (TypeError, ValueError, InvalidOperation):
+                return Decimal(0)
+
         if overseas:
-            # 해외증거금 통화별조회 — 외화주문가능금액(ord_psbl_amt)을 가용자본으로 사용
+            # 해외증거금 통화별조회 — 국내(dnca_tot_amt)와 같은 예수금 기준으로 외화예수금(dnca_amt) 사용
             margin = await foreign_api.get_foreign_margin(user_id, self.db, account_no=account_no)
             if margin is None:
-                # 모의투자: 현금/주문가능 소스 없음 → 한도 추적 불가
-                allocated = int(await self.repo.get_total_init_amount(account_no, overseas, exclude_swing_id))
+                # 모의투자: 현금 소스 없음 → 한도 추적 불가
+                allocated = await self.repo.get_total_init_amount(account_no, overseas, exclude_swing_id)
                 return {
                     "total_capital": None,
-                    "allocated": allocated,
+                    "allocated": _to_amount(allocated),
                     "available_capital": None,
                     "capital_tracking": False,
                 }
-            cash = int(float(margin.get("ord_psbl_amt", 0) or 0))
+            cash = _to_decimal(margin.get("dnca_amt"))
         else:
             balance_data = await get_stock_balance(user_id, self.db, account_no=account_no)
             output2 = balance_data["output2"]
-            cash = int(float(output2.get("dnca_tot_amt", 0) or 0))
+            cash = _to_decimal(output2.get("dnca_tot_amt"))
 
-        allocated = int(await self.repo.get_total_init_amount(account_no, overseas, exclude_swing_id))
+        allocated = await self.repo.get_total_init_amount(account_no, overseas, exclude_swing_id)
         available_capital = cash - allocated
 
         return {
-            "total_capital": cash,
-            "allocated": allocated,
-            "available_capital": available_capital,
+            "total_capital": _to_amount(cash),
+            "allocated": _to_amount(allocated),
+            "available_capital": _to_amount(available_capital),
             "capital_tracking": True,
         }
 

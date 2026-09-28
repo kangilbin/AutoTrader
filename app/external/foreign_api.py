@@ -98,12 +98,15 @@ async def get_stock_balance(
 
 async def get_foreign_margin(
     user_id: str, db: AsyncSession, crcy_cd: str = "USD",
-    account_no: str = None,
+    account_no: str = None, natn_name: str = "미국",
 ):
     """해외증거금 통화별조회 (TTTC2101R)
 
-    통화별 외화예수금/주문가능금액/증거금을 제공한다.
-    - 가용자본 산출(get_available_capital): 외화주문가능금액(ord_psbl_amt)
+    통화별 외화예수금을 제공한다. 가용자본과 현금 표시 모두 외화예수금(dnca_amt) 기준이다.
+    - 가용자본 산출(get_available_capital): 국내(dnca_tot_amt 예수금총금액)와 같은 예수금 기준.
+      스윙 배정은 예산 분할이지 주문이 아니므로 수수료 예비분을 뺀 주문가능금액을 쓰지 않는다.
+      (외화주문가능금액 frcr_ord_psbl_amt1은 실전 계좌에서 예수금이 있어도 0으로 내려와
+       가용자본이 0으로 표시되던 원인이었다.)
     - 현금 자산 표시(mapping_swing): 외화예수금(dnca_amt)
 
     ⚠️ KIS 명세상 모의투자 미지원. 모의 계정은 외화예수금/주문가능금액 소스가
@@ -132,18 +135,18 @@ async def get_foreign_margin(
     response = await fetch("GET", api_url, "KIS", params=query, headers=headers)
     body = response["body"]
 
-    # output(통화별 array)에서 거래통화(USD) 1건 추출
+    # output은 국가별 행 array — 같은 USD라도 미국/중국/영국… 행이 따로 오고
+    # 주문가능금액이 국가마다 다르다. 거래 국가(미국) 행을 명시적으로 고르고,
+    # 없으면 첫 통화 행으로 폴백한다 (응답 순서에 의존하지 않기 위함).
+    currency_rows = [row for row in (body.get("output") or []) if row.get("crcy_cd") == crcy_cd]
     currency_row = next(
-        (row for row in (body.get("output") or []) if row.get("crcy_cd") == crcy_cd),
-        {},
+        (row for row in currency_rows if row.get("natn_name") == natn_name),
+        currency_rows[0] if currency_rows else {},
     )
 
     return {
-        "ord_psbl_amt": currency_row.get("frcr_ord_psbl_amt1", "0"),       # 외화주문가능금액 → 가용자본
-        "dnca_amt": currency_row.get("frcr_dncl_amt1", "0"),              # 외화예수금 → 현금 표시
-        "gnrl_ord_psbl_amt": currency_row.get("frcr_gnrl_ord_psbl_amt", "0"),  # 외화일반주문가능금액 (검증용 후보)
-        "itgr_ord_psbl_amt": currency_row.get("itgr_ord_psbl_amt", "0"),       # 통합주문가능금액 (검증용 후보)
-        "exrt": currency_row.get("bass_exrt", "0"),                       # 기준환율
+        "dnca_amt": currency_row.get("frcr_dncl_amt1", "0"),  # 외화예수금 → 가용자본 산출 + 현금 표시
+        "exrt": currency_row.get("bass_exrt", "0"),           # 기준환율
     }
 
 
