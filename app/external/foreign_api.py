@@ -14,8 +14,7 @@ from app.core.market_code import to_ovrs_excg_cd, US_TRADE_EXCG
 from app.core.order import Order, ModifyOrder, same_order_no
 from app.exceptions import ExternalServiceError
 from app.external.headers import kis_headers
-from app.external.http_client import fetch
-from app.external.kis_api import _get_user_auth, _quote_auth, is_simulation
+from app.external.kis_api import _get_user_auth, _quote_auth, is_simulation, kis_fetch
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -54,7 +53,7 @@ async def get_stock_balance(
         "CTX_AREA_FK200": fk200,
         "CTX_AREA_NK200": nk200,
     }
-    response = await fetch("GET", api_url, "KIS", params=query, headers=headers)
+    response = await kis_fetch("GET", api_url, access_data, params=query, headers=headers)
     body = response["body"]
     header = response["header"]
     tr_cont = header.get("tr_cont")
@@ -132,7 +131,7 @@ async def get_foreign_margin(
         "CANO": user_data.get("ACCOUNT_NO")[:8],
         "ACNT_PRDT_CD": user_data.get("ACCOUNT_NO")[-2:],
     }
-    response = await fetch("GET", api_url, "KIS", params=query, headers=headers)
+    response = await kis_fetch("GET", api_url, access_data, params=query, headers=headers)
     body = response["body"]
 
     # output은 국가별 행 array — 같은 USD라도 미국/중국/영국… 행이 따로 오고
@@ -211,7 +210,7 @@ async def place_order_api(user_id: str, order: Order, db: AsyncSession, account_
         "ORD_SVR_DVSN_CD": "0",
         "ORD_DVSN": "00",  # 지정가 (미국 시장가 제한)
     }
-    response = await fetch("POST", api_url, "KIS", json=query, headers=headers)
+    response = await kis_fetch("POST", api_url, access_data, json=query, headers=headers)
     body = response["body"]
     return body
 
@@ -243,7 +242,7 @@ async def modify_or_cancel_order_api(user_id: str, order: ModifyOrder, db: Async
         "ORD_QTY": str(ord_qty),
         "OVRS_ORD_UNPR": str(order.ord_unpr) if order.rvse_cncl_dvsn_cd == '01' else "0",
     }
-    response = await fetch("POST", api_url, "KIS", json=query, headers=headers)
+    response = await kis_fetch("POST", api_url, access_data, json=query, headers=headers)
     body = response["body"]
     return body
 
@@ -283,7 +282,7 @@ async def get_inquire_daily_ccld_obj(user_id: str, db: AsyncSession, excg_cd: st
         "CTX_AREA_FK200": fk200,
         "CTX_AREA_NK200": nk200,
     }
-    response = await fetch("GET", api_url, "KIS", params=query, headers=headers)
+    response = await kis_fetch("GET", api_url, access_data, params=query, headers=headers)
     body = response["body"]
     return body
 
@@ -335,7 +334,7 @@ async def get_inquire_ccnl_obj(
         "CTX_AREA_FK200": fk200,
         "CTX_AREA_NK200": nk200,
     }
-    response = await fetch("GET", api_url, "KIS", params=query, headers=headers)
+    response = await kis_fetch("GET", api_url, access_data, params=query, headers=headers)
     return response["body"]
 
 
@@ -451,7 +450,7 @@ async def get_inquire_price(user_id: str, code: str, db: AsyncSession, excd: str
         "EXCD": excd,
         "SYMB": code,
     }
-    response = await fetch("GET", api_url, "KIS", params=query, headers=headers)
+    response = await kis_fetch("GET", api_url, access_data, params=query, headers=headers)
     body = response["body"]
     return body.get("output")
 
@@ -479,7 +478,7 @@ async def get_target_price(user_id: str, code: str, db: AsyncSession, excd: str 
         "BYMD": "",
         "MODP": "0",
     }
-    response = await fetch("GET", api_url, "KIS", params=query, headers=headers)
+    response = await kis_fetch("GET", api_url, access_data, params=query, headers=headers)
     body = response["body"]
     output = body.get("output2", [])
     if not output:
@@ -507,7 +506,7 @@ async def get_stock_data(user_id: str, code: str, start_date: str, end_date: str
         "MODP": "0",
     }
 
-    response = await fetch("GET", api_url, "KIS", params=params, headers=headers)
+    response = await kis_fetch("GET", api_url, access_data, params=params, headers=headers)
     body = response["body"]
 
     # API 응답 키를 DB 스키마에 맞게 변환
@@ -546,7 +545,7 @@ async def get_inquire_asking_price(user_id: str, code: str, db: AsyncSession, ex
         "EXCD": excd,
         "SYMB": code,
     }
-    response = await fetch("GET", api_url, "KIS", params=query, headers=headers)
+    response = await kis_fetch("GET", api_url, access_data, params=query, headers=headers)
     body = response["body"]
     return body
 
@@ -622,7 +621,7 @@ async def get_fluctuation_rank(user_id: str, db: AsyncSession, rank_sort_cls_cod
         "MINX": "4",
         "VOL_RANG": "5",
     }
-    response = await fetch("GET", api_url, "KIS", params=query, headers=headers)
+    response = await kis_fetch("GET", api_url, access_data, params=query, headers=headers)
     body = response["body"]
     return body.get("output2")
 
@@ -643,7 +642,7 @@ async def get_volume_rank(user_id: str, db: AsyncSession, excd: str = "NAS", acc
         "MINX": "4",
         "VOL_RANG": "4",
     }
-    response = await fetch("GET", api_url, "KIS", params=query, headers=headers)
+    response = await kis_fetch("GET", api_url, access_data, params=query, headers=headers)
     body = response["body"]
     return body.get("output2")
 
@@ -663,6 +662,6 @@ async def get_volume_power_rank(user_id: str, db: AsyncSession, excd: str = "NAS
         "NDAY": "8",
         "VOL_RANG": "4",
     }
-    response = await fetch("GET", api_url, "KIS", params=query, headers=headers)
+    response = await kis_fetch("GET", api_url, access_data, params=query, headers=headers)
     body = response["body"]
     return body.get("output2")

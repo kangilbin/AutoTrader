@@ -3,7 +3,9 @@ KIS (한국투자증권) API 통합 모듈
 """
 import asyncio
 from datetime import datetime
+import json
 import logging
+from zoneinfo import ZoneInfo
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -29,6 +31,36 @@ settings = get_settings()
 _TOKEN_LOCK_TTL = 10  # 락 자동 해제 시간(초). 토큰 발급은 수 초 이내 완료
 _TOKEN_WAIT_INTERVAL = 0.2  # 락 대기 시 Redis 재조회 간격(초)
 _TOKEN_WAIT_MAX_ATTEMPTS = 50  # 최대 대기 시도 (0.2s * 50 = 10s)
+# 캐시가 KIS 만료보다 먼저 사라지도록 두는 여유(초). 만료 직전 토큰으로
+# 나간 요청이 KIS 도착 시점에 만료되는 경계 케이스를 흡수한다.
+_TOKEN_TTL_MARGIN = 300
+_KST = ZoneInfo("Asia/Seoul")
+
+
+def _token_ttl(body: dict) -> int:
+    """토큰 캐시 TTL(초) — KIS가 알려준 실제 만료 시각 기준
+
+    expires_in을 그대로 쓰지 않는 이유: KIS는 6시간 내 재발급 요청에 기존 토큰을
+    돌려주는데, 이때도 expires_in을 믿으면 캐시가 실제 만료보다 오래 살아남아
+    '기간이 만료된 token' 이 TTL이 끝날 때까지 반복된다. access_token_token_expired
+    (KST, "YYYY-MM-DD HH:MM:SS")는 기존 토큰을 돌려줄 때도 그 토큰의 만료 시각이다.
+
+    0 이하를 반환하면 캐시하지 않는다 (이미 만료된 토큰을 캐시에 박지 않기 위함).
+    """
+    remaining = None
+    expired_at = body.get("access_token_token_expired")
+    if expired_at:
+        try:
+            exp = datetime.strptime(expired_at, "%Y-%m-%d %H:%M:%S").replace(tzinfo=_KST)
+            remaining = (exp - datetime.now(_KST)).total_seconds()
+        except ValueError:
+            logger.warning(f"[KIS] 토큰 만료 시각 형식 불일치: {expired_at!r} → expires_in 사용")
+    if remaining is None:
+        remaining = int(body.get("expires_in") or 0)
+
+    # 여유분보다 짧게 남았으면 여유를 빼지 않고 남은 만큼만 캐시한다
+    ttl = remaining - _TOKEN_TTL_MARGIN if remaining > _TOKEN_TTL_MARGIN else remaining
+    return int(ttl)
 
 
 def _token_cache_key(user_id: str, auth_id=None) -> str:
@@ -111,9 +143,16 @@ async def oauth_token(user_id: str, simulation_yn: str, api_key: str, secret_key
             "secret_key": secret_key,
             "simulation_yn": simulation_yn
         }
-        # Redis에 토큰 저장 만료기간(expires_in) 설정
-        await redis.hset(cache_key, mapping=data)
-        await redis.expire(cache_key, body.get("expires_in"))
+        # hset·expire를 한 트랜잭션으로 묶는다. 따로 보내면 expire만 실패했을 때
+        # TTL 없는 키가 남아, 만료된 토큰이 영구히 캐시에서 반환된다.
+        ttl = _token_ttl(body)
+        if ttl > 0:
+            async with redis.pipeline(transaction=True) as pipe:
+                pipe.hset(cache_key, mapping=data)
+                pipe.expire(cache_key, ttl)
+                await pipe.execute()
+        else:
+            logger.warning(f"[KIS] 발급 응답 토큰이 이미 만료 임박/만료 상태라 캐시하지 않음 (ttl={ttl})")
         return data
     finally:
         await redis.delete(lock_key)
@@ -147,13 +186,95 @@ async def token_for_auth_id(user_id: str, auth_id, db: AsyncSession) -> dict:
         await invalidate_token_cache(user_id, auth_id)
         raise NotFoundError("인증키", auth_id)
 
-    return await oauth_token(
+    access_data = await oauth_token(
         user_id,
         auth_data["SIMULATION_YN"],
         decrypt(auth_data["API_KEY"]),
         decrypt(auth_data["SECRET_KEY"]),
         auth_id=auth_id,
     )
+    # 토큰이 거절됐을 때 kis_fetch가 어느 캐시 슬롯을 비우고 재발급할지 알아야 한다.
+    # 캐시 해시에는 넣지 않는다 (키 이름에 이미 들어 있는 정보다).
+    return {**access_data, "user_id": user_id, "auth_id": str(auth_id)}
+
+
+# ============================================================
+# 토큰 거절 시 재발급 재시도
+# ============================================================
+
+# EGW00121: 유효하지 않은 token / EGW00123: 기간이 만료된 token
+# 캐시 TTL을 실제 만료에 맞춰도 KIS가 토큰을 먼저 끊는 경우(모의서버 점검 등)가
+# 있으므로, TTL은 예방이고 이 재시도가 최종 복구 수단이다.
+_TOKEN_REJECTED_CODES = frozenset({"EGW00121", "EGW00123"})
+
+# 캐시 토큰이 거절당한 그 토큰일 때만 지운다. 동시에 거절된 다른 요청이 이미
+# 새 토큰을 넣어 뒀다면 그걸 지우면 안 된다 — 추가 발급이 appkey당 1분 1회
+# 제한(EGW00133)에 걸린다. 조회·삭제 사이 경합을 없애려고 Lua로 원자 실행한다.
+_DISCARD_IF_SAME_TOKEN = """
+if redis.call('HGET', KEYS[1], 'access_token') == ARGV[1] then
+    return redis.call('DEL', KEYS[1])
+end
+return 0
+"""
+
+
+def _is_token_rejected(error: ExternalServiceError) -> bool:
+    """fetch가 올린 예외가 KIS의 토큰 거절(만료/무효)인지 판별"""
+    detail = error.detail if isinstance(error.detail, dict) else {}
+    try:
+        msg_cd = json.loads(detail.get("response_text") or "").get("msg_cd")
+    except (ValueError, AttributeError):
+        return False
+    return msg_cd in _TOKEN_REJECTED_CODES
+
+
+async def _reissue_token(access_data: dict) -> dict:
+    """거절된 토큰을 캐시에서 걷어내고 새로 확보한다 (발급은 oauth_token의 락 경유)"""
+    user_id, auth_id = access_data["user_id"], access_data["auth_id"]
+    redis = await get_redis()
+    await redis.eval(
+        _DISCARD_IF_SAME_TOKEN, 1, _token_cache_key(user_id, auth_id), access_data["access_token"]
+    )
+    fresh = await oauth_token(
+        user_id,
+        access_data["simulation_yn"],
+        access_data["api_key"],
+        access_data["secret_key"],
+        auth_id=auth_id,
+    )
+    return {**fresh, "user_id": user_id, "auth_id": auth_id}
+
+
+async def kis_fetch(method: str, url: str, access_data: dict, **kwargs):
+    """KIS API 호출. 토큰이 거절되면 재발급 후 1회만 재시도한다.
+
+    캐시는 TTL로만 만료되므로, KIS가 먼저 토큰을 끊으면 TTL이 끝날 때까지 모든
+    호출이 실패한다. 거절 신호를 받은 즉시 슬롯을 비우고 새 토큰으로 다시 보낸다.
+
+    POST(주문)도 재시도한다. 토큰 거절은 게이트웨이가 접수 전에 막은 것이라
+    주문이 들어간 적이 없어 중복 위험이 없다.
+
+    access_data를 제자리에서 갱신한다 — 같은 dict를 이어 쓰는 호출이 거절된
+    토큰으로 또 나가지 않게 하기 위함이다.
+    """
+    try:
+        return await fetch(method, url, "KIS", **kwargs)
+    except ExternalServiceError as e:
+        # user_id가 없으면 token_for_auth_id를 거치지 않은 dict라 슬롯을 모른다
+        if not _is_token_rejected(e) or not access_data.get("user_id"):
+            raise
+        logger.warning(
+            f"[KIS] 토큰 거절({e.message}) → 재발급 후 재시도 "
+            f"(user={access_data['user_id']}, auth_id={access_data['auth_id']})"
+        )
+
+    access_data.update(await _reissue_token(access_data))
+    kwargs["headers"] = {
+        **(kwargs.get("headers") or {}),
+        "authorization": f"Bearer {access_data['access_token']}",
+    }
+    # 재시도에서도 거절되면(KIS가 같은 토큰을 돌려준 경우 등) 그대로 올린다 — 반복 없음
+    return await fetch(method, url, "KIS", **kwargs)
 
 
 async def _get_account_auth(user_id: str, account_no: str, db: AsyncSession):
@@ -308,7 +429,7 @@ async def verify_account_balance(access_data: dict, account_no: str):
         "CTX_AREA_FK100": "",
         "CTX_AREA_NK100": "",
     }
-    response = await fetch("GET", api_url, "KIS", params=query, headers=headers)
+    response = await kis_fetch("GET", api_url, access_data, params=query, headers=headers)
     body = response["body"]
 
     if body.get("rt_cd") != "0":
@@ -369,7 +490,7 @@ async def get_stock_balance(user_id: str, db: AsyncSession, fk100="", nk100="", 
         "CTX_AREA_FK100": fk100,
         "CTX_AREA_NK100": nk100
     }
-    response = await fetch("GET", api_url, "KIS", params=query, headers=headers)
+    response = await kis_fetch("GET", api_url, access_data, params=query, headers=headers)
     body = response["body"]
     header = response["header"]
     tr_cont = header.get("tr_cont")
@@ -431,7 +552,7 @@ async def place_order_api(user_id: str, order: Order, db: AsyncSession, account_
         "ORD_QTY": str(order.qty),
         "ORD_UNPR": "0"
     }
-    response = await fetch("POST", api_url, "KIS", json=query, headers=headers)
+    response = await kis_fetch("POST", api_url, access_data, json=query, headers=headers)
     body = response["body"]
     return body
 
@@ -457,7 +578,7 @@ async def get_cancelable_orders_api(user_id: str, db: AsyncSession, fk100="", nk
         "CTX_AREA_FK100": fk100,
         "CTX_AREA_NK100": nk100
     }
-    response = await fetch("POST", api_url, "KIS", json=query, headers=headers)
+    response = await kis_fetch("POST", api_url, access_data, json=query, headers=headers)
     body = response["body"]
     return body
 
@@ -495,7 +616,7 @@ async def modify_or_cancel_order_api(user_id: str, order: ModifyOrder, db: Async
         "ORD_UNPR": str(order.ord_unpr),
         "QTY_ALL_ORD_YN": order.qty_all_ord_yn
     }
-    response = await fetch("POST", api_url, "KIS", json=query, headers=headers)
+    response = await kis_fetch("POST", api_url, access_data, json=query, headers=headers)
     body = response["body"]
     return body
 
@@ -539,7 +660,7 @@ async def get_inquire_daily_ccld_obj(user_id: str, db: AsyncSession, inqr_strt_d
         "CTX_AREA_FK100": fk100,
         "CTX_AREA_NK100": nk100
     }
-    response = await fetch("GET", api_url, "KIS", params=query, headers=headers)
+    response = await kis_fetch("GET", api_url, access_data, params=query, headers=headers)
     body = response["body"]
     return body
 
@@ -638,7 +759,7 @@ async def get_target_price(user_id: str, code: str, db: AsyncSession, access_dat
     }
     # 국내 시세 조회 TR은 GET + query string이다 (POST/json은 output 없는 응답 → KeyError).
     # mgnt 경로가 죽어 있어 이 함수가 성공 실행된 적이 없었기에 드러나지 않았던 버그.
-    response = await fetch("GET", api_url, "KIS", params=query, headers=headers)
+    response = await kis_fetch("GET", api_url, access_data, params=query, headers=headers)
     body = response["body"]
     output = body.get("output")
     if not output:
@@ -667,7 +788,7 @@ async def get_stock_data(user_id: str, code: str, start_date: str, end_date: str
         "FID_ORG_ADJ_PRC": "0"
     }
 
-    response = await fetch("GET", api_url, "KIS", params=params, headers=headers)
+    response = await kis_fetch("GET", api_url, access_data, params=params, headers=headers)
     body = response["body"]
     # API 응답 데이터의 키를 대문자로 변경하고 st_code 추가
     if body and "output2" in body:
@@ -714,7 +835,7 @@ async def get_inquire_asking_price(user_id: str, code: str, db: AsyncSession, ac
         "fid_cond_mrkt_div_code": "J",
         "FID_INPUT_ISCD": code,
     }
-    response = await fetch("GET", api_url, "KIS", params=query, headers=headers)
+    response = await kis_fetch("GET", api_url, access_data, params=query, headers=headers)
     body = response["body"]
     return body
 
@@ -738,7 +859,7 @@ async def get_inquire_price(user_id: str, code: str, db: AsyncSession, account_n
         "FID_COND_MRKT_DIV_CODE": "J",
         "FID_INPUT_ISCD": code,
     }
-    response = await fetch("GET", api_url, "KIS", params=query, headers=headers)
+    response = await kis_fetch("GET", api_url, access_data, params=query, headers=headers)
     body = response["body"]
     return body
 
@@ -771,7 +892,7 @@ async def get_fluctuation_rank(user_id: str, db: AsyncSession, rank_sort_cls_cod
         "FID_DIV_CLS_CODE": "1",
         "FID_RSFL_RATE1": "",
     }
-    response = await fetch("GET", api_url, "KIS", params=query, headers=headers)
+    response = await kis_fetch("GET", api_url, access_data, params=query, headers=headers)
     body = response["body"]
     return body.get("output")
 
@@ -801,7 +922,7 @@ async def get_volume_rank(user_id: str, db: AsyncSession, blng_cls_code: str = "
         "FID_VOL_CNT": "",
         "FID_INPUT_DATE_1": "",
     }
-    response = await fetch("GET", api_url, "KIS", params=query, headers=headers)
+    response = await kis_fetch("GET", api_url, access_data, params=query, headers=headers)
     body = response["body"]
     return body.get("output")
 
@@ -829,7 +950,7 @@ async def get_volume_power_rank(user_id: str, db: AsyncSession, input_iscd: str 
         "fid_input_price_2": "",
         "fid_vol_cnt": "",
     }
-    response = await fetch("GET", api_url, "KIS", params=query, headers=headers)
+    response = await kis_fetch("GET", api_url, access_data, params=query, headers=headers)
     body = response["body"]
     return body.get("output")
 
@@ -875,7 +996,7 @@ async def get_rev_split_schedule(
         "T_DT": to_date,
         "MARKET_GB": "0",
     }
-    response = await fetch("GET", api_url, "KIS", params=params, headers=headers)
+    response = await kis_fetch("GET", api_url, access_data, params=params, headers=headers)
     return response["body"]
 
 
@@ -908,5 +1029,5 @@ async def get_merger_split_schedule(
         "T_DT": to_date,
         "SHT_CD": "",
     }
-    response = await fetch("GET", api_url, "KIS", params=params, headers=headers)
+    response = await kis_fetch("GET", api_url, access_data, params=params, headers=headers)
     return response["body"]
