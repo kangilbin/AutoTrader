@@ -5,12 +5,14 @@
 import asyncio
 import json
 import logging
+from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Dict, Any
 
 from app.core.market_code import is_overseas
 from app.core.order import Order, ModifyOrder
 from app.core.price import normalize_order_price, round_price, to_price
+from app.exceptions import OrderOutcomeUnknownError
 from app.external import kis_api, foreign_api
 
 logger = logging.getLogger(__name__)
@@ -73,9 +75,21 @@ class SwingOrderExecutor:
             unpr=ord_price, excg_cd=mrkt_code if _overseas else "",
         )
 
-        if _overseas:
-            return await foreign_api.place_order_api(user_id, order, db, account_no), ord_price
-        return await kis_api.place_order_api(user_id, order, db, account_no), ord_price
+        placed_at = datetime.now().strftime("%Y%m%d%H%M%S")  # KST (서버 TZ) — 체결내역 ord_dt/ord_tmd 와 같은 기준
+        try:
+            if _overseas:
+                return await foreign_api.place_order_api(user_id, order, db, account_no), ord_price
+            return await kis_api.place_order_api(user_id, order, db, account_no), ord_price
+        except OrderOutcomeUnknownError as e:
+            # 접수됐는지 모른다 → '접수됨(주문번호 미상)'으로 넘긴다. rt_cd="0"은 거짓 성공이 아니라
+            # 호출부를 체결 미확인 경로(pending_order, order_no=None)로 보내기 위한 것이다.
+            # 실패로 확정하면 실제로 체결된 주문이 기록 없이 사라진다.
+            # 확인은 다음 사이클 resolve_pending_order 가 체결내역(종목·구분·수량·시각)으로 한다.
+            logger.warning(
+                f"[{st_code}] {'매수' if is_buy else '매도'} {qty}주 주문 결과 미상({e.message}) "
+                f"→ 체결 미확인 주문으로 추적"
+            )
+            return {"rt_cd": "0", "outcome_unknown": True, "output": {}, "placed_at": placed_at}, ord_price
 
     @classmethod
     async def cancel_order(
@@ -138,6 +152,11 @@ class SwingOrderExecutor:
         Returns:
             체결 정보 또는 None (미확인)
         """
+        if not order_no:
+            # 주문 결과 미상(place_order 참고) — 주문번호 매칭은 항상 빗나가 슬롯만 붙잡는다.
+            # 확인은 다음 사이클 resolve_pending_order 가 체결내역 속성 매칭으로 한다.
+            return None
+
         _overseas = is_overseas(mrkt_code)
         execution = await _check_execution_with_retry(
             user_id, order_no, db, max_retries=max_retries,
@@ -300,6 +319,7 @@ class SwingOrderExecutor:
                                       "phase": signal_on_complete, "ord_qty": qty,
                                       "target_amount": float(target_amount),
                                       "mrkt_code": mrkt_code, "attempts": 0,
+                                      "placed_at": result.get("placed_at"),
                                       "ord_price": fill_price,
                                       "ord_orgno": result.get("output", {}).get("KRX_FWDG_ORD_ORGNO", "")}}
         executed_qty = execution.get("executed_qty", qty)
@@ -420,6 +440,7 @@ class SwingOrderExecutor:
                                       "phase": signal_on_complete, "ord_qty": order_qty,
                                       "target_qty": target_qty,
                                       "mrkt_code": mrkt_code, "attempts": 0,
+                                      "placed_at": result.get("placed_at"),
                                       "ord_price": fill_price,
                                       "ord_orgno": result.get("output", {}).get("KRX_FWDG_ORD_ORGNO", "")}}
         actual_qty = execution.get("executed_qty", order_qty)
@@ -577,6 +598,7 @@ class SwingOrderExecutor:
                                           "phase": state["phase"], "ord_qty": order_qty,
                                           "target_amount": target_amount,
                                           "mrkt_code": mrkt_code, "attempts": 0,
+                                      "placed_at": result.get("placed_at"),
                                       "ord_price": fill_price,
                                       "ord_orgno": result.get("output", {}).get("KRX_FWDG_ORD_ORGNO", "")}}
             executed_qty = execution.get("executed_qty", order_qty)
@@ -664,6 +686,7 @@ class SwingOrderExecutor:
                                           "phase": state["phase"], "ord_qty": order_qty,
                                           "target_qty": target_qty,
                                           "mrkt_code": mrkt_code, "attempts": 0,
+                                      "placed_at": result.get("placed_at"),
                                       "ord_price": fill_price,
                                       "ord_orgno": result.get("output", {}).get("KRX_FWDG_ORD_ORGNO", "")}}
             actual_qty = execution.get("executed_qty", order_qty)
@@ -707,6 +730,63 @@ class SwingOrderExecutor:
         return {"completed": True, "aborted": False, "signal_on_complete": None,
                 "entry_price": current_entry_price, "hold_qty": current_hold_qty}
 
+    # 결과 미상 주문 매칭 시 주문시각 여유 (서버 시계 ↔ KIS 주문시각 오차 흡수).
+    # 같은 종목·구분·수량 주문이 이 안에 두 번 나갈 수 없다 — 사이클당 1회이고
+    # 미확인 주문이 있는 동안 신규 주문은 막힌다.
+    ORDER_CLOCK_SKEW_SEC: int = 60
+
+    @classmethod
+    async def _find_unknown_order(cls, user_id: str, st_code: str, mrkt_code: str,
+                                  pending: Dict[str, Any], db, account_no: str = None) -> Dict[str, Any] | None:
+        """주문번호 없는 미확인 주문을 체결내역에서 찾는다 (종목·구분·수량 일치 + 주문시각 이후 가장 이른 것)
+
+        미체결로 살아있는 주문도 반환한다(executed_qty=0) — 주문번호를 알아야 취소·재확인이 가능하다.
+        """
+        placed_at = _ord_time({"ord_dt": (pending.get("placed_at") or "")[:8],
+                               "ord_tmd": (pending.get("placed_at") or "")[8:]})
+        if not placed_at:
+            logger.error(f"[{st_code}] 결과 미상 주문에 주문시각이 없어 매칭 불가: {pending}")
+            return None
+
+        since = placed_at - timedelta(seconds=cls.ORDER_CLOCK_SKEW_SEC)
+        orders = await _find_executions(
+            user_id, st_code, mrkt_code, pending.get("type"),
+            since.strftime("%Y%m%d"), datetime.now().strftime("%Y%m%d"), db, account_no,
+        )
+        # 주문시각을 못 읽는 주문은 제외한다 — 이전 주문과 섞일 수 있다
+        candidates = [
+            o for o in orders or []
+            if o["order_no"] and o["ord_qty"] == pending.get("ord_qty")
+            and _ord_time(o) is not None and _ord_time(o) >= since
+        ]
+        return min(candidates, key=_ord_time) if candidates else None
+
+    @classmethod
+    async def find_unrecorded_fills(cls, user_id: str, st_code: str, mrkt_code: str, side: str,
+                                    since: datetime, db, account_no: str = None) -> list | None:
+        """since(스윙 MOD_DT) 이후 체결된 주문 — DB 에 반영되지 않은 체결 후보 (시간순)
+
+        정상 기록된 체결은 add_amount/deduct_amount/상태 전이가 MOD_DT 를 체결 뒤로 갱신하므로
+        since 이후에는 롤백으로 누락된 체결(또는 증권사 앱 직접 주문)만 남는다.
+
+        Returns:
+            [{order_no, ord_dt, ord_tmd, ord_qty, executed_qty, avg_price, executed_amt}]
+            조회 실패 시 None (없음과 구분 — 호출부는 상태를 건드리지 말고 다음 사이클에 재시도)
+        """
+        if since is None:
+            # 기준 시각이 없으면 이미 기록된 체결과 구분할 수 없다 — 조회 불가로 취급
+            logger.error(f"[{st_code}] 누락 체결 조회 기준 시각(MOD_DT/REG_DT) 없음 → 조회 생략")
+            return None
+        orders = await _find_executions(
+            user_id, st_code, mrkt_code, side,
+            since.strftime("%Y%m%d"), datetime.now().strftime("%Y%m%d"), db, account_no,
+        )
+        if orders is None:
+            return None
+        fills = [o for o in orders
+                 if o["executed_qty"] > 0 and _ord_time(o) is not None and _ord_time(o) > since]
+        return sorted(fills, key=_ord_time)
+
     @classmethod
     async def resolve_pending_order(
         cls,
@@ -741,6 +821,31 @@ class SwingOrderExecutor:
 
         ord_qty = pending.get("ord_qty", 0)
         ord_orgno = pending.get("ord_orgno", "")
+
+        # ── 주문 결과 미상 (응답 유실로 주문번호 없음) → 체결내역에서 찾아 기존 흐름에 합류 ──
+        if not order_no:
+            match = await cls._find_unknown_order(user_id, st_code, mrkt_code, pending, db, account_no)
+            if not match:
+                attempts = pending.get("attempts", 0) + 1
+                if attempts >= cls.MAX_PENDING_ATTEMPTS:
+                    # 체결내역에 없다 = 접수되지 않은 주문. 취소할 대상도 없다.
+                    logger.warning(
+                        f"[{st_code}] 결과 미상 주문({pending.get('type')} {ord_qty}주 @ {pending.get('placed_at')}) "
+                        f"{attempts}회 조회에도 체결내역에 없음 → 미접수로 판단, 추적 종료"
+                    )
+                    return unchanged
+                pending["attempts"] = attempts
+                logger.warning(
+                    f"[{st_code}] 결과 미상 주문 체결내역 미발견 ({attempts}/{cls.MAX_PENDING_ATTEMPTS}), 다음 사이클 재조회"
+                )
+                return {**unchanged, "pending_state": pending}
+
+            order_no = pending["order_no"] = match["order_no"]
+            logger.info(
+                f"[{st_code}] 결과 미상 주문 → 체결내역에서 주문 {order_no} 발견 "
+                f"({match['ord_dt']} {match['ord_tmd']}, 체결 {match['executed_qty']}/{match['ord_qty']}주)"
+            )
+            # 이후는 주문번호가 있는 미확인 주문과 같다 (부분체결 잔량 취소·이력 기록 포함)
         # 주문이 실제로 나간 단가 — 재확인은 몇 사이클 뒤라 그 시점 현재가를 쓰면
         # 체결가가 실제와 크게 어긋난다 (ENTRY_PRICE·손절 기준으로 이어짐)
         ord_price = float(pending.get("ord_price") or round_price(curr_price))
@@ -840,6 +945,24 @@ class SwingOrderExecutor:
                 "partial_state": {"type": "sell", "phase": phase,
                                   "target_qty": target_qty,
                                   "executed_qty": new_executed_qty}}
+
+
+def _ord_time(order: dict) -> datetime | None:
+    """체결내역 주문의 ord_dt(YYYYMMDD) + ord_tmd(HHMMSS) → datetime (KST). 형식이 깨졌으면 None"""
+    try:
+        return datetime.strptime(f"{order.get('ord_dt', '')}{str(order.get('ord_tmd', '')).zfill(6)}", "%Y%m%d%H%M%S")
+    except ValueError:
+        return None
+
+
+async def _find_executions(user_id: str, st_code: str, mrkt_code: str, side: str,
+                           start_dt: str, end_dt: str, db, account_no: str = None):
+    """국내/해외 주문내역 조회 분기 (형태는 kis_api.find_executions 참고, 조회 실패 시 None)"""
+    if is_overseas(mrkt_code):
+        return await foreign_api.find_executions(
+            user_id, db, st_code, side, start_dt, end_dt, excg_cd=mrkt_code, account_no=account_no
+        )
+    return await kis_api.find_executions(user_id, db, st_code, side, start_dt, end_dt, account_no=account_no)
 
 
 async def _check_execution_with_retry(

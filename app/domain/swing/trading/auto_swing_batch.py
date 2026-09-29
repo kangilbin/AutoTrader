@@ -358,8 +358,10 @@ async def process_single_swing(
                 # 포지션이 무방비인 게 위험하므로, 주문을 정리하고 이번 사이클에
                 # 정상 평가로 복귀한다. (취소 실패 = 체결됐을 수 있음 → 기존대로 재확인 대기)
                 resume_normal_flow = False
-                if pending_str and partial_result.get("pending_state") and swing.has_position():
-                    _pending = json.loads(pending_str)
+                # 갱신된 pending_state 를 본다 — 결과 미상 주문은 이번 조회로 주문번호를 알게 됐을 수 있고,
+                # 아직 모르면(order_no 없음) 취소할 대상이 없다.
+                _pending = partial_result.get("pending_state") or {}
+                if pending_str and _pending.get("order_no") and swing.has_position():
                     if await SwingOrderExecutor.cancel_order(
                         user_id, _pending.get("order_no"), st_code,
                         _pending.get("mrkt_code", mrkt_code), db,
@@ -510,8 +512,9 @@ async def process_single_swing(
             prev_hold_qty = swing.HOLD_QTY or 0
 
             # === 4. SIGNAL별 오케스트레이션 ===
+            outcome = None
             if swing.is_waiting():
-                await _handle_waiting(
+                outcome = await _handle_waiting(
                     swing, strategy, redis_client, db, user_id, st_code,
                     current_price, frgn_ntby_qty, acml_vol,
                     prdy_vrss_vol_rate, prdy_ctrt,
@@ -519,7 +522,7 @@ async def process_single_swing(
                 )
 
             elif swing.has_position():
-                await _handle_position(
+                outcome = await _handle_position(
                     swing, strategy, redis_client, db, user_id, st_code,
                     current_price, frgn_ntby_qty, acml_vol,
                     cached_indicators, avg_daily_amount, mrkt_code
@@ -551,7 +554,8 @@ async def process_single_swing(
                 swing._pending_order_state = None
 
             # === 6. 푸쉬 알림 ===
-            if user_id and swing.SIGNAL != prev_signal:
+            # 실보유 대조로 상태만 맞춘 경우는 이번 사이클 체결이 아니므로 매매 푸시를 보내지 않는다
+            if user_id and swing.SIGNAL != prev_signal and outcome != OUTCOME_STATE_SYNCED:
                 _fire_trade_notification(
                     user_id, swing, prev_signal, st_code,
                     prev_hold_qty=prev_hold_qty, current_price=float(current_price)
@@ -650,6 +654,11 @@ async def _handle_waiting(
         logger.info(f"[{st_code}] 매수 수량 부족 (CUR_AMOUNT={equity:,.0f}원)")
         return
 
+    # 이미 보유 중이면(기록 누락 매수·외부 매수) 신규 매수 대신 편입 — 중복 매수 방지
+    proceed = await _adopt_before_buy(swing, db, user_id, st_code, mrkt_code, current_price)
+    if proceed is not True:
+        return proceed or None
+
     # 체결 이력 저장은 executor가 전담한다 (체결 수량/단가를 아는 지점) — 사유만 넘긴다
     order_result = await SwingOrderExecutor.execute_buy_with_partial(
         swing_id=swing.SWING_ID,
@@ -727,7 +736,7 @@ async def _handle_position(
     )
 
     if exit_result and exit_result.get("action") == "SELL":
-        await _execute_full_sell(
+        return await _execute_full_sell(
             swing, redis_client, db, user_id, st_code,
             current_price, hold_qty, avg_daily_amount,
             exit_result.get("reasons", ["청산"]),
@@ -735,7 +744,6 @@ async def _handle_position(
             mrkt_code=mrkt_code,
             cached_indicators=cached_indicators
         )
-        return
 
     # 2. 부분 익절 (목표 수익률 도달 시 절반, SIGNAL 1에서 1회)
     tp_result = await strategy.check_partial_take_profit(
@@ -751,7 +759,7 @@ async def _handle_position(
         # 1주뿐이면 절반 분할이 불가능하다. 그대로 두면 매 사이클 신호만 반복되므로
         # 전량 매도로 사이클을 종료한다.
         if sell_qty <= 0:
-            await _execute_full_sell(
+            return await _execute_full_sell(
                 swing, redis_client, db, user_id, st_code,
                 current_price, hold_qty, avg_daily_amount,
                 tp_result.get("reasons", ["부분익절"]) + ["잔량 1주 전량 매도"],
@@ -759,9 +767,8 @@ async def _handle_position(
                 mrkt_code=mrkt_code,
                 cached_indicators=cached_indicators
             )
-            return
 
-        await _execute_partial_sell(
+        return await _execute_partial_sell(
             swing, redis_client, db, user_id, st_code,
             current_price, sell_qty, avg_daily_amount,
             tp_result.get("reasons", ["부분익절"]),
@@ -799,6 +806,8 @@ async def _execute_partial_sell(
 
     if not order_result.get("success"):
         logger.error(f"[{st_code}] 1차 익절 매도 실패: {order_result.get('reason')}")
+        if order_result.get("reason") != "호가 조회 실패":  # 주문 자체가 안 나간 경우는 대조 불필요
+            return await _reconcile_after_sell_rejected(swing, db, user_id, st_code, mrkt_code)
         return
 
     if order_result.get("unconfirmed"):
@@ -854,6 +863,8 @@ async def _execute_full_sell(
 
     if not order_result.get("success"):
         logger.error(f"[{st_code}] 매도 실패: {order_result.get('reason')}")
+        if order_result.get("reason") != "호가 조회 실패":  # 주문 자체가 안 나간 경우는 대조 불필요
+            return await _reconcile_after_sell_rejected(swing, db, user_id, st_code, mrkt_code)
         return
 
     if order_result.get("unconfirmed"):
@@ -879,6 +890,143 @@ async def _execute_full_sell(
         swing.update_hold_qty_partial(sold_qty)
 
     logger.info(success_log_msg)
+
+
+# ==================== 증권사 실보유 대조 (기록 누락 복구) ====================
+#
+# 주문 응답이 유실되면(타임아웃·5xx 후 롤백 등) 증권사에서는 체결됐는데 DB 에는 흔적이
+# 없을 수 있다. 결과 미상 주문은 order_executor 가 추적하지만, 그 경로를 빠져나간
+# 누락(과거 버그·증권사 앱 직접 주문 포함)은 여기서 실보유 기준으로 바로잡는다.
+# 잔고 조회 비용 때문에 매 사이클이 아니라 '매도 거부 시'와 '매수 직전'에만 대조한다.
+
+# 핸들러 반환값 — 체결 없이 상태만 실보유에 맞춘 경우. 매매 푸시(매수/매도 완료)를 보내지 않는다.
+OUTCOME_STATE_SYNCED = "STATE_SYNCED"
+
+
+async def _record_recovered_fills(swing, db, fills: list, side: str, max_qty: int, label: str,
+                                  mrkt_code: str) -> tuple[int, float]:
+    """누락 체결을 TRADE_HISTORY 에 기록 (max_qty 까지). Returns: (복구 수량, 복구 금액)"""
+    trade_service = TradeHistoryService(db)
+    recovered_qty, recovered_amt = 0, 0.0
+    for f in fills:
+        if recovered_qty >= max_qty:
+            break
+        qty = min(f["executed_qty"], max_qty - recovered_qty)
+        price = f["avg_price"] or (f["executed_amt"] / f["executed_qty"])
+        amount = qty * price
+        amount_reason = await SwingOrderExecutor._amount_reason(
+            swing.SWING_ID, amount, db, "투입" if side == "buy" else "회수"
+        )
+        await trade_service.record_trade(
+            swing_id=swing.SWING_ID,
+            trade_type="B" if side == "buy" else "S",
+            order_result={"qty": qty, "avg_price": price, "order_no": f["order_no"], "amount": amount},
+            reasons=[label, "체결 복구"] + ([amount_reason] if amount_reason else []),
+            mrkt_code=mrkt_code,
+            trade_date=datetime.strptime(f"{f['ord_dt']}{str(f['ord_tmd']).zfill(6)}", "%Y%m%d%H%M%S"),
+        )
+        recovered_qty += qty
+        recovered_amt += amount
+    return recovered_qty, recovered_amt
+
+
+async def _reconcile_after_sell_rejected(swing, db, user_id, st_code, mrkt_code) -> str | None:
+    """매도 거부 시 실보유 대조 → 기록 누락 매도 복구
+
+    DB 가 실보유보다 많은 수량을 들고 있으면 매도가 매 사이클 거부되고(자가 회복 불가)
+    목록 손익은 '보유 없음 + CUR_AMOUNT 미가산'으로 원금 전액 손실처럼 보인다.
+    """
+    position = await SwingService(db).fetch_broker_position(
+        user_id, mrkt_code, st_code, account_no=swing.ACCOUNT_NO
+    )
+    if position is None:
+        return None
+    db_qty = swing.HOLD_QTY or 0
+    missing_qty = db_qty - position["qty"]
+    if missing_qty <= 0:
+        return None  # 수량은 맞다 — 거부 사유는 다른 데 있다
+
+    since = swing.MOD_DT or swing.REG_DT
+    fills = await SwingOrderExecutor.find_unrecorded_fills(
+        user_id, st_code, mrkt_code, "sell", since, db, swing.ACCOUNT_NO
+    )
+    if fills is None:
+        logger.error(f"[{st_code}] DB {db_qty}주 / 실보유 {position['qty']}주 불일치, 체결내역 조회 실패 → 다음 사이클 재시도")
+        return None
+
+    fully_sold = position["qty"] <= 0
+    recovered_qty, recovered_amt = await _record_recovered_fills(
+        swing, db, fills, "sell", missing_qty, "전량 매도" if fully_sold else "부분 매도", mrkt_code
+    )
+    if recovered_amt > 0:
+        swing.add_amount(recovered_amt)
+    if fully_sold:
+        swing.reset_cycle()
+    else:
+        swing.update_hold_qty_partial(missing_qty)
+
+    logger.warning(
+        f"[{st_code}] 기록 누락 매도 복구: DB {db_qty}주 → 실보유 {position['qty']}주, "
+        f"체결내역 {recovered_qty}주 {recovered_amt:,.2f} 기록"
+        + (" → 사이클 종료(SIGNAL 3)" if fully_sold else "")
+    )
+    if recovered_qty < missing_qty:
+        # 결정: 가짜 체결을 만들지 않는다 — 이력 없이 수량만 실보유에 맞춘다
+        logger.error(
+            f"[{st_code}] 누락 매도 {missing_qty - recovered_qty}주의 체결내역을 찾지 못함 "
+            f"(since {since}) → 거래 내역 없이 수량만 정리, CUR_AMOUNT 미가산 (수동 확인 필요)"
+        )
+    return OUTCOME_STATE_SYNCED
+
+
+async def _adopt_before_buy(swing, db, user_id, st_code, mrkt_code, current_price) -> str | bool:
+    """매수 직전 실보유 확인 — 이미 보유 중이면 신규 매수 대신 편입
+
+    매수 체결 기록이 누락되면 DB 는 SIGNAL 0·0주로 남아 다음 신호에 한 번 더 매수한다(중복 매수).
+
+    Returns:
+        True — 실보유 없음, 매수 진행
+        False — 실보유 확인 실패, 이번 사이클 매수 보류
+        OUTCOME_STATE_SYNCED — 편입 완료, 매수하지 않음
+    """
+    position = await SwingService(db).fetch_broker_position(
+        user_id, mrkt_code, st_code, account_no=swing.ACCOUNT_NO
+    )
+    if position is None:
+        logger.warning(f"[{st_code}] 매수 전 실보유 확인 실패 → 이번 사이클 매수 보류 (중복 매수 방지)")
+        return False
+    if position["qty"] <= 0:
+        return True
+
+    since = swing.MOD_DT or swing.REG_DT  # adopt_position 이 MOD_DT 를 갱신하기 전에 잡는다
+
+    # 편입을 먼저 한다 — 이력을 먼저 쓰고 편입이 실패하면 이력·자금 차감만 커밋되고 SIGNAL 0 이 남는다
+    try:
+        swing.adopt_position(
+            hold_qty=position["qty"],
+            entry_price=position["avg_price"],
+            current_price=float(current_price),
+        )
+    except ValidationError as e:
+        logger.error(f"[{st_code}] 매수 전 실보유 {position['qty']}주 발견, 편입 실패 → 매수 보류 (수동 확인 필요): {e}")
+        return False
+
+    fills = await SwingOrderExecutor.find_unrecorded_fills(
+        user_id, st_code, mrkt_code, "buy", since, db, swing.ACCOUNT_NO
+    )
+    recovered_qty, recovered_amt = (0, 0.0)
+    if fills:
+        recovered_qty, recovered_amt = await _record_recovered_fills(
+            swing, db, fills, "buy", position["qty"], "매수", mrkt_code
+        )
+        swing.deduct_amount(recovered_amt)
+    # 체결내역에 없으면(또는 조회 실패) 외부(증권사 앱) 매수로 본다 — /list 자동등록과 같이 자금 차감 없이 편입
+
+    logger.warning(
+        f"[{st_code}] 매수 전 실보유 {position['qty']}주 발견 → 신규 매수 대신 편입 (SIGNAL 1), "
+        f"누락 체결 {recovered_qty}주 {recovered_amt:,.2f} 기록"
+    )
+    return OUTCOME_STATE_SYNCED
 
 
 # ==================== 기타 배치 작업 ====================

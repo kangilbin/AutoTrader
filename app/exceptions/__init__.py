@@ -33,6 +33,7 @@ from app.exceptions.domain import (
 from app.exceptions.infrastructure import (
     InfrastructureError,
     ExternalServiceError,
+    OrderOutcomeUnknownError,
     DatabaseError,
     CacheError,
     ConfigurationError
@@ -60,6 +61,7 @@ __all__ = [
     # 인프라
     "InfrastructureError",
     "ExternalServiceError",
+    "OrderOutcomeUnknownError",
     "DatabaseError",
     "CacheError",
     "ConfigurationError",

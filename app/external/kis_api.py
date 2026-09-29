@@ -552,7 +552,7 @@ async def place_order_api(user_id: str, order: Order, db: AsyncSession, account_
         "ORD_QTY": str(order.qty),
         "ORD_UNPR": "0"
     }
-    response = await kis_fetch("POST", api_url, access_data, json=query, headers=headers)
+    response = await kis_fetch("POST", api_url, access_data, json=query, headers=headers, order=True)
     body = response["body"]
     return body
 
@@ -621,8 +621,8 @@ async def modify_or_cancel_order_api(user_id: str, order: ModifyOrder, db: Async
     return body
 
 async def get_inquire_daily_ccld_obj(user_id: str, db: AsyncSession, inqr_strt_dt=None, inqr_end_dt=None, fk100="", nk100="",
-                                     account_no: str = None):
-    """주식일별주문체결(현황)조회"""
+                                     account_no: str = None, pdno: str = ""):
+    """주식일별주문체결(현황)조회 — pdno 지정 시 해당 종목만"""
     user_data, access_data = await _get_user_auth(user_id, db, account_no)
     if access_data.get("simulation_yn") == "Y":
         url = settings.DEV_API_URL
@@ -651,7 +651,7 @@ async def get_inquire_daily_ccld_obj(user_id: str, db: AsyncSession, inqr_strt_d
         "INQR_END_DT": inqr_end_dt,
         "SLL_BUY_DVSN_CD": "00",
         "INQR_DVSN": "01",
-        "PDNO": "",
+        "PDNO": pdno,
         "CCLD_DVSN": "00",
         "ORD_GNO_BRNO": "",
         "ODNO": "",
@@ -727,6 +727,53 @@ async def check_order_execution(user_id: str, order_no: str, db: AsyncSession, m
 
     logger.warning(f"[체결확인] 주문 {order_no} 체결 확인 실패 (max_retry 초과)")
     return None
+
+
+# 일별주문체결 sll_buy_dvsn_cd (국내·해외 공통 코드)
+SIDE_CODES = {"sell": "01", "buy": "02"}
+
+
+async def find_executions(user_id: str, db: AsyncSession, st_code: str, side: str,
+                          start_dt: str, end_dt: str, account_no: str = None) -> Optional[List[dict]]:
+    """주문번호 없이 종목·매수/매도 구분으로 주문 내역 조회 (국내)
+
+    주문 결과를 모르는 경우(응답 유실)와 포지션 복구에서 쓴다 — 둘 다 주문번호가 없다.
+    시각·수량 매칭 규칙은 호출부(order_executor)가 정한다.
+
+    Args:
+        side: "buy" / "sell"
+        start_dt, end_dt: 주문일자 YYYYMMDD (KST)
+
+    Returns:
+        [{order_no, ord_dt, ord_tmd, ord_qty, executed_qty, avg_price, executed_amt}]
+        — 미체결 주문도 포함(executed_qty=0). 조회 실패 시 None ('없음'과 구분).
+    """
+    try:
+        body = await get_inquire_daily_ccld_obj(
+            user_id, db, inqr_strt_dt=start_dt, inqr_end_dt=end_dt,
+            account_no=account_no, pdno=st_code,
+        )
+    except ExternalServiceError as e:
+        logger.error(f"[체결조회] {st_code} 주문내역 조회 실패: {e}")
+        return None
+    if not body or "output1" not in body:
+        logger.error(f"[체결조회] {st_code} 주문내역 응답 없음: {body.get('msg1') if body else None}")
+        return None
+
+    side_cd = SIDE_CODES[side]
+    return [
+        {
+            "order_no": o.get("odno"),
+            "ord_dt": o.get("ord_dt", ""),
+            "ord_tmd": o.get("ord_tmd", ""),
+            "ord_qty": int(float(o.get("ord_qty") or 0)),
+            "executed_qty": int(float(o.get("tot_ccld_qty") or 0)),
+            "avg_price": float(o.get("avg_prvs") or 0),
+            "executed_amt": float(o.get("tot_ccld_amt") or 0),
+        }
+        for o in body.get("output1") or []
+        if o.get("pdno") == st_code and o.get("sll_buy_dvsn_cd") == side_cd
+    ]
 
 
 async def get_target_price(user_id: str, code: str, db: AsyncSession, access_data: dict = None):

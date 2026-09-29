@@ -4,7 +4,7 @@ import random
 
 import httpx
 from app.core.config import get_settings
-from app.exceptions import ExternalServiceError
+from app.exceptions import ExternalServiceError, OrderOutcomeUnknownError
 from app.external.rate_limiter import kis_rate_limiter
 
 logger = logging.getLogger(__name__)
@@ -105,7 +105,15 @@ async def _throttle(url: str, kwargs: dict) -> None:
     await kis_rate_limiter.acquire(appkey, limit)
 
 
-async def fetch(method: str, url: str, service_name: str = "External API", **kwargs):
+async def fetch(method: str, url: str, service_name: str = "External API", *, order: bool = False, **kwargs):
+    """
+    order=True: 신규 주문 전송. 서버가 접수했는지 모르는 실패(유량초과·ReadTimeout·
+        전송 후 연결 끊김·5xx)를 재시도하지 않고 OrderOutcomeUnknownError 로 올린다.
+        재시도는 중복 주문이 될 수 있고, 실패로 확정하면 체결된 주문이 기록 없이 사라진다
+        (응답은 500 인데 KIS 는 체결 → 재시도가 '잔고내역 없음'으로 거부된 사례).
+        결과 확인은 호출부(order_executor)가 체결내역으로 한다.
+        정정/취소·토큰 발급 POST 는 해당 없음 — 중복돼도 무해하므로 기존 재시도를 쓴다.
+    """
     method = method.upper()
 
     # 재시도 예산은 원인별로 따로 센다 (상수 주석 참고).
@@ -191,7 +199,7 @@ async def fetch(method: str, url: str, service_name: str = "External API", **kwa
                 await asyncio.sleep(delay)
                 continue
 
-            raise ExternalServiceError(
+            raise (OrderOutcomeUnknownError if order else ExternalServiceError)(
                 service=service_name,
                 message=f"요청 시간 초과 ({type(e).__name__})",
                 status_code=504,
@@ -234,7 +242,8 @@ async def fetch(method: str, url: str, service_name: str = "External API", **kwa
 
                 # 창 계산이 맞다면 이 경로는 안 타는 것이 정상이라 warning 으로 남긴다.
                 # 찍히기 시작하면 창 폭이나 한도 설정이 실제와 어긋났다는 신호다.
-                if rate_limit_retries < MAX_RATE_LIMIT_RETRIES:
+                # 신규 주문은 재시도하지 않는다 (docstring 참고). 제한기 페널티는 위에서 이미 걸었다.
+                if not order and rate_limit_retries < MAX_RATE_LIMIT_RETRIES:
                     rate_limit_retries += 1
                     logger.warning(
                         f"[{service_name}] 초당 거래건수 초과, {delay:.1f}초 후 재시도 "
@@ -243,7 +252,9 @@ async def fetch(method: str, url: str, service_name: str = "External API", **kwa
                     await asyncio.sleep(delay)
                     continue
 
-            raise ExternalServiceError(
+            # 주문의 유량초과·5xx 는 접수 여부를 모른다. 4xx 는 확정 거부라 일반 오류로 둔다.
+            outcome_unknown = order and (RATE_LIMIT_MSG in error_msg or e.response.status_code >= 500)
+            raise (OrderOutcomeUnknownError if outcome_unknown else ExternalServiceError)(
                 service=service_name,
                 message=error_msg,
                 status_code=502,
@@ -274,7 +285,7 @@ async def fetch(method: str, url: str, service_name: str = "External API", **kwa
                 await asyncio.sleep(delay)
                 continue
 
-            raise ExternalServiceError(
+            raise (OrderOutcomeUnknownError if order else ExternalServiceError)(
                 service=service_name,
                 message=f"요청 실패: {str(e)}",
                 status_code=503,

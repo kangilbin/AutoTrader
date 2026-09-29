@@ -35,7 +35,8 @@ class FakeTradeService:
     def __init__(self, db):
         pass
 
-    async def record_trade(self, swing_id, trade_type, order_result, reasons=None, mrkt_code=""):
+    async def record_trade(self, swing_id, trade_type, order_result, reasons=None, mrkt_code="",
+                           trade_date=None):
         FakeTradeService.calls.append({
             "type": trade_type,
             "mrkt_code": mrkt_code,
@@ -43,6 +44,7 @@ class FakeTradeService:
             "price": order_result.get("avg_price", 0),
             "amount": order_result.get("amount", 0),
             "reasons": reasons,
+            "trade_date": trade_date,
         })
         return {}
 

@@ -46,6 +46,14 @@ class TradeHistoryService:
         tz = ZoneInfo("America/New_York") if is_overseas(mrkt_code) else ZoneInfo("Asia/Seoul")
         return datetime.now(tz).replace(tzinfo=None)
 
+    @classmethod
+    def _market_time(cls, mrkt_code: str, kst_time: Optional[datetime] = None) -> datetime:
+        """KST 시각(미지정 시 현재) → 시장 타임존 기준 naive datetime (_market_now 와 같은 컨벤션)"""
+        if kst_time is None:
+            return cls._market_now(mrkt_code)
+        tz = ZoneInfo("America/New_York") if is_overseas(mrkt_code) else ZoneInfo("Asia/Seoul")
+        return kst_time.replace(tzinfo=ZoneInfo("Asia/Seoul")).astimezone(tz).replace(tzinfo=None)
+
     async def record_trade(
         self,
         swing_id: int,
@@ -53,6 +61,7 @@ class TradeHistoryService:
         order_result: dict,
         reasons: Optional[list[str]] = None,
         mrkt_code: str = "",
+        trade_date: Optional[datetime] = None,
     ) -> dict:
         """
         거래 내역 저장 (공통 로직)
@@ -67,6 +76,9 @@ class TradeHistoryService:
             reasons: 매매 사유 리스트 (선택)
             mrkt_code: 시장 코드 ("J"=국내, "NYS/NAS/AMS"=미국).
                 TRADE_DATE 타임존 판정에 사용. 미지정 시 국내(KST) 기준.
+            trade_date: 실제 체결 시각 (naive KST, 체결내역 ord_dt/ord_tmd 기준).
+                기록 누락 체결을 나중에 복구할 때만 넘긴다 — 미지정 시 현재 시각.
+                해외는 _market_now 와 같은 컨벤션(ET)으로 변환해 저장한다.
 
         Returns:
             저장된 거래 내역
@@ -85,7 +97,7 @@ class TradeHistoryService:
             # 거래 데이터 준비
             trade_data = {
                 "SWING_ID": swing_id,
-                "TRADE_DATE": self._market_now(mrkt_code),
+                "TRADE_DATE": self._market_time(mrkt_code, trade_date),
                 "TRADE_TYPE": trade_type,
                 "TRADE_PRICE": sell_price,
                 "TRADE_QTY": sell_qty,

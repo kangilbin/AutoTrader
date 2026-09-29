@@ -59,6 +59,18 @@ class ExternalServiceError(InfrastructureError):
         self.original_error = original_error
 
 
+class OrderOutcomeUnknownError(ExternalServiceError):
+    """
+    주문(POST)이 접수됐는지 알 수 없는 실패
+
+    요청이 서버에 도달한 뒤 응답을 못 받은 경우(ReadTimeout, 전송 후 연결 끊김, 5xx,
+    유량초과)다. '거부됨'과 달리 체결됐을 수 있으므로 실패로 확정하면 안 되고,
+    체결내역으로 결과를 확인해야 한다 (order_executor 의 미확인 주문 흐름).
+
+    ExternalServiceError 를 상속하므로 기존 except 절은 그대로 잡는다.
+    """
+
+
 class DatabaseError(InfrastructureError):
     """
     데이터베이스 오류

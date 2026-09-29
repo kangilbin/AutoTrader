@@ -210,7 +210,7 @@ async def place_order_api(user_id: str, order: Order, db: AsyncSession, account_
         "ORD_SVR_DVSN_CD": "0",
         "ORD_DVSN": "00",  # 지정가 (미국 시장가 제한)
     }
-    response = await kis_fetch("POST", api_url, access_data, json=query, headers=headers)
+    response = await kis_fetch("POST", api_url, access_data, json=query, headers=headers, order=True)
     body = response["body"]
     return body
 
@@ -426,6 +426,48 @@ async def check_order_execution(
 
     logger.warning(f"[체결확인-해외] 주문 {order_no} 체결 확인 실패 (max_retry 초과)")
     return None
+
+
+async def find_executions(user_id: str, db: AsyncSession, st_code: str, side: str,
+                          start_dt: str, end_dt: str, excg_cd: str = "NAS",
+                          account_no: str = None) -> Optional[list]:
+    """주문번호 없이 종목·매수/매도 구분으로 주문 내역 조회 (해외) — kis_api.find_executions 와 같은 형태
+
+    주문일시는 KST 로 통일한다 — 국내주문일자(dmst_ord_dt)·당사주문시각(thco_ord_tmd)을 우선 쓴다.
+    모의계좌 실측(2026-09-29)에서는 ord_dt/ord_tmd 도 같은 값(KST)이었지만, 이름이 KST 를
+    보장하는 필드를 먼저 봐서 실전 응답이 현지 일자를 주더라도 매칭 시각이 어긋나지 않게 한다.
+
+    Returns:
+        [{order_no, ord_dt, ord_tmd, ord_qty, executed_qty, avg_price, executed_amt}]
+        조회 실패·모의 미지원 시 None ('없음'과 구분)
+    """
+    from app.external.kis_api import SIDE_CODES
+
+    try:
+        body = await get_inquire_ccnl_obj(
+            user_id, db, excg_cd, ord_strt_dt=start_dt, ord_end_dt=end_dt, account_no=account_no
+        )
+    except ExternalServiceError as e:
+        logger.error(f"[체결조회-해외] {st_code} 주문내역 조회 실패: {e}")
+        return None
+    if not body or body.get("rt_cd") != "0":
+        logger.error(f"[체결조회-해외] {st_code} 주문내역 응답 오류: {body.get('msg1') if body else None}")
+        return None
+
+    side_cd = SIDE_CODES[side]
+    return [
+        {
+            "order_no": o.get("odno"),
+            "ord_dt": o.get("dmst_ord_dt") or o.get("ord_dt", ""),
+            "ord_tmd": o.get("thco_ord_tmd") or o.get("ord_tmd", ""),
+            "ord_qty": int(float(o.get("ft_ord_qty") or 0)),
+            "executed_qty": int(float(o.get("ft_ccld_qty") or 0)),
+            "avg_price": float(o.get("ft_ccld_unpr3") or 0),
+            "executed_amt": float(o.get("ft_ccld_amt3") or 0),
+        }
+        for o in body.get("output") or []
+        if o.get("pdno") == st_code and o.get("sll_buy_dvsn_cd") == side_cd
+    ]
 
 
 # ============================================================
