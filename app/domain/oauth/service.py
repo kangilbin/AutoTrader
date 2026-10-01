@@ -18,7 +18,6 @@ from app.external.http_client import fetch
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
-GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 GOOGLE_USERINFO_URL = "https://www.googleapis.com/oauth2/v3/userinfo"
 
 
@@ -111,54 +110,10 @@ class OAuthService:
             logger.error(f"OAuth 로그인 실패: {e}", exc_info=True)
             raise DatabaseError("OAuth 로그인에 실패했습니다", operation="oauth_login", original_error=e)
 
-    async def refresh_google_token(self, user_id: str) -> str:
-        """
-        Google access_token 갱신
-        - refresh_token으로 새 access_token 발급
-        - 실패 시 AuthenticationError (재로그인 필요)
-        """
-        user_info = await self.user_repo.find_by_id_with_tokens(user_id)
-        if not user_info or not user_info.get("GOOGLE_REFRESH_TOKEN"):
-            raise AuthenticationError("Google 재로그인이 필요합니다", reason="no_refresh_token")
-
-        try:
-            response = await fetch(
-                method="POST",
-                url=GOOGLE_TOKEN_URL,
-                service_name="Google OAuth",
-                data={
-                    "client_id": settings.GOOGLE_CLIENT_ID,
-                    "client_secret": settings.GOOGLE_CLIENT_SECRET,
-                    "refresh_token": user_info["GOOGLE_REFRESH_TOKEN"],
-                    "grant_type": "refresh_token"
-                }
-            )
-
-            token_data = response["body"]
-            new_access_token = token_data["access_token"]
-            expires_in = token_data.get("expires_in", 3600)
-            expires_at = datetime.now() + timedelta(seconds=expires_in)
-
-            # DB 업데이트
-            await self.user_repo.update_google_tokens(
-                user_id=user_info["USER_ID"],
-                access_token=new_access_token,
-                refresh_token=None,  # refresh_token은 유지
-                expires_at=expires_at
-            )
-            await self.db.commit()
-
-            return new_access_token
-
-        except ExternalServiceError as e:
-            logger.warning(f"Google 토큰 갱신 실패: {e}")
-            raise AuthenticationError("Google 재로그인이 필요합니다", reason="refresh_failed")
-
     async def get_valid_google_token(self, user_id: str) -> str:
         """
         유효한 Google access_token 반환
-        - 만료됐으면 자동 갱신
-        - 갱신 실패 시 AuthenticationError
+        - 만료됐으면 GOOGLE_TOKEN_EXPIRED 에러 (프론트에서 갱신 필요)
         """
         user_info = await self.user_repo.find_by_id_with_tokens(user_id)
         if not user_info:
@@ -169,7 +124,24 @@ class OAuthService:
 
         expires_at = user_info.get("GOOGLE_TOKEN_EXPIRES_AT")
         if expires_at and expires_at <= datetime.now():
-            # 토큰 만료 → 갱신
-            return await self.refresh_google_token(user_id)
+            raise AuthenticationError("Google 토큰이 만료되었습니다", reason="token_expired")
 
         return user_info["GOOGLE_ACCESS_TOKEN"]
+
+    async def update_google_token(
+        self,
+        user_id: str,
+        google_access_token: str,
+        expires_in: int
+    ) -> None:
+        """
+        Google access_token 업데이트 (프론트에서 갱신 후 호출)
+        """
+        expires_at = datetime.now() + timedelta(seconds=expires_in)
+        await self.user_repo.update_google_tokens(
+            user_id=user_id,
+            access_token=google_access_token,
+            refresh_token=None,  # refresh_token은 유지
+            expires_at=expires_at
+        )
+        await self.db.commit()
