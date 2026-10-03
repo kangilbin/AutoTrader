@@ -7,23 +7,14 @@ from datetime import datetime
 import logging
 
 from app.domain.user.repository import UserRepository
-from app.domain.user.entity import User
-from app.domain.user.schemas import UserCreateRequest, UserResponse
-from app.core.security import (
-    hash_password,
-    check_password,
-    create_access_token,
-    create_refresh_token,
-    verify_token,
-)
+from app.domain.user.schemas import UserResponse
+from app.core.security import create_access_token, verify_token
 from app.core.config import get_settings
 from app.exceptions import (
     AuthenticationError,
-    DuplicateError,
     DatabaseError,
 )
 from app.common.redis import get_redis
-from app.common.email import EmailService
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -35,74 +26,6 @@ class UserService:
     def __init__(self, db: AsyncSession):
         self.db = db
         self.repo = UserRepository(db)
-
-    async def create_user(self, request: UserCreateRequest) -> dict:
-        """회원 가입"""
-        try:
-            # 중복 검사
-            if await self.repo.exists(request.USER_ID):
-                raise DuplicateError("사용자", request.USER_ID)
-
-            # 도메인 엔티티 생성 (비즈니스 검증 포함)
-            user = User.create(
-                user_id=request.USER_ID,
-                user_name=request.USER_NAME,
-                phone=request.PHONE,
-                password=hash_password(request.PASSWORD)
-            )
-
-            # 저장
-            db_user = await self.repo.save(user)
-            await self.db.commit()
-
-            # 디바이스 정보가 있으면 관리자에게 이메일 발송
-            if request.DEVICE_ID and request.DEVICE_NAME:
-                try:
-                    EmailService.send_device_registration_notification(
-                        user_id=request.USER_ID,
-                        user_name=request.USER_NAME,
-                        device_id=request.DEVICE_ID,
-                        device_name=request.DEVICE_NAME
-                    )
-                    logger.info(f"디바이스 등록 알림 이메일 발송 완료: {request.USER_ID}")
-                except Exception as e:
-                    # 이메일 발송 실패해도 회원가입은 성공으로 처리
-                    logger.warning(f"이메일 발송 실패 (회원가입은 성공): {e}")
-
-            return UserResponse.model_validate(db_user).model_dump()
-        except SQLAlchemyError as e:
-            await self.db.rollback()
-            logger.error(f"회원 가입 실패: {e}", exc_info=True)
-            raise DatabaseError("회원 가입에 실패했습니다", operation="insert", original_error=e)
-
-    async def login(self, user_id: str, password: str) -> tuple[str, str]:
-        """로그인"""
-        user_info = await self.repo.find_by_id_with_password(user_id)
-
-        if not user_info or not check_password(password, user_info["PASSWORD"]):
-            raise AuthenticationError("잘못된 아이디 또는 비밀번호입니다")
-
-        # 토큰 생성
-        access_token = create_access_token(
-            user_id,
-            user_info={"USER_NAME": user_info["USER_NAME"], "PHONE": user_info["PHONE"]}
-        )
-        refresh_token = create_refresh_token(user_id)
-
-        # Redis에 저장
-        redis = await get_redis()
-        await redis.hset(user_id, mapping={
-            "refresh_token": refresh_token,
-            "USER_NAME": user_info["USER_NAME"],
-            "PHONE": user_info["PHONE"]
-        })
-        await redis.expire(user_id, int(settings.token_refresh_exp.total_seconds()))
-
-        return access_token, refresh_token
-
-    async def check_duplicate(self, user_id: str) -> bool:
-        """ID 중복 검사"""
-        return await self.repo.exists(user_id)
 
     async def refresh_token(self, refresh_token: str) -> str:
         """토큰 갱신"""

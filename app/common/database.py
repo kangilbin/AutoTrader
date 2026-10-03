@@ -31,8 +31,7 @@ class UserModel(Base):
     USER_NAME = Column(String(50), nullable=False, comment='사용자 이름')
     EMAIL = Column(String(100), nullable=True, unique=True, comment='이메일 주소')
     PHONE = Column(CHAR(11), nullable=True, comment='휴대폰 번호 (OAuth 사용자는 나중에 입력)')
-    PASSWORD = Column(String(100), nullable=True, comment='비밀 번호 (OAuth 사용자는 NULL)')
-    GOOGLE_ACCESS_TOKEN = Column(String(2000), nullable=True, comment='Google OAuth access token (Gemini용)')
+GOOGLE_ACCESS_TOKEN = Column(String(2000), nullable=True, comment='Google OAuth access token (Gemini용)')
     GOOGLE_REFRESH_TOKEN = Column(String(500), nullable=True, comment='Google OAuth refresh token')
     GOOGLE_TOKEN_EXPIRES_AT = Column(DateTime, nullable=True, comment='Google access token 만료 시점')
     REG_DT = Column(DateTime, default=datetime.now, nullable=False, comment='등록일')
@@ -157,20 +156,6 @@ class DeviceModel(Base):
     ACTIVE_YN = Column(CHAR(1), default='Y', nullable=False, comment='활성 여부')
     REG_DT = Column(DateTime, default=datetime.now, nullable=False, comment='등록일')
     MOD_DT = Column(DateTime, comment='수정일')
-
-
-class ExternalAPITokenModel(Base):
-    """외부 API 토큰 관리 테이블"""
-    __tablename__ = "EXTERNAL_API_TOKEN"
-
-    TOKEN_ID = Column(Integer, Sequence('external_api_token_id_seq'), primary_key=True, comment='토큰 ID')
-    USER_ID = Column(String(50), nullable=False, comment='사용자 ID')
-    PROVIDER = Column(String(20), nullable=False, default='gemini', comment='API 제공자 (gemini)')
-    API_KEY = Column(String(500), nullable=False, comment='암호화된 API 키 (AES-128-GCM)')
-    TOKEN_NAME = Column(String(50), nullable=True, comment='토큰 별칭')
-    ACTIVE_YN = Column(CHAR(1), default='Y', nullable=False, comment='활성 여부')
-    REG_DT = Column(DateTime, default=datetime.now, nullable=False, comment='등록일')
-    MOD_DT = Column(DateTime, nullable=True, comment='수정일')
 
 
 # ==================== Database Connection ====================

@@ -23,7 +23,6 @@ from app.domain.routers import (
     # device_router,
     oauth_router,
     gemini_router,
-    external_api_router,
     backtest_router,
     health_router,
 )
@@ -100,7 +99,6 @@ app.include_router(swing_router)
 # app.include_router(device_router)
 app.include_router(oauth_router)
 app.include_router(gemini_router)
-app.include_router(external_api_router)
 app.include_router(backtest_router)
 
 

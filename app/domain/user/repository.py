@@ -29,22 +29,6 @@ class UserRepository:
             return None
         return UserResponse.model_validate(db_user).model_dump()
 
-    async def find_by_id_with_password(self, user_id: str) -> Optional[dict]:
-        """사용자 조회 (비밀번호 포함)"""
-        query = select(UserModel).filter(UserModel.USER_ID == user_id)
-        result = await self.db.execute(query)
-        db_user = result.scalars().first()
-        if not db_user:
-            return None
-        return {
-            "USER_ID": db_user.USER_ID,
-            "USER_NAME": db_user.USER_NAME,
-            "PHONE": db_user.PHONE,
-            "PASSWORD": db_user.PASSWORD,
-            "REG_DT": db_user.REG_DT,
-            "MOD_DT": db_user.MOD_DT,
-        }
-
     async def save(self, user: User) -> UserModel:
         """사용자 저장 (flush만 수행)"""
         db_user = UserModel(
@@ -52,7 +36,6 @@ class UserRepository:
             USER_NAME=user.user_name,
             EMAIL=user.email,
             PHONE=user.phone,
-            PASSWORD=user.password,
             GOOGLE_ACCESS_TOKEN=user.google_access_token,
             GOOGLE_REFRESH_TOKEN=user.google_refresh_token,
             GOOGLE_TOKEN_EXPIRES_AT=user.google_token_expires_at
@@ -99,7 +82,6 @@ class UserRepository:
             "USER_NAME": db_user.USER_NAME,
             "EMAIL": db_user.EMAIL,
             "PHONE": db_user.PHONE,
-            "PASSWORD": db_user.PASSWORD,
             "GOOGLE_ACCESS_TOKEN": db_user.GOOGLE_ACCESS_TOKEN,
             "GOOGLE_REFRESH_TOKEN": db_user.GOOGLE_REFRESH_TOKEN,
             "GOOGLE_TOKEN_EXPIRES_AT": db_user.GOOGLE_TOKEN_EXPIRES_AT,
