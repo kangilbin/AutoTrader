@@ -9,6 +9,7 @@ import logging
 
 from app.domain.user.repository import UserRepository
 from app.domain.user.entity import User
+from app.domain.device.repository import DeviceRepository
 from app.core.security import create_access_token, create_refresh_token
 from app.core.config import get_settings
 from app.exceptions import AuthenticationError, DatabaseError, ExternalServiceError
@@ -27,18 +28,23 @@ class OAuthService:
     def __init__(self, db: AsyncSession):
         self.db = db
         self.user_repo = UserRepository(db)
+        self.device_repo = DeviceRepository(db)
 
     async def google_login(
         self,
         google_access_token: str,
         google_refresh_token: Optional[str],
-        expires_in: int
-    ) -> tuple[str, str]:
+        expires_in: int,
+        device_id: str,
+        device_name: str
+    ) -> dict:
         """
-        Google OAuth 로그인
+        Google OAuth 로그인 (디바이스 권한 검증 포함)
+
         1. Google access_token으로 사용자 정보 조회
-        2. 기존 사용자: Google 토큰 업데이트 + 우리 JWT 발급
-        3. 신규 사용자: 계정 생성 + 우리 JWT 발급
+        2. 신규 사용자: 계정 생성 + 디바이스 권한 요청 (ACTIVE_YN='N')
+        3. 기존 사용자 + 디바이스 미승인: 권한 없음 반환
+        4. 기존 사용자 + 디바이스 승인: 로그인 성공 (JWT 발급)
         """
         try:
             # 1. Google API로 사용자 정보 조회
@@ -60,19 +66,8 @@ class OAuthService:
             # 2. 기존 사용자 조회
             user_info = await self.user_repo.find_by_email(email)
 
-            if user_info:
-                # 기존 사용자: Google 토큰 업데이트
-                await self.user_repo.update_google_tokens(
-                    user_id=user_info["USER_ID"],
-                    access_token=google_access_token,
-                    refresh_token=google_refresh_token,
-                    expires_at=expires_at
-                )
-                await self.db.commit()
-                user_id = user_info["USER_ID"]
-                user_name = user_info["USER_NAME"]
-            else:
-                # 신규 사용자: 계정 생성
+            if not user_info:
+                # 신규 사용자: 계정 생성 + 디바이스 권한 요청
                 user_id = await self.user_repo.generate_next_user_id()
                 user = User.create_oauth_user(
                     user_id=user_id,
@@ -83,9 +78,66 @@ class OAuthService:
                     google_token_expires_at=expires_at
                 )
                 await self.user_repo.save(user)
+
+                # 디바이스 등록 (비활성 상태 - 승인 대기)
+                await self.device_repo.save_inactive(
+                    device_id=device_id,
+                    device_name=device_name,
+                    user_id=user_id
+                )
                 await self.db.commit()
 
-            # 3. JWT 토큰 발급
+                logger.info(f"신규 사용자 등록 + 디바이스 권한 요청: {user_id}, {device_id}")
+                return {
+                    "success": True,
+                    "status": "DEVICE_PENDING",
+                    "message": "회원가입이 완료되었습니다. 디바이스 권한을 요청했습니다. 관리자 승인 후 이용 가능합니다."
+                }
+
+            # 기존 사용자: Google 토큰 업데이트
+            user_id = user_info["USER_ID"]
+            user_name = user_info["USER_NAME"]
+
+            await self.user_repo.update_google_tokens(
+                user_id=user_id,
+                access_token=google_access_token,
+                refresh_token=google_refresh_token,
+                expires_at=expires_at
+            )
+
+            # 3. 디바이스 권한 확인
+            device = await self.device_repo.find_by_id(device_id)
+
+            if not device:
+                # 디바이스가 등록되지 않은 경우 - 권한 요청 등록
+                await self.device_repo.save_inactive(
+                    device_id=device_id,
+                    device_name=device_name,
+                    user_id=user_id
+                )
+                await self.db.commit()
+
+                logger.info(f"기존 사용자 새 디바이스 권한 요청: {user_id}, {device_id}")
+                return {
+                    "success": True,
+                    "status": "DEVICE_PENDING",
+                    "message": "디바이스 권한을 요청했습니다. 관리자 승인 후 이용 가능합니다."
+                }
+
+            if device.get("ACTIVE_YN") != "Y":
+                # 디바이스가 등록되어 있지만 미승인 상태
+                await self.db.commit()
+
+                logger.warning(f"디바이스 권한 없음: {user_id}, {device_id}")
+                return {
+                    "success": False,
+                    "status": "DEVICE_DENIED",
+                    "message": "디바이스 권한이 없습니다. 관리자 승인을 기다려주세요."
+                }
+
+            # 4. 디바이스 승인됨 - 로그인 성공
+            await self.db.commit()
+
             access_token = create_access_token(
                 user_id,
                 user_info={"USER_NAME": user_name, "EMAIL": email}
@@ -101,7 +153,16 @@ class OAuthService:
             })
             await redis.expire(user_id, int(settings.token_refresh_exp.total_seconds()))
 
-            return access_token, refresh_token
+            logger.info(f"로그인 성공: {user_id}, {device_id}")
+            return {
+                "success": True,
+                "status": "LOGIN_SUCCESS",
+                "message": "Google 로그인 성공",
+                "data": {
+                    "access_token": access_token,
+                    "refresh_token": refresh_token
+                }
+            }
 
         except ExternalServiceError:
             raise AuthenticationError("Google 토큰이 유효하지 않습니다", reason="invalid_token")

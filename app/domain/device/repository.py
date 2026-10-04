@@ -68,6 +68,19 @@ class DeviceRepository:
         await self.db.refresh(db_device)
         return db_device
 
+    async def save_inactive(self, device_id: str, device_name: str, user_id: str) -> DeviceModel:
+        """디바이스 비활성 상태로 저장 - 승인 대기 (flush만 수행)"""
+        db_device = DeviceModel(
+            DEVICE_ID=device_id,
+            DEVICE_NAME=device_name,
+            USER_ID=user_id,
+            ACTIVE_YN='N'
+        )
+        self.db.add(db_device)
+        await self.db.flush()
+        await self.db.refresh(db_device)
+        return db_device
+
     async def update(self, device_id: str, data: dict) -> Optional[DeviceModel]:
         """디바이스 수정 (flush만 수행)"""
         query = (
