@@ -141,6 +141,7 @@ async def run_backtest(db: AsyncSession, swing_data: SwingCreateRequest) -> dict
         "long_term": long_term,
         "init_amount": init_amount,
         "eval_start": eval_start,
+        "full_entry": swing_data.FULL_ENTRY_YN == 'Y',
     }
 
     backtest_result = await compute_backtest_offloaded(prices_df, params)

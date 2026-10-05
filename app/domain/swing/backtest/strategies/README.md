@@ -67,6 +67,9 @@ Conviction = 0.4 ~ 1.0 (신호 강도에 따라 가변)
 신호가 = EMA20 (저가 ≤ EMA20 ≤ 고가일 때), 범위 밖이면 종가 fallback
 ```
 
+> **전량 매수 모드** (`SWING_TRADE.FULL_ENTRY_YN = 'Y'`): Conviction을 무시하고 `FULL_ENTRY_PCT = 0.99`로 투입한다.
+> 100%가 아닌 이유는 호가·TWAP 후속 체결가가 산정가보다 높을 수 있어서다 (`BaseSingleEMAStrategy.entry_pct`).
+
 #### Conviction Score 계산
 
 OBV z-score(70%)와 ADX(30%)의 가중 평균으로 산출합니다.

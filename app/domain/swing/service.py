@@ -123,6 +123,7 @@ class SwingService:
                 st_code=request.ST_CODE,
                 init_amount=Decimal(request.INIT_AMOUNT),
                 swing_type=request.SWING_TYPE,
+                full_entry_yn=request.FULL_ENTRY_YN,
             )
 
             db_swing = await self.repo.save(swing)

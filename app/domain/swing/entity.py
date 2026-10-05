@@ -27,6 +27,8 @@ class SwingTrade(Base):
     INIT_AMOUNT = Column(DECIMAL(15, 2), nullable=False, comment='초기 투자금')
     CUR_AMOUNT = Column(DECIMAL(15, 2), nullable=False, comment='현재 투자금')
     SWING_TYPE = Column(CHAR(1), nullable=False, comment='스윙 타입 (A: 이평선, B: 일목균형표)')
+    FULL_ENTRY_YN = Column(CHAR(1), nullable=False, default='N', server_default='N',
+                           comment='전량 매수 여부 (Y: 배정금 전량, N: 신호 강도 기반 사이징)')
     SIGNAL = Column(Integer, nullable=False, default=0, comment='매매 신호 상태 (0:대기, 1:보유-익절전, 2:보유-익절후, 3:수급이탈대기, 4:수급재유입대기)')
     ENTRY_PRICE = Column(DECIMAL(15, 2), nullable=True, comment='평균 매수 단가')
     HOLD_QTY = Column(Integer, nullable=True, default=0, comment='보유 수량')
@@ -49,8 +51,14 @@ class SwingTrade(Base):
             raise ValidationError("종목코드는 필수입니다")
         if self.SWING_TYPE not in ('S', 'A', 'B'):
             raise ValidationError("스윙 타입은 [S,A,B]여야 합니다")
+        if self.FULL_ENTRY_YN not in (None, 'Y', 'N'):
+            raise ValidationError("전량 매수 여부는 [Y,N]이어야 합니다")
 
     # ==================== 상태 조회 ====================
+
+    def is_full_entry(self) -> bool:
+        """전량 매수 모드 여부 (conviction 사이징 대신 배정금 전량 투입)"""
+        return self.FULL_ENTRY_YN == 'Y'
 
     def is_waiting(self) -> bool:
         """매수 대기 상태 여부 (SIGNAL 0)"""
@@ -181,7 +189,8 @@ class SwingTrade(Base):
 
     @classmethod
     def create(cls, account_no: str, mrkt_code: str, st_code: str,
-               init_amount: Decimal, swing_type: str) -> "SwingTrade":
+               init_amount: Decimal, swing_type: str,
+               full_entry_yn: str = 'N') -> "SwingTrade":
         """새 스윙 매매 생성"""
         swing = cls(
             ACCOUNT_NO=account_no,
@@ -190,6 +199,7 @@ class SwingTrade(Base):
             INIT_AMOUNT=init_amount,
             CUR_AMOUNT=init_amount,
             SWING_TYPE=swing_type,
+            FULL_ENTRY_YN=full_entry_yn,
         )
         swing.validate()
         return swing

@@ -48,6 +48,18 @@ class BaseSingleEMAStrategy:
     MAX_ENTRY_PCT = 0.8              # 최대 투입 비율 (배정금의 80%)
     MIN_CONVICTION = 0.4             # 최소 확신도 (0.4 = 32% 투입)
 
+    # 전량 매수 모드 (FULL_ENTRY_YN='Y') — conviction 무시, 배정금 거의 전부 투입
+    # 100%가 아닌 이유: 수량은 현재가로 산정하지만 주문은 호가로, TWAP 후속 chunk는 더 높은
+    # 가격에 체결될 수 있다. 버퍼가 없으면 CUR_AMOUNT가 음수가 되거나 같은 계좌 다른 스윙의 예수금을 침범한다.
+    FULL_ENTRY_PCT = 0.99
+
+    @classmethod
+    def entry_pct(cls, full_entry: bool, adx: float, obv_z: float) -> float:
+        """매수 투입 비율 — 전량 모드면 FULL_ENTRY_PCT, 아니면 MAX_ENTRY_PCT × conviction (실전·백테스트 공용)"""
+        if full_entry:
+            return cls.FULL_ENTRY_PCT
+        return cls.MAX_ENTRY_PCT * cls.calc_conviction(adx, obv_z)
+
     # Conviction 가중치
     CONVICTION_OBV_WEIGHT = 0.7      # OBV z-score 가중치 (70%)
     CONVICTION_ADX_WEIGHT = 0.3      # ADX 가중치 (30%)

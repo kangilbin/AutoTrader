@@ -124,15 +124,17 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
                         buy_price = row["STCK_CLPR"]
                     atr = row.get("atr", 0)
 
-                    # Conviction 기반 포지션 사이징
+                    # 포지션 사이징 — 실전과 동일 (전량 모드 or conviction)
                     adx_val = row.get("adx", 0) if pd.notna(row.get("adx", 0)) else 0
                     obv_z_val = row.get("obv_z", 0) if pd.notna(row.get("obv_z", 0)) else 0
-                    conviction = self.calc_conviction(adx_val, obv_z_val)
+                    full_entry = params.get("full_entry", False)
+                    entry_pct = self.entry_pct(full_entry, adx_val, obv_z_val)
 
-                    buy_quantity = int(current_capital * self.MAX_ENTRY_PCT * conviction / buy_price)
+                    buy_quantity = int(current_capital * entry_pct / buy_price)
 
                     if buy_quantity > 0:
-                        reasons = ["매수"] + signal_reasons + [f"conviction={conviction:.2f}"]
+                        sizing_reason = "전량 매수" if full_entry else f"conviction={entry_pct / self.MAX_ENTRY_PCT:.2f}"
+                        reasons = ["매수"] + signal_reasons + [sizing_reason]
                         current_capital = self._execute_buy(trades, current_date, buy_price, buy_quantity, current_capital, reasons)
                         signal = 1
                         peak_price = buy_price

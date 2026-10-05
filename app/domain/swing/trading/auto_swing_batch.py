@@ -636,17 +636,18 @@ async def _handle_waiting(
         logger.warning(f"[{st_code}] USER_ID 없음, 주문 실행 불가")
         return
 
-    # Conviction 기반 포지션 사이징
+    # 포지션 사이징 — 전량 모드면 배정금 전량(버퍼 제외), 아니면 conviction 기반
     realtime_adx = cached_indicators.get('realtime_adx', 0)
     realtime_obv_z = cached_indicators.get('realtime_obv_z', 0)
     equity = float(swing.CUR_AMOUNT)
     curr_price = float(current_price)
 
-    conviction = strategy.calc_conviction(realtime_adx, realtime_obv_z)
-    target_qty = int(equity * strategy.MAX_ENTRY_PCT * conviction / curr_price) if curr_price > 0 else 0
+    full_entry = swing.is_full_entry()
+    entry_pct = strategy.entry_pct(full_entry, realtime_adx, realtime_obv_z)
+    target_qty = int(equity * entry_pct / curr_price) if curr_price > 0 else 0
 
-    logger.info(f"[{st_code}] 포지션 사이징: conviction={conviction:.2f}, "
-                f"투입비={strategy.MAX_ENTRY_PCT * conviction:.1%}, 수량={target_qty}")
+    logger.info(f"[{st_code}] 포지션 사이징: 모드={'전량' if full_entry else 'conviction'}, "
+                f"투입비={entry_pct:.1%}, 수량={target_qty}")
 
     target_amount = Decimal(str(target_qty)) * current_price if target_qty > 0 else Decimal(0)
 

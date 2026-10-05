@@ -3,7 +3,7 @@ Swing DTO (Data Transfer Object)
 """
 from datetime import datetime
 from pydantic import BaseModel
-from typing import Optional
+from typing import Literal, Optional
 from decimal import Decimal
 
 
@@ -14,6 +14,7 @@ class SwingCreateRequest(BaseModel):
     ACCOUNT_NO: str
     INIT_AMOUNT: int
     SWING_TYPE: str  # 'A': 이평선, 'B': 일목균형표
+    FULL_ENTRY_YN: Literal['Y', 'N'] = 'N'  # 'Y': 배정금 전량 매수, 'N': 신호 강도 기반 사이징
     # EMA 옵션 (SWING_TYPE이 'A'인 경우)
     SHORT_TERM: Optional[int] = 5
     MEDIUM_TERM: Optional[int] = 20
@@ -25,6 +26,7 @@ class SwingUpdateRequest(BaseModel):
     USE_YN: Optional[str] = None
     INIT_AMOUNT: Optional[int] = None
     SWING_TYPE: Optional[str] = None
+    FULL_ENTRY_YN: Optional[Literal['Y', 'N']] = None
 
 
 class SwingResponse(BaseModel):
@@ -40,6 +42,7 @@ class SwingResponse(BaseModel):
     ENTRY_PRICE: Optional[Decimal] = None
     HOLD_QTY: Optional[int] = None
     SWING_TYPE: Optional[str] = None
+    FULL_ENTRY_YN: Optional[str] = None
     SIGNAL: Optional[int] = None
     REG_DT: Optional[datetime] = None
     MOD_DT: Optional[datetime] = None
