@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import SQLAlchemyError
 from datetime import datetime, timedelta
 from typing import Optional
+import asyncio
 import logging
 
 from app.domain.user.repository import UserRepository
@@ -14,6 +15,7 @@ from app.core.security import create_access_token, create_refresh_token
 from app.core.config import get_settings
 from app.exceptions import AuthenticationError, DatabaseError, ExternalServiceError
 from app.common.redis import get_redis
+from app.common.email import EmailService
 from app.external.http_client import fetch
 
 logger = logging.getLogger(__name__)
@@ -87,6 +89,13 @@ class OAuthService:
                 )
                 await self.db.commit()
 
+                # 관리자에게 이메일 알림 (비동기로 처리, 실패해도 무시)
+                asyncio.get_event_loop().run_in_executor(
+                    None,
+                    EmailService.send_device_registration_notification,
+                    user_id, user_name, device_id, device_name
+                )
+
                 logger.info(f"신규 사용자 등록 + 디바이스 권한 요청: {user_id}, {device_id}")
                 return {
                     "success": True,
@@ -116,6 +125,13 @@ class OAuthService:
                     user_id=user_id
                 )
                 await self.db.commit()
+
+                # 관리자에게 이메일 알림 (비동기로 처리, 실패해도 무시)
+                asyncio.get_event_loop().run_in_executor(
+                    None,
+                    EmailService.send_device_registration_notification,
+                    user_id, user_name, device_id, device_name
+                )
 
                 logger.info(f"기존 사용자 새 디바이스 권한 요청: {user_id}, {device_id}")
                 return {
