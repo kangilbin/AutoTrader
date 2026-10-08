@@ -12,7 +12,7 @@ from app.domain.auth.service import AuthService
 from app.domain.auth.schemas import AuthCreateRequest, AuthChoiceRequest
 from app.external.kis_api import oauth_token
 
-router = APIRouter(prefix="/auth", tags=["Auth"])
+router = APIRouter(prefix="/auths", tags=["Auth"])
 
 
 def get_auth_service(db: AsyncSession = Depends(get_db)) -> AuthService:
