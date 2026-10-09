@@ -73,7 +73,7 @@ class SwingService:
                 logger.info(f"[{request.MRKT_CODE}/{request.ST_CODE}] 데이터 적재 백그라운드 태스크 시작")
 
             # 등록된 종목의 지표 캐싱
-            await self.cache_single_indicators(request.ST_CODE)
+            await self.cache_single_indicators(request.MRKT_CODE, request.ST_CODE)
 
             return SwingResponse.model_validate(db_swing).model_dump()
 
@@ -215,17 +215,17 @@ class SwingService:
         """포지션 보유 중인 스윙 목록 조회 (SIGNAL 1 or 2)"""
         return await self.repo.find_holding_swings()
 
-    async def cache_single_indicators(self, st_code: str) -> bool:
+    async def cache_single_indicators(self, mrkt_code: str, st_code: str) -> bool:
         """
         단일 종목 지표 캐싱 (스윙 등록 시 호출)
 
         Args:
+            mrkt_code: 시장 코드
             st_code: 종목 코드
 
         Returns:
             캐싱 성공 여부
         """
-
 
         try:
             stock_service = StockService(self.db)
@@ -233,7 +233,7 @@ class SwingService:
 
             # 과거 3년 데이터 조회
             start_date = datetime.now() - relativedelta(years=3)
-            price_history = await stock_service.get_stock_history(st_code, start_date)
+            price_history = await stock_service.get_stock_history(mrkt_code, st_code, start_date)
 
             if not price_history or len(price_history) < 20:
                 logger.warning(
@@ -343,11 +343,11 @@ class SwingService:
                 return {"success": 0, "fail": 0, "total": 0}
 
             # 2. 각 종목별 지표 계산 및 캐싱
-            for st_code in active_codes:
+            for mrkt_code, st_code in active_codes:
                 try:
                     # 과거 3년 데이터 조회
-                    start_date = datetime.now() - relativedelta(year=3)
-                    price_history = await stock_service.get_stock_history(st_code, start_date)
+                    start_date = datetime.now() - relativedelta(years=3)
+                    price_history = await stock_service.get_stock_history(mrkt_code, st_code, start_date)
 
                     if not price_history or len(price_history) < 20:
                         logger.warning(

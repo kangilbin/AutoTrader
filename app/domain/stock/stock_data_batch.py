@@ -47,7 +47,7 @@ async def fetch_and_store_3_years_data(user_id: str, mrkt_code: str, st_code: st
             date_ranges.append((current_date, next_date))
             current_date = next_date
 
-        logger.info(f"Created {len(date_ranges)} date ranges for {code}")
+        logger.info(f"Created {len(date_ranges)} date ranges for {st_code}")
 
         # 동시 실행 제한 세마포어
         semaphore = asyncio.Semaphore(3)
