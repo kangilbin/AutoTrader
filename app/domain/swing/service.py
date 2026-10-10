@@ -487,7 +487,10 @@ class SwingService:
                 swing_list = await self.repo.find_all_by_account_no(account_no, mrkt_code)
 
             # 2. 스윙 리스트 기준 머지 — 스윙 1행 = 결과 1건
+            #    요약의 원금·종합 수익은 행 값의 합이다 (목록 손익 합 = 상단 종합 수익)
             results = []
+            principal_sum = Decimal(0)
+            profit_sum = Decimal(0)
             for swing in swing_list:
                 buy_item = buy_dict.get(swing["ST_CODE"])
                 if buy_item is None:
@@ -496,6 +499,8 @@ class SwingService:
                         init_amount = swing["INIT_AMOUNT"]
                         rate = float((swing["CUR_AMOUNT"] - init_amount) / init_amount * 100)
                         pfls_amt = _to_amount(swing["CUR_AMOUNT"] - init_amount)
+                        principal_sum += init_amount
+                        profit_sum += swing["CUR_AMOUNT"] - init_amount  # 매도 완료분 — 손절이면 음수
                     else:
                         rate = 0.0
                         pfls_amt = 0.0 if overseas else 0
@@ -514,10 +519,15 @@ class SwingService:
                     total_asset = swing["CUR_AMOUNT"] + evlu_amt_dec
                     rate = float((total_asset - init_amount) / init_amount * 100) if init_amount else 0.0
                     pfls_amt = _to_amount(total_asset - init_amount)
+                    principal_sum += init_amount
+                    profit_sum += total_asset - init_amount
                 else:
                     # INIT_AMOUNT = 0: KIS API 값 사용 (외부 매수 자동 등록 종목)
                     rate = float(buy_item.get("evlu_pfls_rt", 0) or 0)
                     pfls_amt = _to_amount(buy_item.get("evlu_pfls_amt", 0))
+                    # 행 수익률이 KIS 값(평가손익 ÷ 매입금액)이라 원금도 매입금액으로 맞춘다
+                    principal_sum += _to_decimal(buy_item.get("pchs_amt", 0))
+                    profit_sum += _to_decimal(buy_item.get("evlu_pfls_amt", 0))
 
                 results.append({
                     **swing,
@@ -533,16 +543,25 @@ class SwingService:
 
             # output2에서 계좌 요약 정보 매핑
             total_eval = _to_amount(output2.get("tot_evlu_amt", 0))  # 현재 총평가금(현금 포함)
-            evlu_pfls = _to_amount(output2.get("evlu_pfls_smtl_amt", 0))
-            # 투자전 원금 = 총평가금 - 평가손익. 현금은 손익이 0이라 상쇄되므로 현금 포함 총원금이 됨
-            principal = total_eval - evlu_pfls
-            profit_rate = round(evlu_pfls / principal * 100, 2) if principal else 0.0
+            unrealized = _to_decimal(output2.get("evlu_pfls_smtl_amt", 0))  # 보유종목 평가손익
+            # 매입금액 = 보유종목 매입금액 합계 (국내·해외 모두 output1 pchs_amt)
+            purchase = sum((_to_decimal(i.get("pchs_amt")) for i in buy_list), Decimal(0))
 
+            def _rate(profit: Decimal, base: Decimal) -> float:
+                return round(float(profit / base * 100), 2) if base else 0.0
+
+            # 보유 기준: 평가손익 ÷ 매입금액 (현금을 분모에 넣으면 예수금이 클수록 0에 수렴)
+            # 누적 기준: 행 손익 합 ÷ 초기 투자금 합. CUR_AMOUNT가 매도대금을 반영하므로
+            #   손절 손실이 남고, 원금(INIT_AMOUNT)은 손절해도 줄지 않는다.
+            #   (예수금 + 매입금액을 원금으로 쓰면 손절 시 원금도 같이 줄어 손실이 숨는다)
             summary = {
                 "TOTAL_INVESTMENT_AMOUNT": total_eval,
-                "TOTAL_PRINCIPAL": principal,
-                "TOTAL_PROFIT": evlu_pfls,
-                "TOTAL_PROFIT_RATE": profit_rate,
+                "TOTAL_PURCHASE_AMOUNT": _to_amount(purchase),
+                "UNREALIZED_PROFIT": _to_amount(unrealized),
+                "UNREALIZED_PROFIT_RATE": _rate(unrealized, purchase),
+                "TOTAL_PRINCIPAL": _to_amount(principal_sum),
+                "TOTAL_PROFIT": _to_amount(profit_sum),
+                "TOTAL_PROFIT_RATE": _rate(profit_sum, principal_sum),
                 "CASH_ASSET": _to_amount(output2.get("dnca_tot_amt", 0)) if cash_supported else None,
             }
 
