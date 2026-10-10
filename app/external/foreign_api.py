@@ -5,6 +5,7 @@ KIS (한국투자증권) API 해외 주식 통합 모듈
 import asyncio
 import logging
 from datetime import datetime, timedelta
+from decimal import Decimal, InvalidOperation
 from typing import List, Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -34,7 +35,7 @@ async def get_stock_balance(
 
     실시간 보유 수량/매입금액/평가손익은 본 API를 사용한다.
     output2에는 외화 예수금이 없으므로, USD 현금/주문가능금액은
-    `get_foreign_margin`(해외증거금 통화별조회)에서 별도로 가져온다.
+    `get_present_balance`(체결기준현재잔고)에서 별도로 가져온다.
     """
     user_data, access_data = await _get_user_auth(user_id, db, account_no)
 
@@ -95,58 +96,68 @@ async def get_stock_balance(
     return {"output1": output1, "output2": output2}
 
 
-async def get_foreign_margin(
-    user_id: str, db: AsyncSession, crcy_cd: str = "USD",
-    account_no: str = None, natn_name: str = "미국",
+async def get_present_balance(
+    user_id: str, db: AsyncSession, crcy_cd: str = "USD", account_no: str = None,
 ):
-    """해외증거금 통화별조회 (TTTC2101R)
+    """해외주식 체결기준현재잔고 (CTRP6504R / 모의 VTRP6504R) — 외화 예수금 조회
 
-    통화별 외화예수금을 제공한다. 가용자본과 현금 표시 모두 외화예수금(dnca_amt) 기준이다.
+    가용자본과 현금 표시 모두 외화예수금 기준이다.
     - 가용자본 산출(get_available_capital): 국내(dnca_tot_amt 예수금총금액)와 같은 예수금 기준.
       스윙 배정은 예산 분할이지 주문이 아니므로 수수료 예비분을 뺀 주문가능금액을 쓰지 않는다.
-      (외화주문가능금액 frcr_ord_psbl_amt1은 실전 계좌에서 예수금이 있어도 0으로 내려와
-       가용자본이 0으로 표시되던 원인이었다.)
-    - 현금 자산 표시(mapping_swing): 외화예수금(dnca_amt)
+      (해외증거금 API의 외화주문가능금액은 실전 계좌에서 예수금이 있어도 0으로 내려왔다.)
+    - 현금 자산 표시(mapping_swing): 외화예수금
 
-    ⚠️ KIS 명세상 모의투자 미지원. 모의 계정은 외화예수금/주문가능금액 소스가
-    없으므로 None을 반환하며, 호출부는 가용자본/현금을 '미지원'으로 처리한다.
+    실전/모의 소스가 다르다 (2026-10 실측):
+    - 실전: output2 통화별 행의 frcr_dncl_amt_2 (외화 원본 값, 예: 400.000000)
+    - 모의: output2 금액이 전부 0이고 output3만 유효 → frcr_evlu_tota(외화 현금의 원화 환산)
+      ÷ 해당 통화 환율. 실전에서 535680 ÷ 1339.2 = 400 으로 해석을 검증했다.
+      frcr_evlu_tota는 전 외화 합계라 USD 외 외화가 있으면 섞인다 (모의는 USD만 사용).
+    ⚠️ output3의 dncl_amt는 실전/모의 모두 0, tot_dncl_amt·tot_asst_amt는 원화 현금이 섞인다.
 
     Returns:
-        실전: 지정 통화(기본 USD) 1건을 정규화한 dict (값은 문자열, KIS 원형 유지)
-        모의: None
+        {"dnca_amt": 외화예수금, "exrt": 환율} (값은 문자열)
+        모의에서 환율이 없어 환산할 수 없으면 None — 호출부는 현금을 '미지원'으로 처리한다.
     """
     user_data, access_data = await _get_user_auth(user_id, db, account_no)
+    sim = access_data.get("simulation_yn") == "Y"
 
-    # 모의투자는 본 API(TTTC2101R) 미지원 — 현금/주문가능 소스 없음
-    if access_data.get("simulation_yn") == "Y":
-        return None
+    path = "uapi/overseas-stock/v1/trading/inquire-present-balance"
+    api_url = f"{settings.DEV_API_URL if sim else settings.REAL_API_URL}/{path}"
 
-    path = "uapi/overseas-stock/v1/trading/foreign-margin"
-    api_url = f"{settings.REAL_API_URL}/{path}"
-
-    tr_id = "TTTC2101R"
+    tr_id = "VTRP6504R" if sim else "CTRP6504R"
 
     headers = kis_headers(access_data, tr_id=tr_id)
     query = {
         "CANO": user_data.get("ACCOUNT_NO")[:8],
         "ACNT_PRDT_CD": user_data.get("ACCOUNT_NO")[-2:],
+        "WCRC_FRCR_DVSN_CD": "01",  # 01: 원화, 02: 외화
+        "NATN_CD": "840",           # 미국
+        "TR_MKET_CD": "00",         # 전체
+        "INQR_DVSN_CD": "00",       # 전체
     }
     response = await kis_fetch("GET", api_url, access_data, params=query, headers=headers)
     body = response["body"]
 
-    # output은 국가별 행 array — 같은 USD라도 미국/중국/영국… 행이 따로 오고
-    # 주문가능금액이 국가마다 다르다. 거래 국가(미국) 행을 명시적으로 고르고,
-    # 없으면 첫 통화 행으로 폴백한다 (응답 순서에 의존하지 않기 위함).
-    currency_rows = [row for row in (body.get("output") or []) if row.get("crcy_cd") == crcy_cd]
-    currency_row = next(
-        (row for row in currency_rows if row.get("natn_name") == natn_name),
-        currency_rows[0] if currency_rows else {},
-    )
+    output2 = body.get("output2") or []
+    if isinstance(output2, dict):  # 단건이 dict로 오는 경우 대비
+        output2 = [output2]
+    currency_row = next((row for row in output2 if row.get("crcy_cd") == crcy_cd), {})
+    exrt = currency_row.get("frst_bltn_exrt", "0")
 
-    return {
-        "dnca_amt": currency_row.get("frcr_dncl_amt1", "0"),  # 외화예수금 → 가용자본 산출 + 현금 표시
-        "exrt": currency_row.get("bass_exrt", "0"),           # 기준환율
-    }
+    if not sim:
+        # 외화 행이 없으면 해당 통화 예수금이 없는 것 → 0
+        return {"dnca_amt": currency_row.get("frcr_dncl_amt_2", "0"), "exrt": exrt}
+
+    try:
+        rate = Decimal(str(exrt or 0))
+        frcr_krw = Decimal(str((body.get("output3") or {}).get("frcr_evlu_tota") or 0))
+    except InvalidOperation:
+        rate = Decimal(0)
+    if rate <= 0:
+        logger.warning(f"모의 해외 예수금 환산 불가 (환율={exrt!r}) → 현금 미지원 처리")
+        return None
+
+    return {"dnca_amt": str((frcr_krw / rate).quantize(Decimal("0.01"))), "exrt": exrt}
 
 
 async def get_us_holdings(user_id: str, db: AsyncSession, account_no: str = None):
@@ -158,7 +169,7 @@ async def get_us_holdings(user_id: str, db: AsyncSession, account_no: str = None
          (예: NYSE 상장 CRCL이 NASD·NYSE 양쪽 응답에 등장). pdno 기준으로 중복을 제거한다.
          중복을 두면 mapping_swing 목록에 같은 종목이 두 번 나오고 평가합계도 이중 계산된다.
 
-    소비처(mapping_swing)는 output1만 사용(평가합계 재계산, 현금은 해외증거금 별도)하므로
+    소비처(mapping_swing)는 output1만 사용(평가합계 재계산, 현금은 get_present_balance 별도)하므로
     output2는 빈 dict로 반환한다.
     """
     _, access_data = await _get_user_auth(user_id, db, account_no)
