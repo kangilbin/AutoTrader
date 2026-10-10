@@ -11,7 +11,7 @@ from typing import List, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
-from app.core.market_code import to_ovrs_excg_cd, US_TRADE_EXCG
+from app.core.market_code import to_ovrs_excg_cd
 from app.core.order import Order, ModifyOrder, same_order_no
 from app.exceptions import ExternalServiceError
 from app.external.headers import kis_headers
@@ -161,34 +161,16 @@ async def get_present_balance(
 
 
 async def get_us_holdings(user_id: str, db: AsyncSession, account_no: str = None):
-    """미국 전 거래소 보유종목 조회 (output1 병합)
+    """미국 전 거래소 보유종목 조회 — OVRS_EXCG_CD="NASD"(미국전체) 1회 호출 (실전·모의 공통)
 
-    - 실전: OVRS_EXCG_CD="NASD"(미국전체) 1회 호출
-    - 모의: 미국전체 미지원 → NASD/NYSE/AMEX 순회 후 output1 병합
-      ⚠️ 모의 NASD 조회는 거래소 필터를 무시하고 NYSE 종목까지 돌려준다
-         (예: NYSE 상장 CRCL이 NASD·NYSE 양쪽 응답에 등장). pdno 기준으로 중복을 제거한다.
-         중복을 두면 mapping_swing 목록에 같은 종목이 두 번 나오고 평가합계도 이중 계산된다.
+    KIS 명세상 모의는 거래소별(NASD/NYSE/AMEX) 조회지만, 실측상 모의 NASD 조회도
+    NYSE 종목(CRCL, S)을 함께 돌려줘 실전처럼 1회로 조회한다 (예전엔 3회 순회 + pdno 중복 제거).
+    ⚠️ 모의 NASD 조회에 AMEX 종목이 포함되는지는 미확인. 빠진다면 모의에서 AMEX 스윙이
+       실보유 0주로 판정된다 (fetch_broker_position → 배치 실보유 대조).
 
-    소비처(mapping_swing)는 output1만 사용(평가합계 재계산, 현금은 get_present_balance 별도)하므로
-    output2는 빈 dict로 반환한다.
+    소비처는 output1만 사용한다 (평가합계 재계산, 현금은 get_present_balance 별도).
     """
-    _, access_data = await _get_user_auth(user_id, db, account_no)
-    sim = access_data.get("simulation_yn") == "Y"
-
-    if not sim:
-        return await get_stock_balance(user_id, db, excg_cd="NASD", account_no=account_no)  # 미국전체 1회
-
-    merged: dict = {}
-    for i, excg in enumerate(US_TRADE_EXCG):  # ("NASD", "NYSE", "AMEX")
-        if i > 0:
-            await asyncio.sleep(0.3)  # 호출 사이 간격 — KIS 초당 거래건수 제한 회피
-        r = await get_stock_balance(user_id, db, excg_cd=excg, account_no=account_no)
-        for it in r["output1"]:
-            # 응답에 거래소코드가 없으면 조회한 거래소로 보정 (종목별 시장 구분 보존)
-            if not it.get("ovrs_excg_cd"):
-                it["ovrs_excg_cd"] = excg
-            merged.setdefault(it.get("pdno"), it)  # 먼저 나온 행 유지 (응답의 ovrs_excg_cd는 실제 거래소)
-    return {"output1": list(merged.values()), "output2": {}}
+    return await get_stock_balance(user_id, db, excg_cd="NASD", account_no=account_no)
 
 
 # ============================================================

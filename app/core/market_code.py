@@ -17,9 +17,6 @@ _EXCG_TRADE = {"NYS": "NYSE", "NAS": "NASD", "AMS": "AMEX"}
 # 역매핑: KIS 거래소코드(잔고 응답 등) → 정식코드
 _EXCG_TRADE_REVERSE = {v: k for k, v in _EXCG_TRADE.items()}
 
-# 모의투자 잔고: 미국전체(NASD) 미지원 → 거래소별 순회 대상
-US_TRADE_EXCG = ("NASD", "NYSE", "AMEX")
-
 
 def is_overseas(mrkt_code: str) -> bool:
     """미국장(해외) 여부. 거래소 정식코드(NYS/NAS/AMS)와 글로벌 그룹값('US') 모두 해외로 인식"""
