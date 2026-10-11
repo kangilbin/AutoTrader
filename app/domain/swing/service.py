@@ -487,7 +487,7 @@ class SwingService:
                 swing_list = await self.repo.find_all_by_account_no(account_no, mrkt_code)
 
             # 2. 스윙 리스트 기준 머지 — 스윙 1행 = 결과 1건
-            #    요약의 원금·종합 수익은 행 값의 합이다 (목록 손익 합 = 상단 종합 수익)
+            #    요약의 배정금·종합 수익은 행 값의 합이다 (목록 손익 합 = 상단 종합 수익)
             results = []
             principal_sum = Decimal(0)
             profit_sum = Decimal(0)
@@ -551,15 +551,19 @@ class SwingService:
                 return round(float(profit / base * 100), 2) if base else 0.0
 
             # 보유 기준: 평가손익 ÷ 매입금액 (현금을 분모에 넣으면 예수금이 클수록 0에 수렴)
-            # 누적 기준: 행 손익 합 ÷ 초기 투자금 합. CUR_AMOUNT가 매도대금을 반영하므로
-            #   손절 손실이 남고, 원금(INIT_AMOUNT)은 손절해도 줄지 않는다.
+            # 누적 기준: 행 손익 합 ÷ 배정금(INIT_AMOUNT) 합. CUR_AMOUNT가 매도대금을 반영하므로
+            #   손절 손실이 남고, 배정금은 손절해도 줄지 않는다.
             #   (예수금 + 매입금액을 원금으로 쓰면 손절 시 원금도 같이 줄어 손실이 숨는다)
+            #   분모를 실제 매수금액으로 하지 않는 이유: 자금이 재투자될 때마다 누적 매수금액이
+            #   부풀어 회전율이 높을수록 수익률이 낮게 나온다. 배정금은 가용자본에서 묶이는 돈이다.
+            #   누적 평가금액 = 배정금 + 종합 수익 = Σ(잔여 현금 + 보유 평가금액)
             summary = {
                 "TOTAL_INVESTMENT_AMOUNT": total_eval,
                 "TOTAL_PURCHASE_AMOUNT": _to_amount(purchase),
                 "UNREALIZED_PROFIT": _to_amount(unrealized),
                 "UNREALIZED_PROFIT_RATE": _rate(unrealized, purchase),
                 "TOTAL_PRINCIPAL": _to_amount(principal_sum),
+                "TOTAL_VALUE": _to_amount(principal_sum + profit_sum),
                 "TOTAL_PROFIT": _to_amount(profit_sum),
                 "TOTAL_PROFIT_RATE": _rate(profit_sum, principal_sum),
                 "CASH_ASSET": _to_amount(output2.get("dnca_tot_amt", 0)) if cash_supported else None,
