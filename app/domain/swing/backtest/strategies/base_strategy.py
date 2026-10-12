@@ -76,7 +76,7 @@ class BacktestStrategy(ABC):
 
         return {
             "strategy_name": self.name,
-            "start_date": str(prices_df["STCK_BSOP_DATE"].min()),
+            "start_date": params["eval_start"].strftime("%Y%m%d"),
             "end_date": str(prices_df["STCK_BSOP_DATE"].max()),
             "initial_capital": initial_capital,
             "final_capital": final_capital,

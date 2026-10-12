@@ -17,6 +17,7 @@ from app.domain.stock.service import StockService
 from app.domain.stock.stock_data_batch import fetch_and_store_3_years_data
 from app.exceptions import DatabaseError, NotFoundError, DuplicateError
 from app.external.kis_api import get_stock_balance
+from app.common.database import Database
 from app.common.redis import Redis
 import logging
 import json
@@ -66,14 +67,11 @@ class SwingService:
             stock_service = StockService(self.db)
             stock_info = await stock_service.get_stock_info(request.MRKT_CODE, request.ST_CODE)
 
-            if stock_info.get("DATA_YN") == 'N':
+            if stock_info.get("DATA_YN") != 'Y':
                 asyncio.create_task(
-                    fetch_and_store_3_years_data(user_id, request.MRKT_CODE, request.ST_CODE, stock_info)
+                    self._fetch_and_cache(user_id, request.MRKT_CODE, request.ST_CODE, stock_info)
                 )
-                logger.info(f"[{request.MRKT_CODE}/{request.ST_CODE}] 데이터 적재 백그라운드 태스크 시작")
-
-            # 등록된 종목의 지표 캐싱
-            await self.cache_single_indicators(request.MRKT_CODE, request.ST_CODE)
+                logger.info(f"[{request.MRKT_CODE}/{request.ST_CODE}] 데이터 적재 + 캐싱 백그라운드 태스크 시작")
 
             return SwingResponse.model_validate(db_swing).model_dump()
 
@@ -85,6 +83,18 @@ class SwingService:
             await self.db.rollback()
             logger.error(f"스윙 등록 실패: {e}", exc_info=True)
             raise DatabaseError("스윙 등록에 실패했습니다")
+
+    @staticmethod
+    async def _fetch_and_cache(user_id: str, mrkt_code: str, st_code: str, stock_info: dict):
+        """데이터 적재 후 지표 캐싱 (백그라운드 태스크용)"""
+        await fetch_and_store_3_years_data(user_id, mrkt_code, st_code, stock_info)
+
+        db = await Database.get_session()
+        try:
+            service = SwingService(db)
+            await service.cache_single_indicators(mrkt_code, st_code)
+        finally:
+            await db.close()
 
     async def get_swing(self, swing_id: int) -> dict:
         """스윙 조회"""
