@@ -145,9 +145,16 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
         if pd.notna(row["ema_20"]) and pd.notna(row["atr"]):
             ema_stop_loss = row["ema_20"] - (row["atr"] * self.ATR_MULTIPLIER)
             if low_price <= ema_stop_loss:
-                return True, "EMA-ATR손절", ema_stop_loss
+                return True, "추세 이탈 손절", ema_stop_loss
 
         return False, "", 0.0
+
+    # 신호 한글 매핑
+    SIGNAL_LABELS = {
+        'ema_breach': '20EMA 이탈',
+        'trend_weak': '추세 약화(ADX/DMI)',
+        'supply_weak': '거래량 감소(OBV)',
+    }
 
     def _update_and_check_eod_sell_signals(self, row, prev_row, current_date, eod_signal_dates, position_status) -> Tuple[Optional[str], str]:
         """[2차 방어선] EOD 매도 조건 교차 검증"""
@@ -165,13 +172,15 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
                     valid_signals.append(signal)
                 else:
                     eod_signal_dates[signal] = None  # 3일 지난 신호 삭제
-        
+
+        signal_labels = [self.SIGNAL_LABELS.get(s, s) for s in valid_signals]
+
         # 매도 결정
         if position_status == 'SELL_PRIMARY' and len(valid_signals) >= 3:
-            return "SELL_ALL", f"2차매도(모든 EOD 신호 충족: {valid_signals})"
-        
+            return "SELL_ALL", f"2차 전량매도(충족: {', '.join(signal_labels)})"
+
         if position_status == 'BUY_COMPLETE' and len(valid_signals) >= 2:
-            return "SELL_PRIMARY", f"1차매도({len(valid_signals)}/3 충족: {valid_signals})"
+            return "SELL_PRIMARY", f"1차 분할매도({len(valid_signals)}/3 충족: {', '.join(signal_labels)})"
 
         return None, ""
 

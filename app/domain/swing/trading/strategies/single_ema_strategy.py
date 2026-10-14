@@ -424,7 +424,7 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
                             return {
                                 'action': 'BUY',
                                 'price': curr_price,
-                                'reasons': ["2차 매수"]
+                                'reasons': ["2차 매수", "추세 강화"]
                             }
 
             # === 시나리오 B: 눌림목 반등 ===
@@ -457,7 +457,7 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
                                     return {
                                         'action': 'BUY',
                                         'price': curr_price,
-                                        'reasons': ["2차 매수"]
+                                        'reasons': ["2차 매수", "눌림목 반등"]
                                     }
                             else:
                                 # 최초 저가 기록
