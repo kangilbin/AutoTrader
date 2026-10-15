@@ -413,10 +413,10 @@ class SwingService:
                         "atr": atr,
                         "obv": float(yesterday['obv']),
                         "obv_z": float(yesterday['obv_z']),
-                        "obv_recent_diffs": recent_6_diffs,
-                        "close": yesterday['STCK_CLPR'],
-                        "high": yesterday['STCK_HGPR'],  # 어제 고가
-                        "low": yesterday['STCK_LWPR'],   # 어제 저가
+                        "obv_recent_diffs": [float(x) for x in recent_6_diffs],
+                        "close": float(yesterday['STCK_CLPR']),
+                        "high": float(yesterday['STCK_HGPR']),  # 어제 고가
+                        "low": float(yesterday['STCK_LWPR']),   # 어제 저가
                         "date": yesterday['STCK_BSOP_DATE']
                     }
 

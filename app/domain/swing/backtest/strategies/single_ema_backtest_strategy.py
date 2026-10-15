@@ -109,11 +109,13 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
                 buy_amount = 0  # 초기화
 
                 if position_status is None:
-                    if self._check_entry_conditions(row):
+                    matched, signal_reason = self._check_entry_conditions(row)
+                    if matched:
                        is_entry = True
                        buy_amount = current_capital * buy_ratio
                 else: # 2차 매수
-                    if self._check_second_buy_conditions(row):
+                    matched, signal_reason = self._check_second_buy_conditions(row)
+                    if matched:
                         is_entry = True
                         buy_amount = current_capital
 
@@ -122,7 +124,8 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
                     buy_quantity = int(buy_amount / buy_price)
 
                     if buy_quantity > 0:
-                        current_capital = self._execute_buy(trades, current_date, buy_price, buy_quantity, current_capital, f"{buy_count+1}차 매수")
+                        reason = f"{buy_count+1}차 매수({signal_reason})"
+                        current_capital = self._execute_buy(trades, current_date, buy_price, buy_quantity, current_capital, reason)
                         buy_count += 1
                         position_status = 'BUY_COMPLETE'
                         # 매수 시 모든 매도 신호 리셋
@@ -195,29 +198,31 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
             obv_lookback=self.OBV_LOOKBACK
         )
 
-    def _check_entry_conditions(self, row: pd.Series) -> bool:
+    def _check_entry_conditions(self, row: pd.Series) -> Tuple[bool, str]:
         if any(pd.isna(row[col]) for col in ["ema_20", "obv_z", "gap_ratio", "plus_di", "minus_di", "daily_return"]):
-            return False
+            return False, ""
 
         # 하락장 필터: 20 EMA < 120 EMA 시 매수 금지
         if self._is_bearish_market(row):
-            return False
+            return False, ""
 
         price_near_ema = row["STCK_CLPR"] >= row["ema_20"] * 0.995
         supply_strong = row["obv_z"] > self.OBV_Z_BUY_THRESHOLD
         gap_filtered = row["gap_ratio"] <= self.MAX_GAP_RATIO
         trend_upward = row["plus_di"] > row["minus_di"]
 
-        return all([price_near_ema, supply_strong, gap_filtered, trend_upward])
+        if all([price_near_ema, supply_strong, gap_filtered, trend_upward]):
+            return True, "EMA근접+OBV강세+추세상승"
+        return False, ""
 
-    def _check_second_buy_conditions(self, row: pd.Series) -> bool:
+    def _check_second_buy_conditions(self, row: pd.Series) -> Tuple[bool, str]:
         """하이브리드 2차 매수: 추세 강화형 + 눌림목 반등 (EMA-ATR 가드레일)"""
         if any(pd.isna(row[col]) for col in ["ema_20", "obv_z", "atr", "adx", "plus_di", "minus_di"]):
-            return False
+            return False, ""
 
         # 하락장 필터: 20 EMA < 120 EMA 시 2차 매수 금지
         if self._is_bearish_market(row):
-            return False
+            return False, ""
 
         current_price = row["STCK_CLPR"]
 
@@ -233,7 +238,7 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
                 if row["plus_di"] > row["minus_di"]:
                     # 수급 지속: OBV z-score >= 1.2
                     if row["obv_z"] >= self.TREND_BUY_OBV_THRESHOLD:
-                        return True
+                        return True, "추세강화(ADX강세+OBV지속)"
 
         # === 시나리오 B: 눌림목 반등 ===
         # 가격 가드레일: EMA - ATR × 0.5 ~ EMA + ATR × 0.3
@@ -249,9 +254,9 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
                     if row["obv_z"] > self.PULLBACK_BUY_OBV_MIN:
                         # 반등 신호: 당일 저가 대비 0.4% 이상 회복
                         if current_price >= row["STCK_LWPR"] * self.PULLBACK_BUY_REBOUND_RATIO:
-                            return True
+                            return True, "눌림목반등(조정구간+저가회복)"
 
-        return False
+        return False, ""
         
     def _prepare_data(self, df: pd.DataFrame) -> pd.DataFrame:
         if "STCK_BSOP_DATE" in df.columns:
