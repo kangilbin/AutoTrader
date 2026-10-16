@@ -8,7 +8,7 @@ from typing import Annotated
 from app.common.database import get_db
 from app.common.dependencies import get_current_user
 from app.domain.swing.service import SwingService
-from app.domain.swing.schemas import SwingCreateRequest
+from app.domain.swing.schemas import SwingCreateRequest, SwingUpdateRequest
 
 router = APIRouter(prefix="/swing", tags=["Swing"])
 
@@ -48,6 +48,18 @@ async def get_swing(
     """스윙 전략 조회"""
     result = await service.get_swing(swing_id)
     return {"message": "스윙 조회 완료", "data": result}
+
+@router.put("/{swing_id}/settings")
+async def update_swing_settings(
+    swing_id: int,
+    request: SwingUpdateRequest,
+    service: Annotated[SwingService, Depends(get_swing_service)],
+    user_id: Annotated[str, Depends(get_current_user)]
+):
+    """스윙 전략 설정 수정"""
+    data = request.model_dump(exclude_none=True)
+    result = await service.update_swing(swing_id, data)
+    return {"message": "스윙 설정 수정 완료", "data": result}
 
 
 @router.delete("/{swing_id}/{swing_type}")
