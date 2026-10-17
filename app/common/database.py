@@ -41,7 +41,10 @@ class Database:
                 pool_size=settings.DB_POOL_SIZE,
                 max_overflow=settings.DB_MAX_OVERFLOW,
                 pool_timeout=settings.DB_POOL_TIMEOUT,
-                pool_recycle=settings.DB_POOL_RECYCLE
+                pool_recycle=settings.DB_POOL_RECYCLE,
+                # 풀에서 꺼낼 때 연결 생존을 확인한다. 유휴 중 서버가 끊은 연결을 그대로 쓰면
+                # 복귀 후 첫 요청이 'Lost connection'으로 500이 된다 (재시도하면 정상이라 간헐적으로 보임)
+                pool_pre_ping=True,
             )
             logger.info(f"Database engine created (echo={settings.DB_ECHO})")
 
