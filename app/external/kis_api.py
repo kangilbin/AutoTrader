@@ -622,14 +622,19 @@ async def modify_or_cancel_order_api(user_id: str, order: ModifyOrder, db: Async
 
 async def get_inquire_daily_ccld_obj(user_id: str, db: AsyncSession, inqr_strt_dt=None, inqr_end_dt=None, fk100="", nk100="",
                                      account_no: str = None, pdno: str = ""):
-    """주식일별주문체결(현황)조회 — pdno 지정 시 해당 종목만"""
+    """주식일별주문체결(현황)조회 — pdno 지정 시 해당 종목만
+
+    TR은 조회 기간으로 나뉜다: 3개월 이내 TTTC0081R/VTTC0081R, 3개월 이전 CTSC9215R/VTSC9215R.
+    호출부(체결 확인·주문내역 매칭)는 전부 최근 주문이라 3개월 이내 TR을 쓴다.
+    3개월 이전 TR로 최근 주문을 조회하면 rt_cd=0에 빈 output1이 와서 '체결 없음'으로 오판한다.
+    """
     user_data, access_data = await _get_user_auth(user_id, db, account_no)
     if access_data.get("simulation_yn") == "Y":
         url = settings.DEV_API_URL
-        tr_id = "VTSC9215R"
+        tr_id = "VTTC0081R"
     else:
         url = settings.REAL_API_URL
-        tr_id = "CTSC9215R"
+        tr_id = "TTTC0081R"
 
     path = 'uapi/domestic-stock/v1/trading/inquire-daily-ccld'
     api_url = f"{url}/{path}"
