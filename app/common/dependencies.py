@@ -22,12 +22,3 @@ async def get_current_user(
 
     return token_data.user_id
 
-
-async def get_current_user_optional(
-    credentials: HTTPAuthorizationCredentials = Depends(security)
-) -> str | None:
-    """현재 인증된 사용자 ID 반환 (선택적)"""
-    try:
-        return await get_current_user(credentials)
-    except AuthenticationError:
-        return None

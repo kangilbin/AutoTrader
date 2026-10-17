@@ -7,6 +7,7 @@ from typing import Annotated
 
 from app.common.database import get_db
 from app.common.dependencies import get_current_user
+from app.core.response import success_response
 from app.domain.swing.service import SwingService
 from app.domain.swing.schemas import SwingCreateRequest, SwingUpdateRequest
 
@@ -26,7 +27,7 @@ async def register_swing(
 ):
     """스윙 전략 등록"""
     response = await service.create_swing(user_id, request)
-    return {"message": "스윙 등록 완료", "data": response}
+    return success_response("스윙 등록 완료", response)
 
 
 @router.get("/list")
@@ -37,7 +38,7 @@ async def list_swing_mapping(
 ):
     """스윙 목록 매핑 조회"""
     result = await service.mapping_swing(user_id, account_no)
-    return {"message": "스윙 매핑 완료", "data": result}
+    return success_response("스윙 매핑 완료", result)
 
 
 @router.get("/{swing_id}")
@@ -47,7 +48,7 @@ async def get_swing(
 ):
     """스윙 전략 조회"""
     result = await service.get_swing(swing_id)
-    return {"message": "스윙 조회 완료", "data": result}
+    return success_response("스윙 조회 완료", result)
 
 @router.put("/{swing_id}/settings")
 async def update_swing_settings(
@@ -59,7 +60,7 @@ async def update_swing_settings(
     """스윙 전략 설정 수정"""
     data = request.model_dump(exclude_none=True)
     result = await service.update_swing(swing_id, data)
-    return {"message": "스윙 설정 수정 완료", "data": result}
+    return success_response("스윙 설정 수정 완료", result)
 
 
 @router.delete("/{swing_id}/{swing_type}")
@@ -71,4 +72,4 @@ async def delete_swing(
 ):
     """스윙 전략 삭제"""
     await service.delete_swing(swing_id, swing_type)
-    return {"message": "스윙 삭제 완료"}
+    return success_response("스윙 삭제 완료")

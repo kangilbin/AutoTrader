@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 from app.common.database import get_db
 from app.common.dependencies import get_current_user
+from app.core.response import success_response
 from app.domain.oauth.service import OAuthService
 
 router = APIRouter(prefix="/oauth", tags=["OAuth"])
@@ -71,4 +72,4 @@ async def update_google_token(
         expires_in=request.expires_in
     )
 
-    return {"message": "Google 토큰 업데이트 완료"}
+    return success_response("Google 토큰 업데이트 완료")

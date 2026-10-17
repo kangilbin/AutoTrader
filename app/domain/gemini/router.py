@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 from app.common.database import get_db
 from app.common.dependencies import get_current_user
+from app.core.response import success_response
 from app.domain.gemini.service import GeminiService
 
 router = APIRouter(prefix="/gemini", tags=["Gemini"])
@@ -60,10 +61,7 @@ async def generate_content(
         model=request.model
     )
 
-    return {
-        "message": "생성 완료",
-        "data": {"content": result}
-    }
+    return success_response("생성 완료", {"content": result})
 
 
 @router.post("/chat")
@@ -91,10 +89,7 @@ async def chat(
         model=request.model
     )
 
-    return {
-        "message": "응답 완료",
-        "data": {"content": result}
-    }
+    return success_response("응답 완료", {"content": result})
 
 
 @router.post("/analyze-stock")
@@ -114,7 +109,4 @@ async def analyze_stock(
         model=request.model
     )
 
-    return {
-        "message": "분석 완료",
-        "data": {"analysis": result}
-    }
+    return success_response("분석 완료", {"analysis": result})
