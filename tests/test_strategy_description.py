@@ -61,15 +61,20 @@ class SingleEMADescriptionTest(unittest.TestCase):
 class ReviewSchemaTest(unittest.TestCase):
 
     def _payload(self, swing_type):
-        return {"verdict": "보류", "summary": "s", "positives": [], "risks": [], "key_news": [],
-                "recommended_swing_type": swing_type, "strategy_reason": "r"}
+        return {"verdict": "보류", "summary": "s", "news_market": "n", "valuation": "v", "financials": "f",
+                "trend_flow": "t", "positives": [], "risks": [], "key_news": [],
+                "recommended_swing_type": swing_type}
 
     def test_only_registered_swing_types(self):
         schema = review_schema(["S"])
         self.assertEqual(schema.model_validate(self._payload("S")).recommended_swing_type, "S")
-        self.assertIsNone(schema.model_validate(self._payload(None)).recommended_swing_type)
         with self.assertRaises(ValidationError):
             schema.model_validate(self._payload("A"))
+
+    def test_strategy_is_mandatory(self):
+        """'맞는 전략 없음'은 허용하지 않는다 — 반드시 등록된 전략 하나를 고른다"""
+        with self.assertRaises(ValidationError):
+            review_schema(["S"]).model_validate(self._payload(None))
 
     def test_system_instruction_lists_strategies(self):
         text = build_system_instruction(TradingStrategyFactory.describe_all())

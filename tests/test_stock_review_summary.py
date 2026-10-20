@@ -141,6 +141,30 @@ class FilterNewsTest(unittest.TestCase):
         title = s.filter_news(rows, "000660")["종목"][0]["제목"]
         self.assertEqual(title, "이찬진 \"솔리다임 중복상장\"…금융위·금감원 의견 같아")
 
+    def test_spreads_across_days(self):
+        """기사가 많은 날이 있어도 하루 상한만큼만 담아 며칠 전 기사가 남는다"""
+        rows = [_news("005930", f"삼성전자 오늘 기사 {i}", dt="20261020", tm=f"{i:06d}") for i in range(20)]
+        rows += [_news("005930", "삼성전자 3분기 실적 발표", dt="20261016")]
+        result = s.filter_news(rows, "005930", name="삼성전자", stock_per_day=5)
+        titles = [n["제목"] for n in result["종목"]]
+        self.assertEqual(len(titles), 6)
+        self.assertIn("삼성전자 3분기 실적 발표", titles)
+
+    def test_disclosure_first_within_day(self):
+        """같은 날 기사가 상한을 넘으면 공시를 먼저 담는다"""
+        rows = [_news("247540", f"에코프로비엠 기사 {i}", tm=f"1{i}0000") for i in range(5)]
+        disclosure = _news("247540", "(주)에코프로비엠 유상증자 결정", tm="080000")
+        disclosure["dorg"] = "코스닥 공시"
+        rows.append(disclosure)
+        titles = [n["제목"] for n in s.filter_news(rows, "247540", name="에코프로비엠", stock_per_day=3)["종목"]]
+        self.assertEqual(titles[0], "(주)에코프로비엠 유상증자 결정")
+        self.assertEqual(len(titles), 3)
+
+    def test_readable_date_and_time(self):
+        item = s.filter_news([_news("005930", "삼성전자 기사", dt="20261020", tm="184030")], "005930")["종목"][0]
+        self.assertEqual(item["일자"], "2026-10-20 (화)")
+        self.assertEqual(item["시각"], "18:40")
+
     def test_limits(self):
         rows = [_news("005930", f"삼성전자 기사 {i}", tm=f"{i:06d}") for i in range(5)]
         rows += [_news("000660", f"시장 기사 {i}", tm=f"{i:06d}") for i in range(5)]

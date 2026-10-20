@@ -6,6 +6,7 @@
 진행 중인 연도의 연간 행, KIS의 결측 표시 99.99)은 여기서 정리한다.
 """
 import re
+from datetime import date
 from typing import Optional
 
 import numpy as np
@@ -115,10 +116,11 @@ def summarize_quote(quote: dict) -> dict:
         "현재가": _num(quote.get("stck_prpr")),
         "전일대비_pct": _num(quote.get("prdy_ctrt")),
         "시가총액_억원": _num(quote.get("hts_avls")),
-        "PER": _num(quote.get("per")),
-        "PBR": _num(quote.get("pbr")),
-        "EPS": _num(quote.get("eps")),
-        "BPS": _num(quote.get("bps")),
+        # 현재가 TR의 PER/EPS 등은 직전 결산(연간) 기준 — 재무비율의 연 누적 EPS 와 섞어 읽지 않게 이름에 기준을 붙인다
+        "PER_직전결산기준": _num(quote.get("per")),
+        "PBR_직전결산기준": _num(quote.get("pbr")),
+        "EPS_직전결산": _num(quote.get("eps")),
+        "BPS_직전결산": _num(quote.get("bps")),
         "외국인보유율_pct": _num(quote.get("hts_frgn_ehrt")),
         "신용잔고율_pct": _num(quote.get("whol_loan_rmnd_rate")),
         "결산월": quote.get("stac_month"),
@@ -299,8 +301,8 @@ def ratio_rows(ratio: list[dict], stability: list[dict], limit: int = 5) -> list
             "순이익증가율_pct": _num(r.get("ntin_inrt")),
             "부채비율_pct": _num(r.get("lblt_rate")),
             "유동비율_pct": _num((stab_by.get(r["stac_yymm"]) or {}).get("crnt_rate")),
-            "EPS": _num(r.get("eps")),
-            "BPS": _num(r.get("bps")),
+            "EPS_연누적": _num(r.get("eps")),   # 해당 결산월까지 올해 누적 (연간 EPS 와 직접 비교 불가)
+            "BPS_분기말": _num(r.get("bps")),
         }
         for r in rows[:limit]
     ]
@@ -350,19 +352,53 @@ def summarize_investors(rows: list[dict], first_row_incomplete: bool = False) ->
 # 뉴스 / 공시
 # ============================================================
 
+_WEEKDAYS = "월화수목금토일"
+
+
+def _news_date(yyyymmdd: Optional[str]) -> Optional[str]:
+    """20261020 → '2026-10-20 (화)' — 모델이 날짜·요일을 바로 읽도록"""
+    if not yyyymmdd or len(yyyymmdd) != 8:
+        return yyyymmdd
+    try:
+        d = date(int(yyyymmdd[:4]), int(yyyymmdd[4:6]), int(yyyymmdd[6:]))
+    except ValueError:
+        return yyyymmdd
+    return f"{d.isoformat()} ({_WEEKDAYS[d.weekday()]})"
+
+
+def _news_time(hhmmss: Optional[str]) -> Optional[str]:
+    return f"{hhmmss[:2]}:{hhmmss[2:4]}" if hhmmss and len(hhmmss) >= 4 else hhmmss
+
+
+def _is_disclosure(row: dict) -> bool:
+    """공시 (출처가 '코스닥 공시' 등) — 하루 안에서 일반 기사보다 먼저 담는다"""
+    return "공시" in (row.get("dorg") or "")
+
+
 def filter_news(rows: list[dict], code: str, name: str = "",
-                stock_limit: int = 30, market_limit: int = 10) -> dict:
-    """뉴스·공시 제목을 종목 기사 / 시장·업종 기사로 나눈다 (각각 최신 먼저, 중복·시황 묶음 제거)
+                stock_limit: int = 30, market_limit: int = 10,
+                stock_per_day: int = 5, market_per_day: int = 2) -> dict:
+    """뉴스·공시 제목을 종목 기사 / 시장·업종 기사로 나눠 날짜별로 고르게 담는다 (최신 날짜 먼저)
 
     news-title TR은 FID_INPUT_ISCD로 관련 기사를 제대로 골라 주지만, 응답의
     iscd1~10 에는 관련 종목 일부만 실린다 — "에코프로비엠, 유상증자 청약률…"이
     086520(에코프로)만 달고 오는 식이다. 그래서 응답 종목코드만으로 거르면
     핵심 기사를 버린다. 코드가 붙었거나 제목에 종목명이 있으면 종목 기사,
     나머지는 KIS가 관련으로 분류한 시장·업종 기사로 따로 넘긴다.
+
+    기사가 많은 종목(삼성전자 등)은 하루에만 40건이 넘어 최신순으로 자르면 오늘 기사만 남고
+    며칠 전 실적·공시가 빠진다. 그래서 하루 상한(stock_per_day)을 두어 최근 며칠에 고르게 나누고,
+    하루 안에서는 공시를 먼저 담는다.
     """
     seen = set()
-    stock_news, market_news = [], []
-    ordered = sorted(rows, key=lambda r: (r.get("data_dt", ""), r.get("data_tm", "")), reverse=True)
+    stock_by_day: dict[str, list] = {}
+    market_by_day: dict[str, list] = {}
+    # 날짜 최신순, 같은 날은 공시 먼저 → 시각 최신순
+    ordered = sorted(
+        rows,
+        key=lambda r: (r.get("data_dt", ""), _is_disclosure(r), r.get("data_tm", "")),
+        reverse=True,
+    )
     for r in ordered:
         title = (r.get("hts_pbnt_titl_cntt") or "").replace(_BROKEN_MIDDLE_DOT, "·")
         title = _CONTROL_CHARS.sub("", title).strip()
@@ -373,11 +409,21 @@ def filter_news(rows: list[dict], code: str, name: str = "",
             continue
         seen.add(key)
 
-        item = {"일자": r.get("data_dt"), "시각": r.get("data_tm"), "출처": r.get("dorg"), "제목": title}
+        day = r.get("data_dt") or ""
+        item = {"일자": _news_date(day), "시각": _news_time(r.get("data_tm")),
+                "출처": r.get("dorg"), "제목": title}
         tagged = code in {r.get(f"iscd{i}") for i in range(1, 11)}
         if tagged or (name and name in title):
-            if len(stock_news) < stock_limit:
-                stock_news.append(item)
-        elif len(market_news) < market_limit:
-            market_news.append(item)
-    return {"종목": stock_news, "시장_업종": market_news}
+            bucket, cap = stock_by_day.setdefault(day, []), stock_per_day
+        else:
+            bucket, cap = market_by_day.setdefault(day, []), market_per_day
+        if len(bucket) < cap:
+            bucket.append(item)
+
+    def flatten(by_day: dict, limit: int) -> list:
+        result = []
+        for day in sorted(by_day, reverse=True):
+            result.extend(by_day[day])
+        return result[:limit]
+
+    return {"종목": flatten(stock_by_day, stock_limit), "시장_업종": flatten(market_by_day, market_limit)}
