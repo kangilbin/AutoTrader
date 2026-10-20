@@ -2,6 +2,98 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2026-10-21] - Stock Review: AI 종목 분석 (Gemini Free Tier) (stock-review)
+
+### Added
+- **New domain module**: `app/domain/stock_review/`
+  - `service.py` - 요청/조회/백그라운드 작업 관리 (Redis 기반 상태 + 결과 캐시)
+  - `summary.py` - KIS 원본 → 프롬프트용 요약 (순수 함수: 지표, 누적 재무→분기, 뉴스 분류)
+  - `prompt.py` - Gemini 시스템 지시문 (실전 전략 `describe_all()` 포함) · 사용자 프롬프트 조립
+  - `schemas.py` - API 요청/응답 DTO
+  - `router.py` - 3개 엔드포인트 (POST 요청, GET 목록, GET 상세)
+
+- **New external module**: `app/external/gemini_api.py`
+  - Gemini Free Tier 통합 (gemini-3.8-flash 기본, 3.7→3.6→3.5 폴백)
+  - 구조화된 응답 (Pydantic 스키마)
+  - 재시도 로직 (429/500/502/503/504·타임아웃, 호출당 180초)
+
+- **Frontend components**:
+  - `app/review/index.tsx` · `app/review/[code].tsx` - 분석 목록(최근 24시간) · 결과 화면
+  - `components/ReviewStatusIcon.tsx` - 헤더 상태 아이콘 (RUNNING/DONE/FAILED)
+  - `stores/useStockReviewStore.ts` - Zustand 상태 관리 (폴링, 캐시)
+  - `types/stockReview.ts` - TypeScript 타입 정의
+
+### Changed
+- **External API extensions**:
+  - `app/external/kis_api.py` - 신규 함수: `get_session_quote_auth()`, `get_investor_trend()`, `get_financial_statement()`, `get_news_titles()`
+  
+- **Trading strategy layer**:
+  - `app/domain/swing/trading/trading_strategy_factory.py` - `describe_all()` 메서드 추가 (전략 설명)
+  - `app/domain/swing/trading/strategies/single_ema_strategy.py` - `describe()` 클래스 메서드 추가 (단일 20EMA 전략 설명)
+
+- **Frontend UI**:
+  - `app/(tabs)/stock/price.tsx` - 'AI 분석' 버튼 추가 (국내 종목만)
+  - `app/(tabs)/stock/add.tsx` - AI 추천 전략(swingType)을 미리 선택
+  - `components/TopHeader.tsx` - 사용자 이름 옆 분석 상태 표시 (분석중 애니메이션 배지)
+  - `app/(tabs)/user/index.tsx` - 로그아웃 시 분석 스토어 reset
+- **Removed**: `app/domain/gemini/` (사용자 OAuth 토큰 기반 /gemini 엔드포인트)
+
+### Fixed
+- **Code review (백엔드 10건 · 프론트 10건 → 17건 수정, 1건 반증, 2건 의도적 유지)** — 상세는 완료 보고서
+  - 백엔드: 10·11월 결산 분기 변환, Gemini 대기 중 DB 커넥션 점유, 5xx·타임아웃 미재시도, 작업 간 락 덮어쓰기,
+    종료 순간 합류 요청 누락, 주말 캐시, describe() 미세 불일치, CACHED 필드, CLAUDE.md 구조
+  - 프론트: 로그아웃 후 무한 폴링(로그인 화면 재진입), 상세 화면 폴링 누수·정지·이중화, 미국 모드 등록 이동,
+    (tabs) 중복 마운트, 늦은 응답의 상태 덮어쓰기, 빈 문자열 렌더 크래시, 24시간 목록 시각 표기
+
+### Documentation
+- [Completion Report](../archive/2026-10/stock-review/stock-review.report.md) - 전체 PDCA 사이클 및 검증 결과
+- [Memory](../.claude/projects/-Users-apple-IdeaProjects-AutoTrader/memory/project_stock_review_gemini.md) - 설계 결정 및 context
+
+### Metrics
+- **Verification**: 채팅 합의 계획 + 코드 리뷰(2회) + 테스트·실호출
+- **Test Coverage**: 201개 테스트 통과 (기존 + 신규: summary, cache-TTL, strategy-description)
+- **Live Verification**:
+  - KIS API: 국내 종목 시세, 6개월 일봉, 투자자 동향, 재무, 뉴스 정상
+  - Gemini: 삼성/네이버/SK하이닉스/에코프로비엠 실행 (3.8→3.7 폴백 관찰)
+  - HTTP E2E: POST 201 → polling → DONE 검증
+  - Frontend: tsc + expo web export 성공, 실기기 사용자 확인 완료
+- **Code Quality**: 2회 코드 리뷰 → 17건 수정
+
+### Architecture
+- **Redis 운영 방식**:
+  - `stock_review:{mrkt}:{code}` = 결과 캐시 (사용자 공유, 장중 30분 / 장 밖 다음 평일 09:00)
+  - `stock_review:running:{mrkt}:{code}` = 분석 중 표시 (토큰 기반, SET NX, 30분 TTL, 중복 실행 방지)
+  - `stock_review:waiters:{mrkt}:{code}` = 대기 사용자 목록
+  - `stock_review:user:{user_id}` = 사용자별 분석 이력 (hash, 24시간)
+
+- **DB 정책**: 등록 전 종목을 STOCK_DAY_HISTORY에 넣지 않음 (day_collect_job 영구 수집 방지)
+
+- **데이터 처리 (summary.py)**:
+  - 분기 재무: 연 누적 → 회계연도 말월(stac_month) 기준 이산 분기로 변환
+  - 연간 조회: 첫 행(진행 중 연도) 제외
+  - 금액 단위: 억원 (검증: 삼성 2024 매출 300.9조)
+  - 뉴스 TR: 종목코드 필터는 정상, 응답 iscd 가 불완전 → 코드 또는 제목 종목명으로 분류, FID_TITL_CNTT 는 "공백 필수"(제목 검색 불가), 가운뎃점 \x1a 복원
+
+### Features
+- 스윙 등록 전 종목에 대해 AI가 '적합/보류/부적합' 판단 + 근거 + 추천 전략 제시
+- 국내 종목만 지원 (KIS 데이터 기반)
+- 관리종목/투자위험/거래정지/정리매매는 Gemini 호출 전 즉시 차단 (부적합)
+- Free Tier API 특성상 응답 60~130초 → 백그라운드 + 폴링 처리
+- 전략 설명 코드화 (`describe()`) → 향후 다전략 추가 시 자동 반영
+
+### Known Limitations
+- 국내 종목만 지원 (미국 종목 뉴스·재무 미지원, KIS 데이터 없음)
+- Free Tier 지연 (60~130초 응답, 수시 503 에러)
+- Redis 캐시만 → 장기 분석 이력 조회 불가
+- 현재 단일 전략('S' 단일 20EMA)만 표시 (향후 다전략 추가 시 확대)
+
+### Next Steps
+1. **Required**: 프로덕션 환경에 `GEMINI_API_KEY` 설정 후 배포
+2. **Recommended**: 백엔드 + 프론트 함께 배포, 실기기 재검증
+3. **Future**: 미국 종목 확장 (Finnhub 검토), 다전략 백테스트 통합, Google OAuth 토큰 저장 정리
+
+---
+
 ## [2026-07-21] - US Market Expansion: NYS/NAS/AMS Full Support (us-market-expansion)
 
 ### Added
