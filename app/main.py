@@ -27,7 +27,7 @@ from app.domain.routers import (
     swing_router,
     # device_router,
     oauth_router,
-    gemini_router,
+    stock_review_router,
     backtest_router,
     health_router,
     trade_history_router,
@@ -150,7 +150,7 @@ app.include_router(order_router)
 app.include_router(swing_router)
 # app.include_router(device_router)
 app.include_router(oauth_router)
-app.include_router(gemini_router)
+app.include_router(stock_review_router)
 app.include_router(backtest_router)
 app.include_router(trade_history_router)
 app.include_router(notification_router)

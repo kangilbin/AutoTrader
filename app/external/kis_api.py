@@ -819,9 +819,13 @@ async def get_target_price(user_id: str, code: str, db: AsyncSession, access_dat
     return output[0]
 
 
-async def get_stock_data(user_id: str, code: str, start_date: str, end_date: str, db: AsyncSession, account_no: str = None):
-    """기간별 주식 데이터 조회"""
-    access_data = await _quote_auth(user_id, db, account_no)
+async def get_stock_data(user_id: str, code: str, start_date: str, end_date: str, db: AsyncSession, account_no: str = None,
+                         access_data: Optional[dict] = None):
+    """기간별 주식 데이터 조회
+
+    access_data: 호출측이 미리 고른 인증 (여러 TR을 같은 키로 이어 부를 때). 없으면 세션/계좌 기준으로 고른다.
+    """
+    access_data = access_data or await _quote_auth(user_id, db, account_no)
     url = settings.REAL_API_URL
     path = "uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice"
     api_url = f"{url}/{path}"
@@ -892,9 +896,13 @@ async def get_inquire_asking_price(user_id: str, code: str, db: AsyncSession, ac
     return body
 
 
-async def get_inquire_price(user_id: str, code: str, db: AsyncSession, account_no: str = None):
-    """주식현재가 시세"""
-    access_data = await _quote_auth(user_id, db, account_no)
+async def get_inquire_price(user_id: str, code: str, db: AsyncSession, account_no: str = None,
+                            access_data: Optional[dict] = None):
+    """주식현재가 시세
+
+    access_data: 호출측이 미리 고른 인증 (get_stock_data 와 같음)
+    """
+    access_data = access_data or await _quote_auth(user_id, db, account_no)
     path = "uapi/domestic-stock/v1/quotations/inquire-price"
     if access_data.get("simulation_yn") == "Y":
         url = settings.DEV_API_URL
@@ -1005,6 +1013,104 @@ async def get_volume_power_rank(user_id: str, db: AsyncSession, input_iscd: str 
     response = await kis_fetch("GET", api_url, access_data, params=query, headers=headers)
     body = response["body"]
     return body.get("output")
+
+
+# ============================================================
+# 종목 리서치 (투자자 동향 / 재무 / 뉴스·공시)
+# ============================================================
+# 인증은 사용자가 지금 쓰는 키(_quote_auth: 세션 선택 키 → 없으면 계좌 무관 키)를 따른다.
+# 재무 TR은 모의 앱키를 실전 도메인으로 보내면 "실전투자 도메인은 모의투자 앱키로
+# 호출하실 수 없습니다"로 거절하므로, 도메인은 고정하지 않고 키 종류에 맞춘다.
+# 여러 TR을 이어 부를 때는 access_data 를 한 번 골라 넘기면 인증 조회(DB)를 반복하지 않는다.
+
+# kind → (path, tr_id). 분기 값은 '해당 연도 누적'이다 (202606 = 1~6월 합계).
+_FINANCIAL_TRS = {
+    "balance": ("finance/balance-sheet", "FHKST66430100"),        # 대차대조표
+    "income": ("finance/income-statement", "FHKST66430200"),      # 손익계산서
+    "ratio": ("finance/financial-ratio", "FHKST66430300"),        # 재무비율
+    "profit": ("finance/profit-ratio", "FHKST66430400"),          # 수익성비율
+    "other": ("finance/other-major-ratios", "FHKST66430500"),     # 기타주요비율
+    "stability": ("finance/stability-ratio", "FHKST66430600"),    # 안정성비율
+    "growth": ("finance/growth-ratio", "FHKST66430800"),          # 성장성비율
+}
+
+
+def _quote_base_url(access_data: dict) -> str:
+    return settings.DEV_API_URL if access_data.get("simulation_yn") == "Y" else settings.REAL_API_URL
+
+
+async def get_session_quote_auth(user_id: str, db: AsyncSession) -> dict:
+    """사용자가 지금 쓰는 키의 시세 인증 — 여러 TR을 같은 키로 이어 부를 때 한 번 골라 넘긴다"""
+    return await _quote_auth(user_id, db)
+
+
+async def get_investor_trend(user_id: str, code: str, db: AsyncSession,
+                             access_data: Optional[dict] = None) -> list:
+    """주식현재가 투자자 — 최근 30거래일 개인/외국인/기관 순매수 (최신일 먼저)
+
+    장중에는 당일 행이 집계 중인 값이다.
+    """
+    access_data = access_data or await _quote_auth(user_id, db)
+    api_url = f"{_quote_base_url(access_data)}/uapi/domestic-stock/v1/quotations/inquire-investor"
+    headers = kis_headers(access_data, tr_id="FHKST01010900")
+    query = {
+        "FID_COND_MRKT_DIV_CODE": "J",
+        "FID_INPUT_ISCD": code,
+    }
+    response = await kis_fetch("GET", api_url, access_data, params=query, headers=headers)
+    return response["body"].get("output") or []
+
+
+async def get_financial_statement(user_id: str, code: str, kind: str, db: AsyncSession,
+                                  quarterly: bool = True, access_data: Optional[dict] = None) -> list:
+    """국내주식 재무 TR 조회 (최신 결산월 먼저, 최대 30기)
+
+    Args:
+        kind: _FINANCIAL_TRS 키 (income, ratio, growth, stability 등)
+        quarterly: True=분기(연 누적), False=연간
+
+    값이 없는 항목은 KIS가 "99.99"로 채워 보낸다 — 호출측에서 걸러야 한다.
+    """
+    path, tr_id = _FINANCIAL_TRS[kind]
+    access_data = access_data or await _quote_auth(user_id, db)
+    api_url = f"{_quote_base_url(access_data)}/uapi/domestic-stock/v1/{path}"
+    headers = kis_headers(access_data, tr_id=tr_id)
+    query = {
+        "FID_DIV_CLS_CODE": "1" if quarterly else "0",
+        "fid_cond_mrkt_div_code": "J",
+        "fid_input_iscd": code,
+    }
+    response = await kis_fetch("GET", api_url, access_data, params=query, headers=headers)
+    return response["body"].get("output") or []
+
+
+async def get_news_titles(user_id: str, code: str, db: AsyncSession, date: str = "",
+                          access_data: Optional[dict] = None) -> list:
+    """종합 시황/공시 제목 — 최대 40건, 최신순
+
+    공시(예: "코스닥 공시")도 같은 목록에 섞여 온다.
+    FID_INPUT_ISCD 로 '해당 코드가 등록된 뉴스'를 제대로 골라 주지만, 응답의 iscd1~10 에는
+    등록 코드 일부만 실린다 — 호출측이 응답 코드로만 거르면 관련 기사를 버리게 된다.
+    FID_TITL_CNTT 는 문서상 "공백 필수"로, 제목 검색에 쓸 수 없다.
+
+    Args:
+        date: YYYYMMDD — 해당 일자 기준으로 과거를 조회. 빈 값이면 최신부터
+    """
+    access_data = access_data or await _quote_auth(user_id, db)
+    api_url = f"{_quote_base_url(access_data)}/uapi/domestic-stock/v1/quotations/news-title"
+    headers = kis_headers(access_data, tr_id="FHKST01011800")
+    query = {
+        "FID_NEWS_OFER_ENTP_CODE": "",
+        "FID_COND_MRKT_CLS_CODE": "",
+        "FID_INPUT_ISCD": code,
+        "FID_TITL_CNTT": "",
+        "FID_INPUT_DATE_1": date,
+        "FID_INPUT_HOUR_1": "",
+        "FID_RANK_SORT_CLS_CODE": "",
+        "FID_INPUT_SRNO": "",
+    }
+    response = await kis_fetch("GET", api_url, access_data, params=query, headers=headers)
+    return response["body"].get("output") or []
 
 
 # ============================================================

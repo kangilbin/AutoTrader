@@ -33,6 +33,18 @@ class TradingStrategy(ABC):
     ATR_MULTIPLIER: float
 
     @classmethod
+    def describe(cls) -> dict:
+        """전략 설명 — AI 종목 분석이 '이 종목에 맞는 전략'을 고를 때 그대로 전달된다.
+
+        실제 판정 로직과 어긋나지 않도록 문장 속 수치는 클래스 상수로 조립한다.
+        키: 이름, 요약, 매수조건, 매수차단, 매수수량, 청산, 매도후, 잘맞는종목, 안맞는종목
+
+        전략은 인스턴스 없이 클래스로만 쓰여 abstractmethod 가 강제되지 않는다 —
+        팩토리 등록 전략의 구현 여부는 tests/test_strategy_description.py 가 검사한다.
+        """
+        raise NotImplementedError(f"{cls.__name__}.describe() 미구현")
+
+    @classmethod
     @abstractmethod
     async def check_entry_signal(
         cls,

@@ -25,6 +25,47 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
     # ========================================
     CONSECUTIVE_REQUIRED = 2         # 연속 확인 횟수 (10분)
     ENTRY_STATE_TTL = 1800           # 연속성 상태 Redis TTL (초, 30분)
+    # 매매 배치 주기 — 설명용. scheduler.py 의 국내 trade_job 크론이 코드에 '*/5' 로 고정돼 있어
+    # 가져다 쓸 설정값이 없다. 크론을 바꾸면 여기도 함께 바꿀 것 (US_TRADE_CRON_MINUTE 기본값도 5분)
+    TRADE_CYCLE_MINUTES = 5
+
+    @classmethod
+    def describe(cls) -> dict:
+        """AI 종목 분석에 전달하는 전략 설명 (수치는 아래 판정 로직과 같은 상수)"""
+        min_pct = cls.MAX_ENTRY_PCT * cls.MIN_CONVICTION * 100
+        exits = [
+            f"청산선 하나로 관리. 시작 = max(진입가 − ATR×{cls.ATR_MULTIPLIER:g}, 진입가 −{cls.MAX_STOP_LOSS_PCT:g}%)",
+            f"고점 이익 +{cls.BREAKEVEN_ACTIVATE_PCT:g}% → 본전, +{cls.TRAILING_ACTIVATE_PCT:g}% → "
+            f"고점 − ATR×{cls.TRAILING_STOP_ATR_MULT:g} 로 상향 (내려가지 않음)",
+            "청산선 이탈 시 전량 매도",
+        ]
+        if cls.PARTIAL_TAKE_PROFIT_PCT > 0:  # 0 이하면 check_partial_take_profit 비활성
+            exits.append(f"+{cls.PARTIAL_TAKE_PROFIT_PCT:g}% 도달 시 절반 부분익절 (1회)")
+        return {
+            "이름": cls.name,
+            "요약": f"{cls.EMA_PERIOD}일 EMA 위로 올라선 직후의 추세 초입에 수급이 쌓였을 때 진입해 추세를 따라간다",
+            "매수조건": [
+                f"현재가가 실시간 {cls.EMA_PERIOD}EMA 위, EMA 대비 +{(cls.BREAKOUT_ENTRY_GAP_MAX - 1) * 100:g}% 이내 (돌파 직후만)",
+                f"+DI > -DI 이고 ADX {cls.BREAKOUT_ENTRY_ADX_MIN} 초과",
+                f"OBV가 자기 {cls.ACCUM_EMA_PERIOD}일 EMA보다 20일 평균거래량의 {cls.ACCUM_HIGH:g}배 초과로 위 (수급 축적)",
+                f"위 조건이 {cls.TRADE_CYCLE_MINUTES}분 간격으로 {cls.CONSECUTIVE_REQUIRED}회 연속 충족 "
+                f"(약 {cls.TRADE_CYCLE_MINUTES * cls.CONSECUTIVE_REQUIRED}분)",
+            ],
+            "매수차단": [
+                f"당일 등락률 ±{cls.MAX_SURGE_RATIO * 100:g}% 초과",
+                f"전일 윗꼬리가 캔들 범위의 {cls.UPPER_SHADOW_RATIO_MAX * 100:g}% 이상 "
+                f"(캔들 범위가 종가의 {cls.MIN_CANDLE_RANGE_PCT * 100:g}% 초과일 때)",
+                "현재가가 전일 저가 아래 (갭 하락)",
+            ],
+            "매수수량": f"신호 강도(OBV·ADX)에 따라 배정금의 {min_pct:g}~{cls.MAX_ENTRY_PCT * 100:g}%, "
+                        f"전량 매수 설정 시 {cls.FULL_ENTRY_PCT * 100:g}%. 진입은 사이클당 1회 (추가 매수 없음)",
+            "청산": exits,
+            "매도후": f"OBV z < {cls.COOLDOWN_OBV_EXIT:g} (수급 이탈) → OBV z > {cls.COOLDOWN_OBV_REENTRY:g} "
+                      f"(재유입) 확인 후에야 다시 매수 대기",
+            "잘맞는종목": "추세가 길게 이어지고 거래량(수급)이 추세를 받쳐주는 종목",
+            "안맞는종목": f"박스권 횡보, 하루 변동폭(ATR)이 최대 손절폭 {cls.MAX_STOP_LOSS_PCT:g}%에 가까운 급등락 종목, "
+                          "거래량이 적은 종목",
+        }
 
 
     # ========================================

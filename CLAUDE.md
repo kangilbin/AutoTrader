@@ -77,10 +77,11 @@ app/
 │   ├── price.py             # 가격 정밀도·호가 단위 (국내 정수 / 해외 소수점)
 │   └── order.py             # 주문 파라미터 DTO + 주문번호 비교
 ├── external/                # 외부 API 통합
-│   ├── kis_api.py           # KIS 국내 API (시세, 주문, 잔고, 체결)
+│   ├── kis_api.py           # KIS 국내 API (시세, 주문, 잔고, 체결, 재무·투자자·뉴스)
 │   ├── foreign_api.py       # KIS 해외 API (시세, 호가, 주문, 체결)
 │   ├── http_client.py       # 범용 HTTP 클라이언트 (httpx 래퍼, 재시도)
 │   ├── headers.py           # KIS API 헤더 생성
+│   ├── gemini_api.py        # Gemini 호출 (서버 키, 무료 모델 대체·재시도, JSON 스키마 응답)
 │   └── expo_push.py         # Expo 푸시 알림 발송
 ├── domain/                  # 도메인별 모듈
 │   ├── routers/             # 라우터 통합 + 비도메인 라우터
@@ -115,8 +116,12 @@ app/
 │   │   ├── stock_data_batch.py       # 일별 OHLCV 수집
 │   │   └── price_adjustment_batch.py # 액면분할 등 가격 보정
 │   ├── trade_history/       # 체결 이력 (TRADE_HISTORY)
+│   ├── stock_review/        # AI 종목 분석 (스윙 등록 전 판단 + 전략 추천, 국내)
+│   │   ├── summary.py       # KIS 원본 → 프롬프트용 요약 (누적 재무→분기, 뉴스 필터)
+│   │   ├── prompt.py        # 시스템 지시문 (실전 전략 describe_all() 포함)
+│   │   └── service.py       # 백그라운드 분석 + Redis 상태 (DB 미사용)
 │   └── [domain]/            # user, account, auth, order, device,
-│                            # notification, oauth, gemini
+│                            # notification, oauth
 │       ├── entity.py        # 도메인 엔티티 (비즈니스 로직 포함)
 │       ├── schemas.py       # Pydantic DTO (Request/Response)
 │       ├── repository.py    # 데이터 접근 계층
@@ -249,6 +254,11 @@ async def create_swing(
 
    `EMAStrategy`·`IchimokuStrategy`는 백테스트에만 등록되어 있어 실전 매매에서는
    호출되지 않는다. 실전 전략 추가 시 `TradingStrategyFactory._strategies`에 등록해야 한다.
+
+   **실전 전략은 `describe()`를 구현해야 한다** — AI 종목 분석(`domain/stock_review`)이
+   `TradingStrategyFactory.describe_all()`을 Gemini에 넘겨 종목에 맞는 전략을 고르게 한다.
+   설명 속 수치는 판정 로직과 같은 클래스 상수로 조립할 것 (손으로 쓴 설명은 실제 동작과 어긋났었다).
+   누락은 `tests/test_strategy_description.py`가 잡는다.
 
 5. **신호 흐름**: SWING_TRADE.SIGNAL 컬럼으로 상태 추적
 

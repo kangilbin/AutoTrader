@@ -53,6 +53,14 @@ class TradingStrategyFactory:
         return strategy
 
     @classmethod
+    def describe_all(cls) -> dict[str, dict]:
+        """등록된 실전 전략 설명 {SWING_TYPE: 설명} — AI 종목 분석이 이 중에서 고른다
+
+        여기 등록된 전략만 후보가 되므로, 실전 전략을 추가하면 AI 추천 대상에도 자동 포함된다.
+        """
+        return {code: strategy.describe() for code, strategy in cls._strategies.items()}
+
+    @classmethod
     def get_available_strategies(cls) -> dict:
         """
         사용 가능한 실시간 거래 전략 목록 반환

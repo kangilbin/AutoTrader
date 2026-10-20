@@ -72,6 +72,14 @@ class Settings(BaseSettings):
     GOOGLE_CLIENT_ID: Optional[str] = None
     GOOGLE_CLIENT_SECRET: Optional[str] = None
 
+    # Gemini (종목 리뷰) — 서버 키 하나로 호출한다. 사용자 OAuth 토큰으로 불러도
+    # 쿼터·요금은 OAuth 클라이언트의 프로젝트(=이 서버)에 쌓이므로 얻는 것이 없다.
+    # 모델은 무료 등급에서 쓸 수 있는 최상위 텍스트 모델. 가격 정책이 바뀌면 .env로 교체.
+    GEMINI_API_KEY: Optional[str] = None
+    GEMINI_MODEL: str = "gemini-3.8-flash"
+    # 무료 등급은 모델별로 혼잡(503)이 따로 온다 — 기본 모델이 막히면 이 순서로 넘어간다 (쉼표 구분)
+    GEMINI_FALLBACK_MODELS: str = "gemini-3.7-flash,gemini-3.6-flash,gemini-3.5-flash"
+
     # Email
     SMTP_HOST: str = "smtp.naver.com"  # Gmail SMTP 서버
     SMTP_PORT: int = 587
