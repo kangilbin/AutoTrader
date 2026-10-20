@@ -34,6 +34,7 @@ from app.exceptions.infrastructure import (
     InfrastructureError,
     ExternalServiceError,
     OrderOutcomeUnknownError,
+    QuotaExhaustedError,
     DatabaseError,
     CacheError,
     ConfigurationError
@@ -62,6 +63,7 @@ __all__ = [
     "InfrastructureError",
     "ExternalServiceError",
     "OrderOutcomeUnknownError",
+    "QuotaExhaustedError",
     "DatabaseError",
     "CacheError",
     "ConfigurationError",

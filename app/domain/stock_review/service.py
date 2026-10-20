@@ -106,6 +106,9 @@ def _summary_of(entry: dict) -> dict:
         "STATUS": entry["STATUS"],
         "VERDICT": result.get("VERDICT"),
         "ERROR": entry.get("ERROR"),
+        # QUOTA_EXHAUSTED 면 RETRY_AT 전까지 다시 요청해도 실패한다 — 앱이 재시도를 막고 시각을 안내
+        "ERROR_CODE": entry.get("ERROR_CODE"),
+        "RETRY_AT": entry.get("RETRY_AT"),
         "SEEN": entry.get("SEEN", False),
         "REQUESTED_AT": entry.get("REQUESTED_AT"),
         "FINISHED_AT": entry.get("FINISHED_AT"),
@@ -166,6 +169,11 @@ class StockReviewService:
         if cached:
             return await self._mark_done(redis, user_id, entry, cached)
 
+        # AI 사용량을 다 쓴 상태면 시작하지 않는다 — 시작해도 KIS 조회만 하고 실패한다
+        reset = gemini_api.quota_reset_at()
+        if reset:
+            raise gemini_api.quota_exhausted_error(reset)
+
         entry.update(STATUS=STATUS_RUNNING)
         await _save_entry(redis, user_id, entry)
         await redis.sadd(keys["waiters"], user_id)
@@ -213,7 +221,7 @@ class StockReviewService:
     @staticmethod
     async def _mark_done(redis, user_id: str, entry: dict, cached: str) -> dict:
         entry.update(STATUS=STATUS_DONE, RESULT=json.loads(cached), SEEN=False, ERROR=None,
-                     FINISHED_AT=_now().isoformat(timespec="seconds"))
+                     ERROR_CODE=None, RETRY_AT=None, FINISHED_AT=_now().isoformat(timespec="seconds"))
         await _save_entry(redis, user_id, entry)
         return _summary_of(entry)
 
@@ -360,6 +368,8 @@ async def _run_job(user_id: str, st_code: str, st_nm: str, token: str) -> None:
     started = time.monotonic()
     result: Optional[dict] = None
     error: Optional[str] = None
+    error_code: Optional[str] = None
+    retry_at: Optional[str] = None
 
     try:
         db = await Database.get_session()
@@ -374,6 +384,8 @@ async def _run_job(user_id: str, st_code: str, st_nm: str, token: str) -> None:
                     f"(model={review.MODEL}, {time.monotonic() - started:.1f}s)")
     except AppError as e:
         error = e.message
+        error_code = e.error_code
+        retry_at = getattr(e, "retry_at", None)  # QuotaExhaustedError — 한도 초기화 시각
         logger.warning(f"[종목리뷰] {st_code} {st_nm} 실패: {e.message}")
     except Exception as e:
         error = "분석 중 오류가 발생했습니다"
@@ -390,9 +402,11 @@ async def _run_job(user_id: str, st_code: str, st_nm: str, token: str) -> None:
         raw = await redis.hget(_USER_KEY.format(user_id=waiter), st_code)
         entry = json.loads(raw) if raw else {"ST_CODE": st_code, "ST_NM": st_nm, "REQUESTED_AT": finished_at}
         if result:
-            entry.update(STATUS=STATUS_DONE, RESULT=result, SEEN=False, ERROR=None, FINISHED_AT=finished_at)
+            entry.update(STATUS=STATUS_DONE, RESULT=result, SEEN=False, ERROR=None,
+                         ERROR_CODE=None, RETRY_AT=None, FINISHED_AT=finished_at)
         else:
-            entry.update(STATUS=STATUS_FAILED, ERROR=error, FINISHED_AT=finished_at)
+            entry.update(STATUS=STATUS_FAILED, ERROR=error, ERROR_CODE=error_code,
+                         RETRY_AT=retry_at, FINISHED_AT=finished_at)
         await _save_entry(redis, waiter, entry)
 
     await _release(redis, st_code, token)

@@ -78,7 +78,8 @@ class Settings(BaseSettings):
     GEMINI_API_KEY: Optional[str] = None
     GEMINI_MODEL: str = "gemini-3.8-flash"
     # 무료 등급은 모델별로 혼잡(503)이 따로 온다 — 기본 모델이 막히면 이 순서로 넘어간다 (쉼표 구분)
-    GEMINI_FALLBACK_MODELS: str = "gemini-3.7-flash,gemini-3.6-flash,gemini-3.5-flash"
+    # 무료 일일 한도도 모델별이다 (예: 3.8-flash 하루 20회). Flash-Lite 는 품질이 조금 낮지만 마지막 수단으로 둔다
+    GEMINI_FALLBACK_MODELS: str = "gemini-3.7-flash,gemini-3.6-flash,gemini-3.5-flash,gemini-3.5-flash-lite"
 
     # Email
     SMTP_HOST: str = "smtp.naver.com"  # Gmail SMTP 서버

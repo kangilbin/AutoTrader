@@ -71,6 +71,29 @@ class OrderOutcomeUnknownError(ExternalServiceError):
     """
 
 
+class QuotaExhaustedError(InfrastructureError):
+    """
+    외부 서비스의 사용 한도(일일 쿼터 등)를 다 쓴 상태
+
+    잠시 뒤 재시도하면 되는 ExternalServiceError(혼잡·일시 오류)와 달리,
+    한도가 초기화될 때까지는 몇 번을 다시 해도 실패한다. 클라이언트가 재시도를 막고
+    초기화 시각을 안내할 수 있도록 별도 코드와 retry_at 을 준다.
+
+    사용처: Gemini 무료 등급 일일 한도 (모델별, 예: gemini-3.8-flash 하루 20회)
+    HTTP: 429 Too Many Requests
+    """
+
+    def __init__(self, service: str, message: str, *, retry_at: Optional[str] = None):
+        super().__init__(
+            message,
+            error_code="QUOTA_EXHAUSTED",
+            status_code=429,
+            detail={"service": service, "retry_at": retry_at},
+        )
+        self.service = service
+        self.retry_at = retry_at
+
+
 class DatabaseError(InfrastructureError):
     """
     데이터베이스 오류
