@@ -55,7 +55,23 @@ class UserService:
             data["MOD_DT"] = datetime.now()
             result = await self.repo.update(user_id, data)
             await self.db.commit()
-            return UserResponse.model_validate(result).model_dump()
+
+            user_data = UserResponse.model_validate(result).model_dump()
+
+            # access_token 재발급 (변경된 정보 반영)
+            user_info = {"USER_NAME": user_data.get("USER_NAME"), "EMAIL": user_data.get("EMAIL"), "PHONE": user_data.get("PHONE")}
+            access_token = create_access_token(user_id, user_info=user_info)
+
+            # Redis 갱신 (refresh_token 유지, 사용자 정보만 업데이트)
+            redis = await get_redis()
+            existing = await redis.hgetall(user_id)
+            if existing:
+                await redis.hset(user_id, mapping={
+                    **existing,
+                    "USER_NAME": user_data.get("USER_NAME"),
+                    "EMAIL": user_data.get("EMAIL"),
+                })
+            return {"user": user_data, "access_token": access_token}
         except SQLAlchemyError as e:
             await self.db.rollback()
             logger.error(f"회원 정보 수정 실패: {e}", exc_info=True)

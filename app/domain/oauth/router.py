@@ -52,7 +52,13 @@ async def google_login(
         device_name=x_device_name
     )
 
-    return result
+    status = result["status"]
+    if status == "DEVICE_PENDING":
+        return success_response("디바이스 승인 대기 중입니다", result)
+    elif status == "DEVICE_DENIED":
+        return success_response("디바이스 권한이 없습니다", result)
+    else:
+        return success_response("로그인 성공", result)
 
 
 @router.post("/google/token")
