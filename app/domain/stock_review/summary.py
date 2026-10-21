@@ -427,3 +427,122 @@ def filter_news(rows: list[dict], code: str, name: str = "",
         return result[:limit]
 
     return {"종목": flatten(stock_by_day, stock_limit), "시장_업종": flatten(market_by_day, market_limit)}
+
+
+# ============================================================
+# 미국 종목 (KIS 해외 현재가·뉴스 + Finnhub 재무)
+# ============================================================
+# 미국에는 투자자별 순매수 같은 공개 데이터가 없다 — 수급은 일봉 지표(거래량·OBV)로 본다.
+
+_US_TRADABLE = "매매 가능"
+# 종목 코드로 조회해도 여러 종목을 묶은 기사가 온다 ("[개장 전 특징주] 스틸 다이내믹스…"가 AAPL 로 옴)
+_US_NEWS_NOISE = re.compile(r"특징주|주요 종목에 대한|마감 시황|장 마감|개장 전 체크")
+
+
+def us_blocking_reasons(quote: dict) -> list[str]:
+    """해외 현재가상세 e_ordyn — '매매 가능'이 아니면 등록 대상이 아니다 (거래정지 등)"""
+    status = (quote.get("e_ordyn") or "").strip()
+    return [f"매매 불가({status})"] if status and status != _US_TRADABLE else []
+
+
+def summarize_us_quote(quote: dict) -> dict:
+    """해외 현재가상세(HHDFS76200200) → 밸류에이션·위치 요약 (금액 USD)"""
+    last, base = _num(quote.get("last")), _num(quote.get("base"))
+    return {
+        "업종": quote.get("e_icod"),
+        "현재가_USD": last,
+        "전일대비_pct": _pct(last, base),
+        "시가총액_USD": _num(quote.get("tomv")),
+        "PER": _num(quote.get("perx")),
+        "PBR": _num(quote.get("pbrx")),
+        "EPS_USD": _num(quote.get("epsx")),
+        "BPS_USD": _num(quote.get("bpsx")),
+        "52주최고_대비_pct": _pct(last, _num(quote.get("h52p"))),
+        "52주최저_대비_pct": _pct(last, _num(quote.get("l52p"))),
+    }
+
+
+# Finnhub metric 키 → 프롬프트용 이름 (TTM = 최근 4분기 합산)
+_US_METRICS = {
+    "peTTM": "PER_TTM",
+    "pbQuarterly": "PBR",
+    "psTTM": "PSR_TTM",
+    "epsTTM": "EPS_TTM_USD",
+    "epsGrowthTTMYoy": "EPS성장률_TTM_전년비_pct",
+    "epsGrowthQuarterlyYoy": "EPS성장률_최근분기_전년비_pct",
+    "revenueGrowthTTMYoy": "매출성장률_TTM_전년비_pct",
+    "revenueGrowthQuarterlyYoy": "매출성장률_최근분기_전년비_pct",
+    "roeTTM": "ROE_TTM_pct",
+    "operatingMarginTTM": "영업이익률_TTM_pct",
+    "netProfitMarginTTM": "순이익률_TTM_pct",
+    "totalDebt/totalEquityQuarterly": "부채_자본_배",
+    "currentRatioQuarterly": "유동비율_배",
+    "dividendYieldIndicatedAnnual": "배당수익률_pct",
+    "beta": "베타",
+}
+
+# Finnhub series.quarterly 키 → 이름 (개별 분기 값, 비율은 0~1)
+_US_QUARTERLY = {
+    "eps": "EPS_USD",
+    "salesPerShare": "주당매출_USD",
+    "operatingMargin": "영업이익률",
+    "netMargin": "순이익률",
+}
+
+
+def summarize_us_financials(metrics: dict, earnings: list, quarters: int = 5) -> dict:
+    """Finnhub metric/earnings → 재무 요약 (지표 / 분기 추이 / 실적 서프라이즈)"""
+    metric = metrics.get("metric") or {}
+    series = (metrics.get("series") or {}).get("quarterly") or {}
+
+    by_period: dict[str, dict] = {}
+    for key, label in _US_QUARTERLY.items():
+        for point in (series.get(key) or [])[:quarters]:
+            if point.get("period"):
+                by_period.setdefault(point["period"], {"분기말": point["period"]})[label] = _round(point.get("v"), 4)
+    trend = [by_period[p] for p in sorted(by_period, reverse=True)][:quarters]
+
+    surprises = [
+        {
+            "분기말": e.get("period"),
+            "예상EPS_USD": _round(e.get("estimate"), 4),
+            "실제EPS_USD": _round(e.get("actual"), 4),
+            "서프라이즈_pct": _round(e.get("surprisePercent")),
+        }
+        for e in (earnings or [])[:4]
+    ]
+
+    return {
+        "지표": {label: _round(metric.get(key), 4) for key, label in _US_METRICS.items() if metric.get(key) is not None},
+        "분기추이_개별분기": trend,
+        "실적서프라이즈_최근4분기": surprises,
+    }
+
+
+def filter_us_news(rows: list[dict], limit: int = 20, per_day: int = 5) -> dict:
+    """해외뉴스종합 제목 → 날짜별로 고르게 (최신 날짜 먼저, 중복·묶음 기사 제거)
+
+    해외 TR은 종목·거래소를 지정해 조회하므로 받은 기사는 모두 그 종목 기사로 본다
+    (국내처럼 시장·업종 기사를 따로 나누지 않는다). 제목은 한국어 번역본이다.
+    """
+    seen = set()
+    by_day: dict[str, list] = {}
+    ordered = sorted(rows, key=lambda r: (r.get("data_dt", ""), r.get("data_tm", "")), reverse=True)
+    for r in ordered:
+        title = _CONTROL_CHARS.sub("", (r.get("title") or "")).strip()
+        if not title or _US_NEWS_NOISE.search(title):
+            continue
+        key = re.sub(r"\s+", "", title)
+        if key in seen:
+            continue
+        seen.add(key)
+        day = r.get("data_dt") or ""
+        bucket = by_day.setdefault(day, [])
+        if len(bucket) < per_day:
+            bucket.append({"일자": _news_date(day), "시각": _news_time(r.get("data_tm")),
+                           "분류": r.get("class_name"), "제목": title})
+
+    result = []
+    for day in sorted(by_day, reverse=True):
+        result.extend(by_day[day])
+    return {"종목": result[:limit]}

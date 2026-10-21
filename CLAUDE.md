@@ -32,6 +32,8 @@ docker run -p 8000:auto-trader
   **미설정 시 일별 데이터 수집(`day_collect_job`/`us_day_collect_job`)과 수정주가 재적재가
   에러 로그만 남기고 즉시 종료한다** — 서비스는 정상으로 보이지만 OHLCV가 비어간다.
   지정한 사용자는 `AUTH_KEY` 행을 최소 1개 가지고 있어야 한다 (로그인 상태는 불필요).
+- `GEMINI_API_KEY`: AI 종목 분석용 서버 키 (무료 등급 — 모델별 하루 20회, 실패 요청도 셈)
+- `FINNHUB_API_KEY`: 미국 종목 재무 지표 (무료 등급 분당 60회). 없으면 미국 분석은 재무 없이 진행된다
 
 ## 아키텍처
 
@@ -81,7 +83,8 @@ app/
 │   ├── foreign_api.py       # KIS 해외 API (시세, 호가, 주문, 체결)
 │   ├── http_client.py       # 범용 HTTP 클라이언트 (httpx 래퍼, 재시도)
 │   ├── headers.py           # KIS API 헤더 생성
-│   ├── gemini_api.py        # Gemini 호출 (서버 키, 무료 모델 대체·재시도, JSON 스키마 응답)
+│   ├── gemini_api.py        # Gemini 호출 (서버 키, 무료 모델 대체·한도 소진 처리, JSON 스키마 응답)
+│   ├── finnhub_api.py       # 미국 종목 재무 지표 (KIS 해외 TR 엔 재무제표가 없다)
 │   └── expo_push.py         # Expo 푸시 알림 발송
 ├── domain/                  # 도메인별 모듈
 │   ├── routers/             # 라우터 통합 + 비도메인 라우터
@@ -116,7 +119,7 @@ app/
 │   │   ├── stock_data_batch.py       # 일별 OHLCV 수집
 │   │   └── price_adjustment_batch.py # 액면분할 등 가격 보정
 │   ├── trade_history/       # 체결 이력 (TRADE_HISTORY)
-│   ├── stock_review/        # AI 종목 분석 (스윙 등록 전 판단 + 전략 추천, 국내)
+│   ├── stock_review/        # AI 종목 분석 (지금 가격이 합리적인가 + 전략 추천, 국내·미국)
 │   │   ├── summary.py       # KIS 원본 → 프롬프트용 요약 (누적 재무→분기, 뉴스 필터)
 │   │   ├── prompt.py        # 시스템 지시문 (실전 전략 describe_all() 포함)
 │   │   └── service.py       # 백그라운드 분석 + Redis 상태 (DB 미사용)

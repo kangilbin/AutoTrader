@@ -1,5 +1,5 @@
 """
-Stock Review API Router — 스윙 등록 전 Gemini 종목 분석 (국내)
+Stock Review API Router — 스윙 등록 전 Gemini 종목 분석 (국내·미국)
 
 분석은 1분 이상 걸리므로 요청 즉시 RUNNING 을 돌려주고 백그라운드에서 처리한다.
 프론트는 목록을 폴링해 상태(RUNNING/DONE/FAILED)를 확인한다.
@@ -28,7 +28,7 @@ async def request_review(
     user_id: Annotated[str, Depends(get_current_user)],
 ):
     """분석 요청 — 캐시된 결과가 있으면 DONE, 아니면 RUNNING"""
-    result = await service.request_review(user_id, request.ST_CODE)
+    result = await service.request_review(user_id, request.ST_CODE, request.MRKT_CODE)
     return success_response("종목 분석 요청", result)
 
 

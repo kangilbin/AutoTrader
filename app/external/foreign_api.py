@@ -467,14 +467,17 @@ async def find_executions(user_id: str, db: AsyncSession, st_code: str, side: st
 # 시세 조회
 # ============================================================
 
-async def get_inquire_price(user_id: str, code: str, db: AsyncSession, excd: str = "NAS", account_no: str = None):
+async def get_inquire_price(user_id: str, code: str, db: AsyncSession, excd: str = "NAS", account_no: str = None,
+                            access_data: Optional[dict] = None):
     """해외 주식 현재가상세 조회 (HHDFS76200200) — excd: 정식코드 NYS/NAS/AMS
 ㅂ
     현재체결가(HHDFS00000300)와 달리 open/high/low 를 함께 제공하여
     실시간 지표(ATR 등) 계산에 필요한 당일 고가/저가를 얻을 수 있다.
     단, 현지통화 등락률 필드는 없으므로 (last-base)/base 로 계산해 사용한다.
+
+    access_data: 호출측이 미리 고른 인증 (여러 TR을 같은 키로 이어 부를 때)
     """
-    access_data = await _quote_auth(user_id, db, account_no)
+    access_data = access_data or await _quote_auth(user_id, db, account_no)
     url = settings.DEV_API_URL if access_data.get("simulation_yn") == "Y" else settings.REAL_API_URL
     path = "uapi/overseas-price/v1/quotations/price-detail"
     api_url = f"{url}/{path}"
@@ -523,9 +526,13 @@ async def get_target_price(user_id: str, code: str, db: AsyncSession, excd: str 
     return output[0]
 
 
-async def get_stock_data(user_id: str, code: str, start_date: str, end_date: str, db: AsyncSession, excd: str = "NAS", account_no: str = None):
-    """해외 주식 기간별 데이터 조회 (excd: 정식코드 NYS/NAS/AMS)"""
-    access_data = await _quote_auth(user_id, db, account_no)
+async def get_stock_data(user_id: str, code: str, start_date: str, end_date: str, db: AsyncSession, excd: str = "NAS", account_no: str = None,
+                         access_data: Optional[dict] = None):
+    """해외 주식 기간별 데이터 조회 (excd: 정식코드 NYS/NAS/AMS)
+
+    TR은 end_date(BYMD)부터 과거로 최대 100봉을 준다 — start_date 는 쓰지 않는다.
+    """
+    access_data = access_data or await _quote_auth(user_id, db, account_no)
     url = settings.DEV_API_URL if access_data.get("simulation_yn") == "Y" else settings.REAL_API_URL
     path = "uapi/overseas-price/v1/quotations/dailyprice"
     api_url = f"{url}/{path}"
@@ -565,6 +572,32 @@ async def get_stock_data(user_id: str, code: str, start_date: str, end_date: str
             item.update(converted_item)
 
     return body
+
+
+async def get_news_titles(user_id: str, code: str, db: AsyncSession, excd: str = "NAS",
+                          data_dt: str = "", data_tm: str = "", access_data: Optional[dict] = None) -> list:
+    """해외뉴스종합(제목) — 최대 10건, 최신순. 제목은 한국어 번역본
+
+    NATION_CD·EXCHANGE_CD·SYMB 를 모두 지정해야 해당 종목 기사가 온다 (거래소를 비우면 0건).
+    다음 페이지는 받은 목록 마지막 기사의 data_dt/data_tm 을 넘긴다 — 그 기사가 다시 포함되므로
+    호출측에서 news_key 로 중복을 걸러야 한다.
+    """
+    access_data = access_data or await _quote_auth(user_id, db)
+    url = settings.DEV_API_URL if access_data.get("simulation_yn") == "Y" else settings.REAL_API_URL
+    headers = kis_headers(access_data, tr_id="HHPSTH60100C1")
+    query = {
+        "INFO_GB": "",
+        "CLASS_CD": "",
+        "NATION_CD": "US",
+        "EXCHANGE_CD": excd,
+        "SYMB": code,
+        "DATA_DT": data_dt,
+        "DATA_TM": data_tm,
+        "CTS": "",
+    }
+    response = await kis_fetch("GET", f"{url}/uapi/overseas-price/v1/quotations/news-title",
+                               access_data, params=query, headers=headers)
+    return response["body"].get("outblock1") or []
 
 
 async def get_inquire_asking_price(user_id: str, code: str, db: AsyncSession, excd: str = "NAS", account_no: str = None):

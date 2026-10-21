@@ -224,5 +224,54 @@ class SummarizeInvestorsTest(unittest.TestCase):
         self.assertEqual(result["최근10일"][0]["일자"], "20261025")
 
 
+class UsSummaryTest(unittest.TestCase):
+    """미국: KIS 해외 현재가·뉴스 + Finnhub 재무"""
+
+    def test_blocking_only_when_not_tradable(self):
+        self.assertEqual(s.us_blocking_reasons({"e_ordyn": "매매 가능"}), [])
+        self.assertEqual(s.us_blocking_reasons({"e_ordyn": "매매 불가"}), ["매매 불가(매매 불가)"])
+
+    def test_quote(self):
+        q = s.summarize_us_quote({"last": "110", "base": "100", "perx": "38.79", "tomv": "4938239454000",
+                                  "h52p": "220", "l52p": "55", "e_icod": "컴퓨터전자장비/기기"})
+        self.assertEqual(q["전일대비_pct"], 10.0)
+        self.assertEqual(q["PER"], 38.79)
+        self.assertEqual(q["52주최고_대비_pct"], -50.0)
+        self.assertEqual(q["52주최저_대비_pct"], 100.0)
+
+    def test_financials(self):
+        metrics = {
+            "metric": {"peTTM": 38.53, "roeTTM": 137.18, "totalDebt/totalEquityQuarterly": 0.78, "unknownKey": 1},
+            "series": {"quarterly": {
+                "eps": [{"period": "2026-06-27", "v": 2.0244}, {"period": "2026-03-28", "v": 2.0086}],
+                "netMargin": [{"period": "2026-06-27", "v": 0.2723}],
+            }},
+        }
+        earnings = [{"period": "2026-06-30", "estimate": 1.9271, "actual": 1.91, "surprisePercent": -0.8873}]
+        f = s.summarize_us_financials(metrics, earnings)
+        self.assertEqual(f["지표"]["PER_TTM"], 38.53)
+        self.assertEqual(f["지표"]["부채_자본_배"], 0.78)
+        self.assertNotIn("unknownKey", f["지표"])
+        self.assertEqual(f["분기추이_개별분기"][0], {"분기말": "2026-06-27", "EPS_USD": 2.0244, "순이익률": 0.2723})
+        self.assertEqual(f["실적서프라이즈_최근4분기"][0]["서프라이즈_pct"], -0.89)
+
+    def test_financials_empty(self):
+        f = s.summarize_us_financials({}, [])
+        self.assertEqual(f, {"지표": {}, "분기추이_개별분기": [], "실적서프라이즈_최근4분기": []})
+
+    def test_news_spread_and_noise(self):
+        rows = [{"news_key": f"k{i}", "data_dt": "20261020", "data_tm": f"1{i}0000", "title": f"애플 기사 {i}"}
+                for i in range(8)]
+        rows += [{"news_key": "old", "data_dt": "20261016", "data_tm": "151502", "title": "애플, 메타와 협력"},
+                 {"news_key": "noise", "data_dt": "20261020", "data_tm": "210709",
+                  "title": "[개장 전 특징주] 스틸 다이내믹스, EPS 기대 못 미치며 하락"}]
+        news = s.filter_us_news(rows, per_day=5)["종목"]
+        titles = [n["제목"] for n in news]
+        self.assertEqual(len(titles), 6)
+        self.assertIn("애플, 메타와 협력", titles)
+        self.assertNotIn("[개장 전 특징주] 스틸 다이내믹스, EPS 기대 못 미치며 하락", titles)
+        self.assertEqual(news[-1]["일자"], "2026-10-16 (금)")
+
+
 if __name__ == "__main__":
     unittest.main()

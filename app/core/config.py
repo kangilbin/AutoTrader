@@ -79,6 +79,8 @@ class Settings(BaseSettings):
     GEMINI_MODEL: str = "gemini-3.8-flash"
     # 무료 등급은 모델별로 혼잡(503)이 따로 온다 — 기본 모델이 막히면 이 순서로 넘어간다 (쉼표 구분)
     # 무료 일일 한도도 모델별이다 (예: 3.8-flash 하루 20회). Flash-Lite 는 품질이 조금 낮지만 마지막 수단으로 둔다
+    # Finnhub (미국 종목 재무 — KIS 해외 TR 에는 재무제표가 없다). 무료 등급 분당 60회
+    FINNHUB_API_KEY: Optional[str] = None
     GEMINI_FALLBACK_MODELS: str = "gemini-3.7-flash,gemini-3.6-flash,gemini-3.5-flash,gemini-3.5-flash-lite"
 
     # Email

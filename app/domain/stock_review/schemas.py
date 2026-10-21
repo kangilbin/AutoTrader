@@ -9,8 +9,9 @@ Verdict = Literal["적합", "보류", "부적합"]
 
 
 class StockReviewRequest(BaseModel):
-    """종목 리뷰 요청 (국내 종목)"""
+    """종목 리뷰 요청 — MRKT_CODE 를 안 보내면 국내(J). 미국은 NYS/NAS/AMS"""
     ST_CODE: str
+    MRKT_CODE: Literal["J", "NYS", "NAS", "AMS"] = "J"
 
 
 class GeminiReviewBase(BaseModel):

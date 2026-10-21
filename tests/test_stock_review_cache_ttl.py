@@ -53,5 +53,30 @@ class CacheTtlTest(unittest.TestCase):
         self.assertEqual(_cache_ttl(now), _until(now, _at(2026, 10, 26, 9)))
 
 
+NY = ZoneInfo("America/New_York")
+
+
+class UsCacheTtlTest(unittest.TestCase):
+    """미국은 뉴욕 현지 시각으로 장중·다음 개장(09:30)을 판단한다"""
+
+    def test_us_intraday_is_short(self):
+        now = datetime(2026, 10, 21, 11, 0, tzinfo=NY).astimezone(KST)   # 뉴욕 수요일 11:00
+        self.assertEqual(_cache_ttl(now, "NAS"), _INTRADAY_TTL)
+
+    def test_us_after_close_until_next_open(self):
+        now = datetime(2026, 10, 21, 17, 0, tzinfo=NY).astimezone(KST)   # 뉴욕 수요일 장 마감 후
+        self.assertEqual(_cache_ttl(now, "NYS"), _until(now, datetime(2026, 10, 22, 9, 30, tzinfo=NY)))
+
+    def test_us_friday_after_close_until_monday(self):
+        now = datetime(2026, 10, 23, 18, 0, tzinfo=NY).astimezone(KST)
+        self.assertEqual(_cache_ttl(now, "AMS"), _until(now, datetime(2026, 10, 26, 9, 30, tzinfo=NY)))
+
+    def test_korean_daytime_is_us_closed(self):
+        """한국 낮(뉴욕 새벽)은 국내 장중이어도 미국 기준으론 장 밖이다"""
+        now = _at(2026, 10, 21, 11)
+        self.assertEqual(_cache_ttl(now, "J"), _INTRADAY_TTL)
+        self.assertGreater(_cache_ttl(now, "NAS"), _INTRADAY_TTL)
+
+
 if __name__ == "__main__":
     unittest.main()
