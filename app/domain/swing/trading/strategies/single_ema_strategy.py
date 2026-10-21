@@ -18,7 +18,8 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
     """단일 20EMA 매매 전략"""
 
     # 전략 이름
-    name = "단일 20EMA 전략"
+    # 사용자에게 보이는 이름 (AI 종목 분석 추천 전략 등) — 앱의 등록·설정 화면 표기와 같게 둔다
+    name = "단일 이평선"
 
     # ========================================
     # 실전 전용 파라미터

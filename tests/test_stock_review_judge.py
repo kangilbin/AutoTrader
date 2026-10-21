@@ -18,7 +18,7 @@ from app.domain.stock_review.schemas import GeminiReview
 from app.domain.stock_review.service import CollectedData, StockReviewService, _now
 from app.exceptions import ExternalServiceError
 
-STRATEGIES = {"S": {"이름": "단일 20EMA 전략"}, "X": {"이름": "다른 전략"}}
+STRATEGIES = {"S": {"이름": "단일 이평선"}, "X": {"이름": "다른 전략"}}
 
 
 def _review(verdict: str) -> GeminiReview:
@@ -63,7 +63,7 @@ class JudgeTest(unittest.TestCase):
     def test_suitable_single_strategy_without_extra_call(self):
         result, calls = self._judge("적합", {"S": STRATEGIES["S"]})
         self.assertEqual(result.RECOMMENDED_SWING_TYPE, "S")
-        self.assertEqual(result.RECOMMENDED_STRATEGY_NAME, "단일 20EMA 전략")
+        self.assertEqual(result.RECOMMENDED_STRATEGY_NAME, "단일 이평선")
         self.assertEqual(calls, ["GeminiReview"])
 
     def test_suitable_multiple_strategies_asks_second_step(self):
