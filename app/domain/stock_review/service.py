@@ -32,8 +32,10 @@ from app.common.redis import get_redis
 from app.domain.stock.repository import StockRepository
 from app.domain.stock.stock_data_batch import _SESSION_COMPLETE, is_today_incomplete
 from app.domain.stock_review import summary
-from app.domain.stock_review.prompt import build_prompt, build_system_instruction
-from app.domain.stock_review.schemas import StockReviewResponse, review_schema
+from app.domain.stock_review.prompt import (
+    build_analysis_instruction, build_prompt, build_strategy_instruction, build_strategy_prompt,
+)
+from app.domain.stock_review.schemas import GeminiReview, StockReviewResponse, strategy_pick_schema
 from app.domain.swing.trading.trading_strategy_factory import TradingStrategyFactory
 from app.core.market_code import is_overseas
 from app.exceptions import AppError, NotFoundError
@@ -375,16 +377,20 @@ class StockReviewService:
 
     @staticmethod
     async def judge(collected: CollectedData) -> StockReviewResponse:
-        """Gemini 판단 — DB를 쓰지 않는다 (수 분 걸리는 동안 커넥션을 붙잡지 않도록)"""
+        """Gemini 판단 — DB를 쓰지 않는다 (수 분 걸리는 동안 커넥션을 붙잡지 않도록)
+
+        1단계 투자 판단에는 매매 전략 정보를 넣지 않는다. '적합'일 때만 2단계로 전략을 고른다.
+        """
         c = collected
-        # 실전 팩토리에 등록된 전략만 후보 — 전략을 추가하면 여기도 자동으로 늘어난다
-        strategies = TradingStrategyFactory.describe_all()
         prompt = build_prompt(c.st_code, c.st_nm, c.as_of, c.data)
         review, model = await gemini_api.generate_structured(
-            prompt, review_schema(list(strategies)),
-            system_instruction=build_system_instruction(strategies, market=_market(c.mrkt)),
+            prompt, GeminiReview, system_instruction=build_analysis_instruction(_market(c.mrkt)),
         )
-        swing_type = review.recommended_swing_type
+
+        strategies = TradingStrategyFactory.describe_all()
+        swing_type = (
+            await StockReviewService._pick_strategy(c, review, strategies) if review.verdict == "적합" else None
+        )
 
         return StockReviewResponse(
             MRKT_CODE=c.mrkt, ST_CODE=c.st_code, ST_NM=c.st_nm,
@@ -395,7 +401,7 @@ class StockReviewService:
             FINANCIAL_VIEW=review.financials,
             TREND_VIEW=review.trend_flow,
             RECOMMENDED_SWING_TYPE=swing_type,
-            RECOMMENDED_STRATEGY_NAME=strategies[swing_type]["이름"],
+            RECOMMENDED_STRATEGY_NAME=strategies[swing_type]["이름"] if swing_type else None,
             POSITIVES=review.positives,
             RISKS=review.risks,
             KEY_NEWS=review.key_news,
@@ -404,6 +410,30 @@ class StockReviewService:
             MODEL=model,
             REVIEWED_AT=c.now.isoformat(timespec="seconds"),
         )
+
+    @staticmethod
+    async def _pick_strategy(c: CollectedData, review: GeminiReview, strategies: dict[str, dict]) -> Optional[str]:
+        """2단계 — '적합' 종목에 맞는 실전 전략 하나 (실전 팩토리에 등록된 전략만 후보)
+
+        전략이 하나뿐이면 고를 것이 없으니 Gemini를 부르지 않는다 (무료 일일 한도 절약).
+        선택이 실패해도 투자 판단은 그대로 돌려준다 — 추천 전략만 비운다.
+        """
+        if len(strategies) == 1:
+            return next(iter(strategies))
+        try:
+            pick, _ = await gemini_api.generate_structured(
+                build_strategy_prompt(
+                    c.st_code, c.st_nm,
+                    analysis={"판단": review.verdict, "요약": review.summary, "주가흐름": review.trend_flow},
+                    price=c.data.get("일봉_지표", {}),
+                ),
+                strategy_pick_schema(list(strategies)),
+                system_instruction=build_strategy_instruction(strategies),
+            )
+            return pick.recommended_swing_type
+        except AppError as e:
+            logger.warning(f"[종목리뷰] {c.st_code} 전략 선택 실패 — 추천 전략 없이 반환: {e.message}")
+            return None
 
     async def _fetch_bars(self, user_id: str, st_code: str, now: datetime, auth: dict) -> list[dict]:
         """최근 6개월 일봉 (KIS 1회 100봉 제한 → 두 구간으로 나눠 조회)"""

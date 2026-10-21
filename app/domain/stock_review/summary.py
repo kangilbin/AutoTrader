@@ -38,7 +38,6 @@ _NEWS_NOISE = re.compile(
 _BROKEN_MIDDLE_DOT = "\x1a"
 _CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]")
 
-EMA_PERIOD = 20  # 실전 전략(SingleEMAStrategy)의 주 지표와 같은 기간
 
 
 def _num(value) -> Optional[float]:
@@ -131,17 +130,21 @@ def summarize_quote(quote: dict) -> dict:
 
 
 # ============================================================
-# 일봉 / 기술 지표
+# 일봉 — 일반 투자 관점 요약
 # ============================================================
+# 매매 전략 지표(EMA20 괴리·OBV·ADX 등)는 넣지 않는다. 그 지표를 주면 모델이 투자 판단을
+# '전략 진입 조건' 관점으로만 설명했다. 일반 투자자가 보는 흐름·위치·변동성만 넘긴다.
 
 def _bar_arrays(bars: list[dict]):
     rows = sorted(bars, key=lambda b: str(b["STCK_BSOP_DATE"]))
     dates = [str(b["STCK_BSOP_DATE"]) for b in rows]
-    o, h, l, c, v = (
+    c, v = (
         np.array([float(b[k]) for b in rows], dtype=float)
-        for k in ("STCK_OPRC", "STCK_HGPR", "STCK_LWPR", "STCK_CLPR", "ACML_VOL")
+        for k in ("STCK_CLPR", "ACML_VOL")
     )
-    return dates, o, h, l, c, v
+    h = np.array([float(b["STCK_HGPR"]) for b in rows], dtype=float)
+    l = np.array([float(b["STCK_LWPR"]) for b in rows], dtype=float)
+    return dates, h, l, c, v
 
 
 def _last(arr) -> Optional[float]:
@@ -150,59 +153,51 @@ def _last(arr) -> Optional[float]:
     return _round(arr[-1])
 
 
-def _streak_vs(close: np.ndarray, line: np.ndarray) -> int:
-    """기준선 위(+)/아래(-) 연속 일수. NaN 구간에서 멈춘다"""
-    if len(close) == 0 or np.isnan(line[-1]):
-        return 0
-    above = close[-1] >= line[-1]
-    n = 0
-    for c, e in zip(close[::-1], line[::-1]):
-        if np.isnan(e) or (c >= e) != above:
-            break
-        n += 1
-    return n if above else -n
+def _monthly(dates: list[str], close: np.ndarray) -> list[dict]:
+    """월별 마지막 종가와 전월 대비 등락 — 6개월 흐름을 한눈에 (첫 달은 기간 중간부터라 등락 없음)"""
+    last_by_month: dict[str, float] = {}
+    for d, c in zip(dates, close):
+        last_by_month[f"{d[:4]}-{d[4:6]}"] = float(c)
+    months = sorted(last_by_month)
+    return [
+        {"월": m, "월말종가": _round(last_by_month[m]),
+         "등락_pct": _pct(last_by_month[m], last_by_month[months[i - 1]]) if i > 0 else None}
+        for i, m in enumerate(months)
+    ]
+
+
+def _max_drawdown_pct(close: np.ndarray) -> Optional[float]:
+    """기간 중 고점 대비 가장 크게 빠졌던 폭 (%)"""
+    if len(close) < 2:
+        return None
+    peaks = np.maximum.accumulate(close)
+    return _round(float(((close - peaks) / peaks).min()) * 100)
 
 
 def summarize_price(bars: list[dict], last_bar_incomplete: bool = False) -> dict:
-    """6개월 일봉 → 추세·모멘텀·변동성·수급 지표 요약
+    """6개월 일봉 → 흐름·위치·변동성·거래량 요약 (일반 투자 관점)
 
     Args:
-        bars: STCK_BSOP_DATE/STCK_OPRC/STCK_HGPR/STCK_LWPR/STCK_CLPR/ACML_VOL 행 (순서 무관)
-        last_bar_incomplete: 마지막 봉이 장중 미완성인지 (지표에도 그 값이 반영됨)
+        bars: STCK_BSOP_DATE/STCK_HGPR/STCK_LWPR/STCK_CLPR/ACML_VOL 행 (순서 무관)
+        last_bar_incomplete: 마지막 봉이 장중 미완성인지 (요약에도 그 값이 반영됨)
     """
     if not bars:
         return {"봉수": 0}
 
-    dates, _, high, low, close, vol = _bar_arrays(bars)
+    dates, high, low, close, vol = _bar_arrays(bars)
     n = len(close)
     last = close[-1]
 
     def ret(days: int) -> Optional[float]:
         return _pct(last, close[-days - 1]) if n > days else None
 
-    ema20 = ta.EMA(close, timeperiod=EMA_PERIOD) if n >= EMA_PERIOD else np.full(n, np.nan)
-    ema60 = ta.EMA(close, timeperiod=60) if n >= 60 else np.full(n, np.nan)
-    rsi = ta.RSI(close, timeperiod=14) if n > 14 else None
-    adx = ta.ADX(high, low, close, timeperiod=14) if n >= 28 else None
-    plus_di = ta.PLUS_DI(high, low, close, timeperiod=14) if n > 14 else None
-    minus_di = ta.MINUS_DI(high, low, close, timeperiod=14) if n > 14 else None
-    atr = ta.ATR(high, low, close, timeperiod=14) if n > 14 else None
-    obv = ta.OBV(close, vol)
+    def vs_ma(days: int) -> Optional[float]:
+        return _pct(last, float(close[-days:].mean())) if n >= days else None
 
     hi6, lo6 = float(high.max()), float(low.min())
-    # 거래량 배수는 마지막 봉을 뺀 직전 20일 평균과 비교 (미완성 봉이 평균을 깎지 않게)
-    vol_base = vol[-21:-1] if n > 20 else vol[:-1]
-    avg_vol20 = float(vol_base.mean()) if len(vol_base) else None
-
-    recent = [
-        {
-            "일자": dates[i],
-            "종가": _round(close[i]),
-            "등락_pct": _pct(close[i], close[i - 1]) if i > 0 else None,
-            "거래량": int(vol[i]),
-        }
-        for i in range(max(0, n - 20), n)
-    ]
+    daily = np.diff(close) / close[:-1] if n > 1 else np.array([])
+    recent_daily = daily[-60:]
+    rsi = ta.RSI(close, timeperiod=14) if n > 14 else None
 
     return {
         "봉수": n,
@@ -212,25 +207,23 @@ def summarize_price(bars: list[dict], last_bar_incomplete: bool = False) -> dict
         "수익률_pct": {"1개월": ret(21), "3개월": ret(63), "6개월": _pct(last, close[0])},
         "6개월_최고가": _round(hi6),
         "6개월_최저가": _round(lo6),
+        "6개월최고_대비_pct": _pct(last, hi6),
         # 0 = 6개월 최저, 100 = 6개월 최고
         "6개월범위_위치_pct": _round((last - lo6) / (hi6 - lo6) * 100) if hi6 > lo6 else None,
-        "EMA20": _last(ema20),
-        "EMA20_괴리_pct": _pct(last, ema20[-1]) if not np.isnan(ema20[-1]) else None,
-        "EMA20_5일기울기_pct": (
-            _pct(ema20[-1], ema20[-6]) if n >= EMA_PERIOD + 5 and not np.isnan(ema20[-6]) else None
-        ),
-        "EMA20_위아래_연속일수": _streak_vs(close, ema20),
-        "EMA60_괴리_pct": _pct(last, ema60[-1]) if not np.isnan(ema60[-1]) else None,
+        "이동평균_대비_pct": {"20일": vs_ma(20), "60일": vs_ma(60), "120일": vs_ma(120)},
+        "6개월_최대낙폭_pct": _max_drawdown_pct(close),
+        "일간변동성_최근60일_pct": _round(float(recent_daily.std()) * 100) if len(recent_daily) > 1 else None,
         "RSI14": _last(rsi),
-        "ADX14": _last(adx),
-        "+DI": _last(plus_di),
-        "-DI": _last(minus_di),
-        "ATR14_종가대비_pct": _round(atr[-1] / last * 100) if atr is not None and last else None,
-        # OBV 20일 변화 방향과 가격 20일 변화 방향 — 어긋나면 수급 다이버전스
-        "OBV_20일변화": _round(obv[-1] - obv[-21]) if n > 20 else None,
-        "가격_20일변화_pct": ret(20),
-        "거래량_20일평균대비_배": _round(vol[-1] / avg_vol20) if avg_vol20 else None,
-        "최근20봉": recent,
+        # 최근 한 달 거래가 6개월 평소보다 활발한가 (1보다 크면 관심 증가)
+        "거래량_최근1개월_6개월평균대비_배": (
+            _round(float(vol[-21:].mean()) / float(vol.mean())) if n > 21 and vol.mean() else None
+        ),
+        "월별흐름": _monthly(dates, close),
+        "최근10일": [
+            {"일자": dates[i], "종가": _round(close[i]),
+             "등락_pct": _pct(close[i], close[i - 1]) if i > 0 else None}
+            for i in range(max(0, n - 10), n)
+        ],
     }
 
 

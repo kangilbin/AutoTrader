@@ -183,28 +183,44 @@ def _bars(closes: list[float]) -> list[dict]:
 
 
 class SummarizePriceTest(unittest.TestCase):
+    """일반 투자 관점 요약 — 매매 전략 지표(EMA20·OBV·ADX)는 넘기지 않는다"""
 
     def test_uptrend(self):
-        closes = [100 + i for i in range(120)]
+        closes = [100 + i for i in range(130)]
         result = s.summarize_price(_bars(closes))
 
-        self.assertEqual(result["봉수"], 120)
-        self.assertGreater(result["EMA20_괴리_pct"], 0)
-        self.assertGreater(result["EMA20_5일기울기_pct"], 0)
-        self.assertGreater(result["EMA20_위아래_연속일수"], 0)
-        self.assertGreater(result["6개월범위_위치_pct"], 95)
+        self.assertEqual(result["봉수"], 130)
         self.assertGreater(result["수익률_pct"]["6개월"], 0)
-        self.assertEqual(len(result["최근20봉"]), 20)
-        self.assertEqual(result["최근20봉"][-1]["종가"], 219)
+        self.assertGreater(result["6개월범위_위치_pct"], 95)
+        self.assertGreater(result["이동평균_대비_pct"]["20일"], 0)
+        self.assertGreater(result["이동평균_대비_pct"]["120일"], 0)
+        self.assertEqual(result["6개월_최대낙폭_pct"], 0.0)
+        self.assertEqual(len(result["최근10일"]), 10)
+        self.assertEqual(result["최근10일"][-1]["종가"], 229)
+
+    def test_no_strategy_indicators(self):
+        """전략 지표가 섞이면 모델이 투자 판단을 전략 진입 조건으로 설명한다"""
+        result = s.summarize_price(_bars([100 + i for i in range(130)]))
+        keys = " ".join(result)
+        for banned in ("EMA", "OBV", "ADX", "DI", "ATR"):
+            self.assertNotIn(banned, keys)
+
+    def test_max_drawdown_and_monthly(self):
+        closes = [100] * 30 + [80] * 30 + [120] * 30
+        result = s.summarize_price(_bars(closes))
+        self.assertEqual(result["6개월_최대낙폭_pct"], -20.0)
+        monthly = result["월별흐름"]
+        self.assertIsNone(monthly[0]["등락_pct"])
+        self.assertEqual(monthly[-1]["월말종가"], 120)
 
     def test_input_order_does_not_matter(self):
         bars = _bars([100 + i for i in range(60)])
         self.assertEqual(s.summarize_price(bars)["종가"], s.summarize_price(bars[::-1])["종가"])
 
-    def test_short_history_has_no_long_indicators(self):
+    def test_short_history(self):
         result = s.summarize_price(_bars([100 + i for i in range(10)]))
-        self.assertIsNone(result["EMA20"])
         self.assertIsNone(result["RSI14"])
+        self.assertIsNone(result["이동평균_대비_pct"]["20일"])
 
     def test_empty(self):
         self.assertEqual(s.summarize_price([]), {"봉수": 0})

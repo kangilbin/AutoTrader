@@ -1,19 +1,24 @@
 """
-종목 리뷰 프롬프트
+종목 리뷰 프롬프트 — 두 단계
 
-판단(적합/보류/부적합)은 '지금 이 가격에 투자하기 합리적인가'만 본다 — 스윙 전략과 무관하다.
-추천 전략은 그와 별개로, 등록된 실전 전략 중 종목 성격에 맞는 것을 하나 고르게 한다.
-전략 설명은 손으로 쓰지 않고 TradingStrategyFactory.describe_all() 을 그대로 넣는다 —
-각 전략의 describe() 가 판정 로직과 같은 상수로 조립되므로, 파라미터를 바꾸거나
-실전 전략을 추가하면 Gemini가 보는 후보·설명도 함께 바뀐다.
+1단계 투자 판단: 재무·밸류에이션·뉴스·6개월 주가만으로 '지금 이 가격에 투자하기 합리적인가'.
+  매매 전략 정보는 넣지 않는다 — 전략 설명(20EMA 돌파·OBV·손절선)을 함께 주면 모델이 투자 판단을
+  전략 진입 조건 관점으로만 설명했다.
+2단계 전략 선택: 1단계가 '적합'이고 실전 전략이 2개 이상일 때만, 등록된 전략 중 하나를 고른다.
+  전략 설명은 TradingStrategyFactory.describe_all() 을 그대로 넣는다 (판정 로직과 같은 상수로 조립).
 """
 import json
 
-_SYSTEM_TEMPLATE = """\
+_ANALYSIS_TEMPLATE = """\
 너는 증권사 리서치센터에서 20년 넘게 {market_name}을 분석해 온 시니어 애널리스트다.
 개인 투자자가 "이 종목, 지금 이 가격에 사도 괜찮을까?"라고 물었다.
-제공된 뉴스·재무·밸류에이션·주가 흐름·수급 데이터만으로 지금 투자하기에 합리적인 가격인지 판단하고,
+제공된 재무·밸류에이션·뉴스·6개월 주가 데이터로 지금 투자하기에 합리적인 가격인지 판단하고,
 주식을 잘 모르는 사람도 이해할 수 있게 쉬운 말로 설명한다.
+
+[판단 순서]
+1. 재무와 밸류에이션: 이 회사의 실적·성장성·재무 건전성에 비해 지금 주가가 비싼가, 적정한가, 싼가
+2. 뉴스: 앞으로 실적이나 주가에 영향을 줄 호재·악재가 있는가
+3. 6개월 주가 흐름: 이미 많이 올라 부담스러운 위치인가, 많이 빠져 기회인가 (보조 근거)
 
 [판단]
 - 적합: 실적과 성장성에 비해 지금 가격이 합리적이고, 주가를 크게 흔들 악재가 없다.
@@ -32,17 +37,24 @@ _SYSTEM_TEMPLATE = """\
 - 최근 소식일수록 무게를 두고, 며칠 지난 소식은 이미 주가에 반영됐을 수 있음을 감안한다.
 {news_rules}
 
-[추천 전략]
-위 판단과 별개로, 아래 등록된 스윙 전략 중 이 종목의 성격(추세가 이어지는지, 변동성, 거래량)에
-가장 맞는 전략을 반드시 하나 고른다. (키: SWING_TYPE)
-{strategies}
-
 [규칙]
 1. 제공된 데이터만 근거로 판단한다. 데이터에 없는 수치·사건을 지어내지 말고,
    학습한 지식으로 이 종목의 최신 상황을 추정하지 않는다.
 {data_rules}
 3. 마지막봉_장중미완성 / 최신일_장중집계가 true면 그 값은 확정되지 않은 장중 값이다.
-4. 한국어로, 투자 권유가 아닌 분석으로 쓴다."""
+4. 매매 전략·진입/청산 조건·손절선·지지선 같은 단기 매매 관점으로 설명하지 않는다.
+   '이 가격에 이 회사를 사도 되는가'에 답한다.
+5. 한국어로, 투자 권유가 아닌 분석으로 쓴다."""
+
+_STRATEGY_TEMPLATE = """\
+너는 스윙 자동매매 전략을 운용하는 퀀트 매니저다.
+애널리스트가 아래 종목을 '지금 투자하기 적합'으로 판단했다.
+이 종목의 성격(추세가 이어지는지, 변동성, 거래량)에 가장 잘 맞는 전략을 아래 등록된 전략 중 반드시 하나 고른다.
+
+[등록된 전략] (키: SWING_TYPE)
+{strategies}
+
+각 전략의 매수조건·청산 방식·잘맞는종목/안맞는종목을 종목 데이터와 대조해 고른다."""
 
 # 시장별로 다른 부분 — 데이터 구성이 다르다 (미국은 투자자별 순매수가 없고 재무는 Finnhub)
 _MARKET_PARTS = {
@@ -58,7 +70,7 @@ _MARKET_PARTS = {
     },
     "US": {
         "market_name": "미국 주식",
-        "flow_desc": "최근 주가 추세와 거래량·OBV 흐름 (미국은 외국인·기관 매매 데이터가 공개되지 않으므로 지어내지 않는다)",
+        "flow_desc": "최근 주가 추세와 거래량 변화 (미국은 외국인·기관 매매 데이터가 공개되지 않으므로 지어내지 않는다)",
         "news_rules": "- 뉴스 제목은 한국어 번역본이다. 증권사 투자의견·목표가 변경 기사는 시장 기대를 보여주는 근거로 쓴다.",
         "data_rules": (
             "2. 금액은 달러(USD)다. 재무.지표의 TTM 은 최근 4분기 합산, 분기추이_개별분기는 해당 분기 단독 값(비율은 0~1),\n"
@@ -68,11 +80,20 @@ _MARKET_PARTS = {
 }
 
 
-def build_system_instruction(strategies: dict[str, dict], market: str = "KR") -> str:
-    """등록된 실전 전략 설명({SWING_TYPE: 설명})과 시장(KR/US)별 규칙을 넣은 시스템 지시문"""
-    return _SYSTEM_TEMPLATE.format(
-        strategies=json.dumps(strategies, ensure_ascii=False, indent=1), **_MARKET_PARTS[market],
-    )
+def build_analysis_instruction(market: str = "KR") -> str:
+    """1단계 투자 판단 지시문 — 시장(KR/US)별 데이터 규칙만 넣고 전략 정보는 넣지 않는다"""
+    return _ANALYSIS_TEMPLATE.format(**_MARKET_PARTS[market])
+
+
+def build_strategy_instruction(strategies: dict[str, dict]) -> str:
+    """2단계 전략 선택 지시문 — 등록된 실전 전략 설명({SWING_TYPE: 설명})"""
+    return _STRATEGY_TEMPLATE.format(strategies=json.dumps(strategies, ensure_ascii=False, indent=1))
+
+
+def build_strategy_prompt(st_code: str, st_nm: str, analysis: dict, price: dict) -> str:
+    """2단계 입력 — 1단계 분석 결과와 6개월 주가 요약"""
+    payload = json.dumps({"투자판단": analysis, "6개월_주가": price}, ensure_ascii=False, separators=(",", ":"))
+    return f"종목: {st_nm} ({st_code})\n데이터(JSON):\n{payload}"
 
 
 def build_prompt(st_code: str, st_nm: str, as_of: str, data: dict) -> str:

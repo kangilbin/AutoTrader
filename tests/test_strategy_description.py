@@ -15,8 +15,8 @@ from unittest.mock import patch
 
 from pydantic import ValidationError
 
-from app.domain.stock_review.prompt import build_system_instruction
-from app.domain.stock_review.schemas import review_schema
+from app.domain.stock_review.prompt import build_analysis_instruction, build_strategy_instruction
+from app.domain.stock_review.schemas import strategy_pick_schema
 from app.domain.swing.trading.strategies.single_ema_strategy import SingleEMAStrategy
 from app.domain.swing.trading.trading_strategy_factory import TradingStrategyFactory
 
@@ -58,28 +58,30 @@ class SingleEMADescriptionTest(unittest.TestCase):
         self.assertIn("32~80%", SingleEMAStrategy.describe()["매수수량"])
 
 
-class ReviewSchemaTest(unittest.TestCase):
-
-    def _payload(self, swing_type):
-        return {"verdict": "보류", "summary": "s", "news_market": "n", "valuation": "v", "financials": "f",
-                "trend_flow": "t", "positives": [], "risks": [], "key_news": [],
-                "recommended_swing_type": swing_type}
+class StrategyPickTest(unittest.TestCase):
 
     def test_only_registered_swing_types(self):
-        schema = review_schema(["S"])
-        self.assertEqual(schema.model_validate(self._payload("S")).recommended_swing_type, "S")
+        schema = strategy_pick_schema(["S"])
+        self.assertEqual(schema.model_validate({"recommended_swing_type": "S"}).recommended_swing_type, "S")
         with self.assertRaises(ValidationError):
-            schema.model_validate(self._payload("A"))
+            schema.model_validate({"recommended_swing_type": "A"})
 
     def test_strategy_is_mandatory(self):
-        """'맞는 전략 없음'은 허용하지 않는다 — 반드시 등록된 전략 하나를 고른다"""
+        """2단계에선 '맞는 전략 없음'을 허용하지 않는다 — 반드시 하나를 고른다"""
         with self.assertRaises(ValidationError):
-            review_schema(["S"]).model_validate(self._payload(None))
+            strategy_pick_schema(["S"]).model_validate({"recommended_swing_type": None})
 
-    def test_system_instruction_lists_strategies(self):
-        text = build_system_instruction(TradingStrategyFactory.describe_all())
+    def test_strategy_instruction_lists_strategies(self):
+        text = build_strategy_instruction(TradingStrategyFactory.describe_all())
         self.assertIn('"S"', text)
         self.assertIn(SingleEMAStrategy.name, text)
+
+    def test_analysis_instruction_has_no_strategy(self):
+        """투자 판단 지시문에 전략 정보가 섞이면 판단이 전략 진입 조건 관점으로 쏠린다"""
+        for market in ("KR", "US"):
+            text = build_analysis_instruction(market)
+            for word in ("SWING_TYPE", SingleEMAStrategy.name, "20EMA", "OBV", "ATR", "청산선"):
+                self.assertNotIn(word, text, f"{market}: {word}")
 
 
 if __name__ == "__main__":
