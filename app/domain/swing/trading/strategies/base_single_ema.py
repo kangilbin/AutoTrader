@@ -49,9 +49,13 @@ class BaseSingleEMAStrategy:
     MIN_CONVICTION = 0.4             # 최소 확신도 (0.4 = 32% 투입)
 
     # 전량 매수 모드 (FULL_ENTRY_YN='Y') — conviction 무시, 배정금 거의 전부 투입
-    # 100%가 아닌 이유: 수량은 현재가로 산정하지만 주문은 호가로, TWAP 후속 chunk는 더 높은
-    # 가격에 체결될 수 있다. 버퍼가 없으면 CUR_AMOUNT가 음수가 되거나 같은 계좌 다른 스윙의 예수금을 침범한다.
+    # 100%가 아닌 이유: 수량은 현재가로 산정하지만 주문은 호가(해외)·시장가(국내)로 나가
+    # 더 높은 가격에 체결될 수 있다. 버퍼가 없으면 CUR_AMOUNT가 음수가 되거나 같은 계좌 다른 스윙의 예수금을 침범한다.
     FULL_ENTRY_PCT = 0.99
+
+    # 유동성 필터 — 매수 금액이 20일 일평균 거래대금의 이 비율을 넘으면 진입하지 않는다.
+    # 주문은 분할 없이 한 번에 나가므로(청산 포함) 한 번에 던져도 호가를 크게 밀지 않는 종목만 산다.
+    MAX_ADV_RATIO = 0.05
 
     @classmethod
     def entry_pct(cls, full_entry: bool, adx: float, obv_z: float) -> float:

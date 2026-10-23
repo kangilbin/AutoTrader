@@ -86,7 +86,7 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
         'obv_z': 0.0,
         'open': 0.0,               # 전일 윗꼬리 필터 (0이면 필터 미적용)
         'date': None,
-        'avg_daily_amount': 0.0,   # TWAP 분할 기준 (0이면 단일 주문)
+        'avg_daily_amount': 0.0,   # 유동성 필터 기준 (0이면 유동성 확인 불가 → 매수 차단)
     }
 
     @classmethod

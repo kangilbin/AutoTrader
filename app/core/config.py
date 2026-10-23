@@ -61,7 +61,6 @@ class Settings(BaseSettings):
 
     # 해외 매매 배치 실행 주기 (ET 기준 cron). 기본값이 운영값이며,
     # 테스트로 더 자주/넓게 돌리려면 .env에서 덮어쓴다 (예: "*/1", "1-23")
-    # ※ 분할 체결(TWAP)이 "5분 사이클당 한 chunk" 전제로 동작하므로 주기 변경 시 분할 속도도 함께 바뀐다
     US_TRADE_CRON_MINUTE: str = "*/5"
     US_TRADE_CRON_HOUR: str = "10-15"
 

@@ -11,14 +11,16 @@
     DB/Redis/KIS API만 가짜로 대체해 사이클 단위로 돌린다.
   - 검증 대상: SIGNAL 상태 전이, HOLD_QTY/ENTRY_PRICE/PEAK_PRICE,
     CUR_AMOUNT(다음 매수 수량을 결정하는 값), TRADE_HISTORY 저장 건수/금액,
-    분할 체결 Redis 상태, 부분 체결 잔량 취소
+    단일 주문·유동성 필터, 부분 체결 잔량 취소
 
 주의: TRADE_HISTORY 저장은 order_executor 한 곳에서만 이뤄져야 한다.
       배치가 중복 저장하면 실현손익이 왜곡되므로 건수를 함께 검증한다.
 """
+import asyncio
 import json
 import unittest
 from decimal import Decimal
+from unittest.mock import patch
 
 from app.domain.swing.entity import SwingTrade
 from app.domain.swing.trading import auto_swing_batch as batch
@@ -93,6 +95,7 @@ class Market:
     high = 101.5
     low = 99.5
     fill_ratio = 1.0          # 주문 수량 대비 체결 비율 (부분 체결 재현)
+    fill_steps = []           # 조회마다 꺼내 쓰는 체결 비율 (마지막 값 유지) — 체결이 조금씩 늘어나는 상황
     orders = []
     cancels = []
     seen_accounts = set()     # API 계층에 전달된 계좌번호 (계좌 바인딩 검증용)
@@ -100,6 +103,7 @@ class Market:
     @classmethod
     def reset(cls, price=101.0, volume=150_000, fill_ratio=1.0):
         cls.price, cls.volume, cls.fill_ratio = price, volume, fill_ratio
+        cls.fill_steps = []
         cls.high, cls.low = price + 0.5, price - 1.5
         cls.orders, cls.cancels = [], []
         cls.seen_accounts = set()
@@ -128,7 +132,9 @@ class Market:
     @classmethod
     async def execution(cls, user_id, order_no, db, **k):
         last = cls.orders[-1]
-        qty = int(last["qty"] * cls.fill_ratio)
+        ratio = (cls.fill_steps.pop(0) if len(cls.fill_steps) > 1
+                 else cls.fill_steps[0] if cls.fill_steps else cls.fill_ratio)
+        qty = int(last["qty"] * ratio)
         return {"order_no": order_no, "executed_qty": qty, "avg_price": last["unpr"],
                 "executed_amt": qty * last["unpr"], "remaining_qty": last["qty"] - qty}
 
@@ -168,6 +174,13 @@ def make_indicator_cache(**over):
 
 async def _coro(value):
     return value
+
+
+_real_sleep = asyncio.sleep
+
+
+async def _no_sleep(*_):
+    await _real_sleep(0)
 
 
 # ==================== 테스트 ====================
@@ -233,6 +246,11 @@ class SwingScenarioBase(unittest.IsolatedAsyncioTestCase):
         oe.foreign_api.place_order_api = Market.place_order
         oe.foreign_api.check_order_execution = Market.execution
         oe.foreign_api.modify_or_cancel_order_api = Market.cancel
+
+        # 체결 대기(confirm_and_settle)가 실제로 잠들지 않도록 — 순서만 검증한다
+        sleep_patch = patch.object(oe.asyncio, "sleep", new=_no_sleep)
+        sleep_patch.start()
+        self.addCleanup(sleep_patch.stop)
 
     async def asyncTearDown(self):
         import app.domain.trade_history as th
@@ -382,32 +400,61 @@ class SwingTradeScenarioTest(SwingScenarioBase):
         await self.run_cycles()
         self.assertEqual(self.swing.SIGNAL, 0, "수급 재유입이 확인되지 않음")
 
-    # ==================== 분할 체결 ====================
+    # ==================== 단일 주문 / 유동성 / 부분 체결 ====================
 
-    async def test_partial_buy_twap(self):
-        """일거래대금이 작아 분할되는 경우 — 여러 사이클에 걸쳐 완료"""
+    async def test_large_order_is_single_order(self):
+        """예전 분할 조건(주문금액 > 일거래대금 0.5%)이어도 한 번에 주문한다"""
         self.redis.store["indicators:AAPL"] = json.dumps(
             make_indicator_cache(avg_daily_amount=4_000_000.0))
+        await self.enter_position()
 
+        self.assertEqual(len(Market.buys()), 1, "분할 주문이 나감")
+        self.assertNotIn("partial_exec:1", self.redis.store)
+        self.assertEqual(self.swing.HOLD_QTY, Market.buys()[0]["qty"])
+
+    async def test_illiquid_stock_is_not_bought(self):
+        """매수금액이 일평균 거래대금 × MAX_ADV_RATIO 초과 → 매수하지 않는다"""
+        self.redis.store["indicators:AAPL"] = json.dumps(
+            make_indicator_cache(avg_daily_amount=100_000.0))   # 한도 5,000 < 매수금액
         await self.run_cycles(SingleEMAStrategy.CONSECUTIVE_REQUIRED)
-        self.assertIn("partial_exec:1", self.redis.store, "분할 상태가 저장되지 않음")
-        self.assertEqual(self.swing.SIGNAL, 0, "분할 완료 전인데 SIGNAL이 바뀜")
-        self.assertGreater(self.swing.HOLD_QTY, 0, "첫 chunk 체결분이 반영되지 않음")
-        self.assertEqual(len(FakeTradeService.of("B")), 1, "첫 chunk 이력이 누락됨")
 
-        for _ in range(6):
-            if "partial_exec:1" not in self.redis.store:
-                break
-            await self.run_cycles()
+        self.assertEqual(Market.orders, [], "유동성 부족 종목에 주문이 나감")
+        self.assertEqual(self.swing.SIGNAL, 0)
 
-        self.assertNotIn("partial_exec:1", self.redis.store, "분할 상태가 정리되지 않음")
-        self.assertEqual(self.swing.SIGNAL, 1)
-        self.assertEqual(self.swing.HOLD_QTY, sum(o["qty"] for o in Market.buys()),
-                         "보유 수량이 주문 합계와 다름")
+    async def test_unknown_liquidity_is_not_bought(self):
+        """일평균 거래대금을 모르면(0) 유동성을 확인할 수 없으므로 매수하지 않는다"""
+        self.redis.store["indicators:AAPL"] = json.dumps(
+            make_indicator_cache(avg_daily_amount=0.0))
+        await self.run_cycles(SingleEMAStrategy.CONSECUTIVE_REQUIRED)
 
-        invested = sum(t["amount"] for t in FakeTradeService.of("B"))
-        self.assertAlmostEqual(self.cur_amount(), self.INIT_AMOUNT - invested, delta=2,
-                               msg="분할 매수 후 가용금액이 이력 합계와 어긋남")
+        self.assertEqual(Market.orders, [])
+        self.assertEqual(self.swing.SIGNAL, 0)
+
+    async def test_full_sell_partial_fill_sells_remainder_next_cycle(self):
+        """전량 매도 일부 체결 → 보유만 줄고 SIGNAL 유지 → 다음 사이클 청산 판정이 잔량을 판다"""
+        await self.enter_position()
+        hold = self.swing.HOLD_QTY
+        remain = self.cur_amount()
+
+        Market.fill_ratio = 0.4
+        Market.move(self.entry_price() - 5.0)      # 손절선 아래
+        await self.run_cycles()
+
+        first = int(hold * 0.4)
+        self.assertEqual(len(Market.cancels), 1, "잔량 취소가 없음")
+        self.assertEqual(self.swing.SIGNAL, 1, "일부 체결인데 사이클이 종료됨")
+        self.assertEqual(self.swing.HOLD_QTY, hold - first)
+
+        Market.fill_ratio = 1.0
+        await self.run_cycles()
+
+        self.assertEqual([o["qty"] for o in Market.sells()], [hold, hold - first])
+        self.assertEqual(self.swing.SIGNAL, 3)
+        self.assertEqual(self.swing.HOLD_QTY, 0)
+
+        sells = FakeTradeService.of("S")
+        self.assertEqual(sum(t["qty"] for t in sells), hold, "매도 이력 합계가 보유 수량과 다름")
+        self.assertAlmostEqual(self.cur_amount(), remain + sum(t["amount"] for t in sells), delta=0.01)
 
     async def test_partial_fill_cancels_remainder(self):
         """부분 체결(40%) — 잔량을 취소하고 체결분만 반영"""
@@ -420,27 +467,101 @@ class SwingTradeScenarioTest(SwingScenarioBase):
         for t in FakeTradeService.of("B"):
             self.assertEqual(t["qty"], int(ordered * 0.4), "이력 수량이 체결분과 다름")
 
-    async def test_stop_loss_during_partial_buy_is_deferred(self):
-        """분할 매수 중 급락 — 1사이클은 매수 중단, 매도는 다음 사이클 (의도된 동작)"""
-        self.redis.store["indicators:AAPL"] = json.dumps(
-            make_indicator_cache(avg_daily_amount=4_000_000.0))
+    async def test_fill_completes_while_waiting_is_not_cancelled(self):
+        """첫 조회는 일부 체결 → 기다리는 사이 전량 체결되면 취소하지 않는다"""
+        Market.fill_steps = [0.4, 1.0]
         await self.run_cycles(SingleEMAStrategy.CONSECUTIVE_REQUIRED)
-        held = self.swing.HOLD_QTY
-        entry = self.entry_price()
 
-        Market.move(85.0)                  # 손절선 한참 아래
+        ordered = Market.buys()[-1]["qty"]
+        self.assertEqual(Market.cancels, [], "체결이 끝났는데 잔량 취소를 시도함")
+        self.assertEqual(self.swing.HOLD_QTY, ordered)
+
+    async def test_fill_between_check_and_cancel_is_recorded(self):
+        """확인~취소 사이에 들어온 체결도 기록한다 (2026-10-23 1주 누락 재현)"""
+        # 첫 조회 + 대기 조회 FILL_WAIT_RETRIES회 동안 40%, 취소 후 재조회에서 50%
+        Market.fill_steps = [0.4] * (1 + oe.SwingOrderExecutor.FILL_WAIT_RETRIES) + [0.5]
+        await self.run_cycles(SingleEMAStrategy.CONSECUTIVE_REQUIRED)
+
+        ordered = Market.buys()[-1]["qty"]
+        self.assertEqual(len(Market.cancels), 1)
+        self.assertEqual(self.swing.HOLD_QTY, int(ordered * 0.5), "취소 직전 체결분이 누락됨")
+        self.assertEqual([t["qty"] for t in FakeTradeService.of("B")], [int(ordered * 0.5)])
+
+    # ==================== 미확인 주문 취소 후 재조회 ====================
+
+    async def _sell_unconfirmed_then_recover_price(self, fill_steps):
+        """손절 매도가 체결 미확인으로 남은 상태를 만든다 (다음 사이클엔 청산 신호 없음)"""
+        await self.enter_position()
+        Market.fill_steps = fill_steps             # 진입 매수 이후의 체결 조회부터 적용
+        Market.move(self.entry_price() - 5.0)      # 손절선 아래 → 매도 주문
+        await self.run_cycles()
+        self.assertIn("pending_order:1", self.redis.store, "체결 미확인 상태가 아님")
+        Market.move(self.entry_price())            # 다음 사이클엔 청산 신호가 다시 나지 않게
+
+    async def test_cancelled_pending_sell_records_fill_before_cancel(self):
+        """보유 중 미확인 주문 취소 → 취소 직전 체결이 재조회로 기록된다"""
+        # 매도 확인 2회 + 다음 사이클 재확인 1회는 미체결, 취소 후 재조회에서 40%
+        await self._sell_unconfirmed_then_recover_price([0.0, 0.0, 0.0, 0.4])
+        hold, remain = self.swing.HOLD_QTY, self.cur_amount()
+
         await self.run_cycles()
 
-        self.assertEqual(len(Market.sells()), 0, "1사이클에는 매수 중단만 해야 함")
-        self.assertEqual(self.swing.SIGNAL, 1, "매수 중단 후 보유 상태로 전환되어야 함")
-        self.assertEqual(self.swing.HOLD_QTY, held)
-        # PEAK는 평단가를 하한으로 잡아야 한다 (급락가로 잡히면 익절 기준이 무너짐)
-        self.assertGreaterEqual(float(self.swing.PEAK_PRICE), entry)
+        sold = int(hold * 0.4)
+        self.assertEqual(len(Market.cancels), 1)
+        self.assertNotIn("pending_order:1", self.redis.store)
+        self.assertEqual([t["qty"] for t in FakeTradeService.of("S")], [sold], "취소 직전 체결이 누락됨")
+        self.assertEqual(self.swing.HOLD_QTY, hold - sold)
+        self.assertEqual(self.swing.SIGNAL, 1, "일부 체결인데 사이클이 종료됨")
+        self.assertAlmostEqual(self.cur_amount(), remain + FakeTradeService.of("S")[0]["amount"], delta=0.01)
+
+    async def test_cancelled_pending_sell_without_fill_changes_nothing(self):
+        """취소 후 재조회에도 체결이 없으면 상태를 바꾸지 않는다 (기존 동작)"""
+        await self._sell_unconfirmed_then_recover_price([0.0])
+        hold, remain = self.swing.HOLD_QTY, self.cur_amount()
 
         await self.run_cycles()
-        self.assertEqual(len(Market.sells()), 1, "다음 사이클에 손절되지 않음")
-        self.assertEqual(self.swing.SIGNAL, 3)
-        self.assertEqual(self.swing.HOLD_QTY, 0)
+
+        self.assertEqual(len(Market.cancels), 1)
+        self.assertNotIn("pending_order:1", self.redis.store)
+        self.assertEqual(FakeTradeService.of("S"), [])
+        self.assertEqual(self.swing.HOLD_QTY, hold)
+        self.assertEqual(self.cur_amount(), remain)
+
+    async def test_expired_pending_buy_records_fill_before_cancel(self):
+        """확인 한도 초과로 취소한 매수도 취소 직전 체결을 재조회로 기록한다"""
+        # 매수 확인 2회 + 재확인 MAX_PENDING_ATTEMPTS회 미체결, 취소 후 재조회에서 40%
+        Market.fill_steps = [0.0] * (2 + oe.SwingOrderExecutor.MAX_PENDING_ATTEMPTS) + [0.4]
+        await self.run_cycles(SingleEMAStrategy.CONSECUTIVE_REQUIRED)
+        self.assertIn("pending_order:1", self.redis.store)
+
+        await self.run_cycles(oe.SwingOrderExecutor.MAX_PENDING_ATTEMPTS)
+
+        ordered = Market.buys()[0]["qty"]
+        bought = int(ordered * 0.4)
+        self.assertEqual(len(Market.buys()), 1, "확인 중 매수가 재전송됨")
+        self.assertEqual(len(Market.cancels), 1)
+        self.assertNotIn("pending_order:1", self.redis.store)
+        self.assertEqual(self.swing.SIGNAL, 1, "취소 직전 체결로 진입해야 함")
+        self.assertEqual(self.swing.HOLD_QTY, bought)
+        buys = FakeTradeService.of("B")
+        self.assertEqual([t["qty"] for t in buys], [bought])
+        self.assertAlmostEqual(self.cur_amount(), self.INIT_AMOUNT - buys[0]["amount"], delta=0.01)
+
+    async def test_settle_after_cancel_ignores_simulated_fill(self):
+        """체결 조회 미지원(전량 체결 가정)은 방금 취소한 주문에 적용하지 않는다"""
+        async def simulated(*a, **k):
+            return {"order_no": "O001", "executed_qty": 10, "avg_price": 100.0, "simulated": True}
+
+        pending = {"type": "sell", "order_no": "O001", "phase": 0, "ord_qty": 10,
+                   "target_qty": 10, "mrkt_code": "NAS", "ord_price": 100.0}
+        with patch.object(oe, "_check_execution_with_retry", new=simulated):
+            result = await oe.SwingOrderExecutor.settle_after_cancel(
+                pending, 1, "u1", "AAPL", Decimal("100"), 100, 10, self.db,
+            )
+
+        self.assertFalse(result["completed"])
+        self.assertEqual(result["hold_qty"], 10)
+        self.assertEqual(FakeTradeService.calls, [], "가정 체결이 이력에 기록됨")
 
     # ==================== 장 시간 가드 ====================
 

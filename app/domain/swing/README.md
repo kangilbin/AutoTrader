@@ -72,7 +72,7 @@ result = strategy.compute(prices_df, params)
 - 비동기 방식 실행 (`async def` 메서드)
 - Redis 상태 관리 (연속 신호 확인)
 - DB 연동 (TRADE_HISTORY, STOCK_DAY_HISTORY)
-- 분할 매수/매도 지원
+- 신호 1회당 단일 주문 (분할 없음, 진입 시 유동성 필터)
 
 ### 매매 신호 메서드
 ```python
