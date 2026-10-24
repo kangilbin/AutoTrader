@@ -120,12 +120,16 @@ class SwingTrade(Base):
         self.MOD_DT = datetime.now()
 
     def transition_to_partial(self, sold_qty: int) -> None:
-        """1차 익절 완료 (SIGNAL 1 -> 2) — 50% 매도 후 잔여 포지션"""
+        """1차 익절 완료 (SIGNAL 1 -> 2) — 50% 매도 후 잔여 포지션
+
+        PEAK는 유지한다. 잔량도 같은 청산선(보유 중 고점 기준)이 지키므로 고점을 새로 잴 이유가 없다.
+        (예전 2단계 익절 구조의 리셋은 부분익절 직후 하락분만큼 청산선을 낮출 뿐이었고,
+         백테스트도 리셋하지 않는다)
+        """
         if self.SIGNAL != 1:
             raise ValidationError(f"1차 익절은 SIGNAL 1에서만 가능합니다. 현재: {self.SIGNAL}")
         self.SIGNAL = 2
         self.HOLD_QTY = (self.HOLD_QTY or 0) - sold_qty
-        self.PEAK_PRICE = None  # PEAK 리셋 → 2차 익절을 위해 새로 추적
         self.MOD_DT = datetime.now()
 
     def reset_cycle(self, obv_z: float = None) -> None:

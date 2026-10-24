@@ -93,7 +93,7 @@ class TestSwingTransitions(unittest.TestCase):
         s.transition_to_partial(sold_qty=5)
         self.assertEqual(s.SIGNAL, 2)
         self.assertEqual(s.HOLD_QTY, 5)
-        self.assertIsNone(s.PEAK_PRICE)  # 2차 익절 위해 PEAK 리셋
+        self.assertEqual(s.PEAK_PRICE, Decimal(70000))  # PEAK 유지 — 잔량도 같은 고점 기준 청산선
 
         s.reset_cycle()
         self.assertEqual(s.SIGNAL, 3)

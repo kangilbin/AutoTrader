@@ -372,9 +372,8 @@ async def process_single_swing(
                         obv_z = cached_indicators.get('realtime_obv_z', 0) if cached_indicators else 0
                         swing.reset_cycle(obv_z=obv_z)
                     elif new_signal == 2 and swing.SIGNAL == 1:
-                        # 부분 익절 지연 체결 확인
+                        # 부분 익절 지연 체결 확인 (PEAK 유지 — transition_to_partial 참고)
                         swing.transition_to_partial(hold_qty - pending_result.get("hold_qty", hold_qty))
-                        swing.PEAK_PRICE = to_price(current_price)
                     else:
                         swing.SIGNAL = new_signal
                         swing.MOD_DT = datetime.now()
