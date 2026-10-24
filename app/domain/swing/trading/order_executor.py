@@ -345,8 +345,11 @@ class SwingOrderExecutor:
         mrkt_code: str = "",
         reasons: list = None,
         account_no: str = None,
+        pending_extra: dict = None,
     ) -> Dict[str, Any]:
         """매수 (단일 주문)
+
+        pending_extra: 체결 미확인 시 pending_order에 함께 실을 값 (예: 오더블럭 손절가)
 
         일부만 체결되면 체결분만 반영한다 — 진입은 사이클당 1회라 잔량을 다시 사지 않는다.
         체결 이력(TRADE_HISTORY) 저장은 여기서만 한다 (매도와 동일).
@@ -359,7 +362,7 @@ class SwingOrderExecutor:
 
         filled = await cls._place_and_confirm(
             "buy", swing_id, user_id, st_code, current_price, qty, signal_on_complete,
-            db, mrkt_code, account_no, pending_extra={},
+            db, mrkt_code, account_no, pending_extra=pending_extra or {},
         )
         if not filled["success"] or filled.get("unconfirmed"):
             return filled

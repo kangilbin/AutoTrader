@@ -310,6 +310,12 @@ async def process_single_swing(
                 accum_ema_period=BaseSingleEMAStrategy.ACCUM_EMA_PERIOD
             )
 
+            # 당일 시가·저가 — 오더블럭 존 터치·갭 붕괴 판정용 (단일 이평선은 읽지 않는다)
+            cached_indicators["today_open"] = float(
+                current_price_data.get("open" if _overseas else "stck_oprc", 0) or 0
+            )
+            cached_indicators["today_low"] = float(current_low)
+
             avg_daily_amount = cached_indicators["avg_daily_amount"]
 
             # === 2. 체결 미확인 주문 재확인 (신호 로직보다 우선) ===
@@ -377,6 +383,10 @@ async def process_single_swing(
                     else:
                         swing.SIGNAL = new_signal
                         swing.MOD_DT = datetime.now()
+                        # 지연 체결 매수는 transition_to_buy를 거치지 않는다 — 주문 때 실어 둔 손절가를 기록
+                        stop = json.loads(pending_str).get("stop_price")
+                        if pending_result.get("exec_type") == "buy" and stop:
+                            swing.STOP_PRICE = to_price(stop)
 
                 # CUR_AMOUNT 업데이트 (지연 체결 금액 반영)
                 chunk_amount = pending_result.get("chunk_amount", 0)
@@ -601,17 +611,15 @@ async def _handle_waiting(
         logger.warning(f"[{st_code}] USER_ID 없음, 주문 실행 불가")
         return
 
-    # 포지션 사이징 — 전량 모드면 배정금 전량(버퍼 제외), 아니면 conviction 기반
-    realtime_adx = cached_indicators.get('realtime_adx', 0)
-    realtime_obv_z = cached_indicators.get('realtime_obv_z', 0)
+    # 포지션 사이징 — 전략이 정한다 (단일 이평선: 전량 or conviction / 오더블럭: 손절가 기반 R 사이징)
     equity = float(swing.CUR_AMOUNT)
     curr_price = float(current_price)
 
     full_entry = swing.is_full_entry()
-    entry_pct = strategy.entry_pct(full_entry, realtime_adx, realtime_obv_z)
-    target_qty = int(equity * entry_pct / curr_price) if curr_price > 0 else 0
+    target_qty = strategy.calc_entry_qty(equity, curr_price, full_entry, cached_indicators, entry_result)
+    entry_pct = target_qty * curr_price / equity if equity > 0 else 0
 
-    logger.info(f"[{st_code}] 포지션 사이징: 모드={'전량' if full_entry else 'conviction'}, "
+    logger.info(f"[{st_code}] 포지션 사이징: 모드={'전량' if full_entry else '전략'}, "
                 f"투입비={entry_pct:.1%}, 수량={target_qty}")
 
     if target_qty <= 0:
@@ -646,6 +654,8 @@ async def _handle_waiting(
         mrkt_code=mrkt_code,
         reasons=entry_result.get("reasons", ["매수"]).copy(),
         account_no=swing.ACCOUNT_NO,
+        # 체결 확인이 다음 사이클로 밀려도 손절가가 빠지지 않게 미확인 주문 정보에 싣는다
+        pending_extra={"stop_price": entry_result["stop_price"]} if entry_result.get("stop_price") else None,
     )
 
     if not order_result.get("success"):
@@ -665,7 +675,13 @@ async def _handle_waiting(
     # CUR_AMOUNT 차감 (매수 금액만큼 가용 금액 감소)
     swing.deduct_amount(avg_price * qty)
     # 일부만 체결돼도 진입 완료 — 진입은 1회뿐이라 잔량을 다시 사지 않는다
-    swing.transition_to_buy(avg_price, qty, float(current_price))
+    swing.transition_to_buy(avg_price, qty, float(current_price), stop_price=entry_result.get("stop_price"))
+
+    # 오더블럭: 같은 날 같은 OB로 다시 사지 않는다 (손절 → 쿨다운이 장중에 다 지나가는 경우)
+    if entry_result.get("ob_date"):
+        await redis_client.setex(
+            f"ob_used:{swing.SWING_ID}:{cached_indicators.get('date')}", 86400, entry_result["ob_date"]
+        )
 
 
 async def _handle_position(
@@ -697,6 +713,7 @@ async def _handle_position(
         cached_indicators=cached_indicators,
         signal=swing.SIGNAL,
         peak_price=peak_price,
+        stop_price=float(swing.STOP_PRICE) if swing.STOP_PRICE else None,
     )
 
     if exit_result and exit_result.get("action") == "SELL":
@@ -715,6 +732,7 @@ async def _handle_position(
         current_price=current_price,
         entry_price=Decimal(str(entry_price)),
         signal=swing.SIGNAL,
+        stop_price=float(swing.STOP_PRICE) if swing.STOP_PRICE else None,
     )
 
     if tp_result and tp_result.get("action") == "SELL_HALF":

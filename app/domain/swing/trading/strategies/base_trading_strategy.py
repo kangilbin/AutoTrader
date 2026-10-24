@@ -89,7 +89,9 @@ class TradingStrategy(ABC):
         frgn_ntby_qty: int,
         acml_vol: int,
         cached_indicators: Dict,
-        signal: int = 1
+        signal: int = 1,
+        peak_price: float = 0,
+        stop_price: Optional[float] = None,
     ) -> Dict:
         """
         손절 신호 체크 (하위 클래스에서 구현 필수)
@@ -104,6 +106,8 @@ class TradingStrategy(ABC):
             acml_vol: 누적거래량
             cached_indicators: 실시간 증분 계산된 지표 (필수)
             signal: 현재 SIGNAL 상태 (1: 익절 전, 2: 익절 후 본전 방어)
+            peak_price: 보유 중 고점 (SWING_TRADE.PEAK_PRICE)
+            stop_price: 매수 시 확정 손절가 (SWING_TRADE.STOP_PRICE) — 쓰지 않는 전략은 무시
 
         Returns:
             매도 신호 정보 (action: "SELL" or "HOLD")
@@ -124,6 +128,20 @@ class TradingStrategy(ABC):
             지표 캐시 정보
         """
         pass
+
+    @classmethod
+    def calc_entry_qty(cls, cur_amount: float, price: float, full_entry: bool,
+                       cached_indicators: Dict, entry_result: Dict) -> int:
+        """매수 수량 — 기본은 투입 비율(entry_pct) 방식 (단일 이평선: 전량 모드 or conviction)
+
+        손절가로 수량을 정하는 전략(오더블럭 R 사이징)은 재정의한다.
+        entry_result는 check_entry_signal의 반환값 (stop_price 등 전략별 값이 담긴다).
+        """
+        if price <= 0:
+            return 0
+        pct = cls.entry_pct(full_entry, cached_indicators.get('realtime_adx', 0),
+                            cached_indicators.get('realtime_obv_z', 0))
+        return int(cur_amount * pct / price)
 
     @classmethod
     async def check_trailing_stop_signal(
