@@ -66,6 +66,39 @@ def sell_tick(price: float, mrkt_code: str = "") -> float:
     return floor_tick(price)
 
 
+def tick_unit(price: float, mrkt_code: str = "") -> float:
+    """호가 한 단위 — 국내 호가표 / 미국 $0.01 ($1 미만 $0.0001)"""
+    if is_overseas(mrkt_code):
+        return 0.01 if price >= 1 else 0.0001
+    return tick_size(price)
+
+
+# 슬리피지 — 실제 체결은 신호 가격보다 호가 한두 단위 불리하게 난다 (시장가·호가 주문 모두).
+# 판정 기준가(청산선·손절가)에는 붙이지 않고 체결가에만 붙인다.
+SLIPPAGE_TICKS = 1
+
+
+def fill_buy(price: float, mrkt_code: str = "") -> float:
+    """매수 체결가 = 호가 올림 + 슬리피지"""
+    px = buy_tick(price, mrkt_code)
+    return round(px + SLIPPAGE_TICKS * tick_unit(px, mrkt_code), _PRICE_NOISE_DIGITS)
+
+
+def fill_sell(price: float, mrkt_code: str = "") -> float:
+    """매도 체결가 = 호가 내림 − 슬리피지"""
+    px = sell_tick(price, mrkt_code)
+    return round(px - SLIPPAGE_TICKS * tick_unit(px, mrkt_code), _PRICE_NOISE_DIGITS)
+
+
+# 거래 비용 (수수료율, 매도 거래세율) — 미국은 거래세가 없다 (매도 SEC 수수료 0.003% 미만은 생략)
+_TRADE_COSTS = {"KR": (0.00147, 0.0020), "US": (0.0025, 0.0)}
+
+
+def trade_costs(mrkt_code: str = "") -> tuple:
+    """(수수료율, 매도 거래세율)"""
+    return _TRADE_COSTS["US" if is_overseas(mrkt_code) else "KR"]
+
+
 def records_without_nan(df: pd.DataFrame, columns: List[str]) -> List[Dict]:
     """선택 컬럼을 JSON 레코드로 변환하되 NaN 을 None 으로 바꾼다.
 
@@ -99,10 +132,6 @@ def first_eval_date(prices_df: pd.DataFrame, eval_df: pd.DataFrame, eval_start) 
 
 class BacktestStrategy(ABC):
     """백테스트 전략 베이스 클래스"""
-
-    # === 거래 비용 (체결 기록 헬퍼가 사용) ===
-    COMMISSION_RATE = 0.00147
-    TAX_RATE = 0.0020
 
     def __init__(self, name: str):
         self.name = name
@@ -142,10 +171,11 @@ class BacktestStrategy(ABC):
                 df[col] = pd.to_numeric(df[col], errors="coerce")
         return df
 
-    def _execute_buy(self, trades: List[Dict], date, price: float, quantity: int, current_capital: float, reasons: List[str]):
+    def _execute_buy(self, trades: List[Dict], date, price: float, quantity: int, current_capital: float, reasons: List[str],
+                     mrkt_code: str = ""):
         """매수 실행 및 거래 내역 추가"""
         executed_amount = quantity * price
-        commission = executed_amount * self.COMMISSION_RATE
+        commission = executed_amount * trade_costs(mrkt_code)[0]
         total_cost = executed_amount + commission
 
         trades.append({
@@ -162,15 +192,16 @@ class BacktestStrategy(ABC):
         return current_capital - total_cost
 
     def _execute_partial_sell(self, trades: List[Dict], date, price: float, sell_quantity: int,
-                             current_capital: float, reasons: List[str]):
+                             current_capital: float, reasons: List[str], mrkt_code: str = ""):
         """부분 매도 (1차 익절 50%) 실행"""
         curr_qty, curr_avg_cost = self._calculate_position_state(trades)
         if sell_quantity <= 0 or curr_qty <= 0:
             return current_capital
 
         sell_amount = sell_quantity * price
-        commission = sell_amount * self.COMMISSION_RATE
-        tax = sell_amount * self.TAX_RATE
+        commission_rate, tax_rate = trade_costs(mrkt_code)
+        commission = sell_amount * commission_rate
+        tax = sell_amount * tax_rate
         net_proceeds = sell_amount - commission - tax
         realized_pnl = (price - curr_avg_cost) * sell_quantity - commission - tax
         realized_pnl_pct = ((price / curr_avg_cost) - 1) * 100 if curr_avg_cost > 0 else 0.0
@@ -188,7 +219,7 @@ class BacktestStrategy(ABC):
         return current_capital + net_proceeds
 
     def _execute_sell(self, trades: List[Dict], date, price: float, current_capital: float, reasons: List[str],
-                      sell_all: bool = False):
+                      sell_all: bool = False, mrkt_code: str = ""):
         """전량 매도 실행"""
         curr_qty, curr_avg_cost = self._calculate_position_state(trades)
 
@@ -202,8 +233,9 @@ class BacktestStrategy(ABC):
 
         # 매도 금액 및 수수료/세금 계산
         sell_amount = sell_quantity * price
-        commission = sell_amount * self.COMMISSION_RATE
-        tax = sell_amount * self.TAX_RATE
+        commission_rate, tax_rate = trade_costs(mrkt_code)
+        commission = sell_amount * commission_rate
+        tax = sell_amount * tax_rate
         net_proceeds = sell_amount - commission - tax
 
         # 실현 손익 계산
@@ -227,8 +259,9 @@ class BacktestStrategy(ABC):
 
         return current_capital + net_proceeds
 
-    def _liquidate_final_position(self, trades: List[Dict], eval_df: pd.DataFrame, current_capital: float) -> float:
-        """최종 포지션 청산"""
+    def _liquidate_final_position(self, trades: List[Dict], eval_df: pd.DataFrame, current_capital: float,
+                                  mrkt_code: str = "") -> float:
+        """최종 포지션 청산 — 평가 종료 시점 종가로 평가 (실제 주문이 아니라 슬리피지 없음, 비용은 반영)"""
         curr_qty, curr_avg_cost = self._calculate_position_state(trades)
 
         if curr_qty > 0:
@@ -241,7 +274,8 @@ class BacktestStrategy(ABC):
                 final_price,
                 current_capital,
                 ["최종 청산"],
-                sell_all=True
+                sell_all=True,
+                mrkt_code=mrkt_code,
             )
 
         return current_capital

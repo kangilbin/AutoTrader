@@ -10,7 +10,7 @@
   봉5  100.5→99 음봉       → 오더블럭 (고가 101 = 근접선, 저가 98.5 = 원격선)
   봉6~7 거래량 200 임펄스   → 봉7 종가 106.5 > 105 : BOS
   봉8  저가 105.5          → 존 미터치
-  봉9  저가 100.5          → 첫 리테스트 (매수 101, 손절 98.5 − 0.6 = 97.9, R = 3.1)
+  봉9  저가 100.5          → 첫 리테스트 (매수 101 + 슬리피지 1틱 = 101.01, 손절 98.5 − 0.6 = 97.9, R = 3.11)
 """
 import unittest
 from dataclasses import replace
@@ -152,18 +152,19 @@ class BacktestScenarioTest(unittest.TestCase):
         self.assertEqual([t["action"] for t in trades], ["BUY", "SELL", "SELL"])
 
         buy, partial, final = trades
-        self.assertEqual(buy["price"], 101.0)             # min(시가 105, 근접선 101)
-        self.assertEqual(buy["quantity"], 64)             # min(10000×2%/3.1 = 64, 10000×80%/101 = 79)
-        self.assertEqual(partial["price"], 107.2)         # 101 + 2 × 3.1
+        self.assertEqual(buy["price"], 101.01)            # min(시가 105, 근접선 101) + 슬리피지 $0.01
+        self.assertEqual(buy["quantity"], 64)             # min(10000×2%/3.11 = 64, 10000×80%/101.01 = 79)
+        self.assertEqual(partial["price"], 107.22)        # 목표 101.01 + 2 × 3.11 = 107.23 − 슬리피지
         self.assertEqual(partial["quantity"], 32)
-        self.assertEqual(final["price"], 105.0)           # 고점 111 − 2×3
+        self.assertEqual(final["price"], 104.99)          # 청산선 고점 111 − 2×3 = 105 − 슬리피지
         self.assertIn("이익확정", final["reasons"])
 
         stats = result["strategy_stats"]
         self.assertEqual(stats["entries"], 1)
         self.assertEqual(stats["days_to_1r"], [0])        # 진입봉 고가 105.5 ≥ 104.1
         self.assertEqual(stats["exit_stages"], {"이익확정": 1})
-        self.assertAlmostEqual(stats["avg_r_multiple"], round((106.1 - 101) / 3.1, 2))
+        avg_exit = (107.22 * 32 + 104.99 * 32) / 64
+        self.assertAlmostEqual(stats["avg_r_multiple"], round((avg_exit - 101.01) / 3.11, 2))
 
     def test_gap_below_distal_invalidates(self):
         gap = (98.0, 100.0, 97.0, 99.5, 100)
@@ -176,7 +177,7 @@ class BacktestScenarioTest(unittest.TestCase):
         deep = (105.0, 105.5, 97.5, 98.0, 100)
         trades = _run(BASE_BARS + [deep])["trades"]
         self.assertEqual([t["action"] for t in trades], ["BUY", "SELL"])
-        self.assertEqual(trades[1]["price"], 97.9)
+        self.assertEqual(trades[1]["price"], 97.89)       # 손절가 97.9 − 슬리피지
         self.assertIn("진입봉", trades[1]["reasons"])
 
     def test_sharp_retest_still_buys(self):
@@ -184,7 +185,7 @@ class BacktestScenarioTest(unittest.TestCase):
         bars = BASE_BARS[:8] + [(106.0, 108.0, 105.5, 107.0, 100), RETEST]   # 101 / 107 − 1 = −5.6%
         trades = _run(bars)["trades"]
         self.assertEqual(trades[0]["action"], "BUY")
-        self.assertEqual(trades[0]["price"], 101.0)
+        self.assertEqual(trades[0]["price"], 101.01)
         self.assertTrue(all("최종 청산" in t["reasons"] for t in trades[1:]), "매수 외 매도는 평가 종료 청산뿐")
 
     def test_stop_too_wide_skips_entry(self):
@@ -196,7 +197,7 @@ class BacktestScenarioTest(unittest.TestCase):
 
     def test_full_entry_mode(self):
         buy = _run(BASE_BARS + [RETEST], full_entry=True)["trades"][0]
-        self.assertEqual(buy["quantity"], 98)             # int(10000 × 0.99 / 101)
+        self.assertEqual(buy["quantity"], 98)             # int(10000 × 0.99 / 101.01)
 
     def test_registered_in_factory(self):
         from app.domain.swing.backtest.strategy_factory import StrategyFactory

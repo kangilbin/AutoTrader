@@ -13,7 +13,7 @@ from typing import Dict, List, Optional
 
 import pandas as pd
 
-from .base_strategy import BacktestStrategy, buy_tick, sell_tick
+from .base_strategy import BacktestStrategy, fill_buy, fill_sell, sell_tick
 from app.domain.swing.indicators import TechnicalIndicators
 from app.domain.swing.order_block import active_order_block, detect_order_blocks
 from app.domain.swing.trading.strategies.base_order_block import BaseOrderBlockStrategy
@@ -73,11 +73,11 @@ class OrderBlockBacktestStrategy(BacktestStrategy, BaseOrderBlockStrategy):
 
                 exit_line = sell_tick(self.calculate_exit_line(entry, peak, stop, atr), mrkt_code)
                 if row["STCK_LWPR"] <= exit_line:
-                    px = sell_tick(min(exit_line, row["STCK_OPRC"]), mrkt_code)
+                    px = fill_sell(min(exit_line, row["STCK_OPRC"]), mrkt_code)
                     stage = self.exit_stage(entry, peak, stop)
                     capital = self._execute_sell(
                         trades, date, px, capital,
-                        [stage, f"청산선 {px:.2f}", f"손익 {(px - entry) / entry * 100:+.1f}%"]
+                        [stage, f"청산선 {px:.2f}", f"손익 {(px - entry) / entry * 100:+.1f}%"], mrkt_code=mrkt_code
                     )
                     self._close_cycle(stats, cycle, px, hold_qty, stage)
                     signal, entry, stop, peak, hold_qty, cycle = 3, 0.0, 0.0, 0.0, 0, None
@@ -87,10 +87,10 @@ class OrderBlockBacktestStrategy(BacktestStrategy, BaseOrderBlockStrategy):
                     target = self.partial_target(entry, stop)
                     sell_qty = int(hold_qty * self.FIRST_PROFIT_TAKE_RATIO)
                     if row["STCK_HGPR"] >= target and sell_qty > 0:
-                        px = sell_tick(max(target, row["STCK_OPRC"]), mrkt_code)
+                        px = fill_sell(max(target, row["STCK_OPRC"]), mrkt_code)
                         capital = self._execute_partial_sell(
                             trades, date, px, sell_qty, capital,
-                            [f"부분익절(+{self.PARTIAL_TP_R:g}R)", f"목표가 {px:.2f}"]
+                            [f"부분익절(+{self.PARTIAL_TP_R:g}R)", f"목표가 {px:.2f}"], mrkt_code=mrkt_code
                         )
                         cycle["exit_value"] += px * sell_qty
                         hold_qty -= sell_qty
@@ -123,7 +123,7 @@ class OrderBlockBacktestStrategy(BacktestStrategy, BaseOrderBlockStrategy):
             stats["touches"] += 1
 
             # 실전의 추격 제한(+ATR×ENTRY_CHASE_ATR)은 현재가가 없어 재현 불가 → 체결가를 근접선 이하로 강제
-            buy_price = buy_tick(min(row["STCK_OPRC"], ob.proximal), mrkt_code)
+            buy_price = fill_buy(min(row["STCK_OPRC"], ob.proximal), mrkt_code)
             stop_px = self.stop_price(ob.distal, atr)
             if atr <= 0 or not self.stop_pct_ok(buy_price, stop_px):
                 stats["blocked"]["stop_wide"] += 1
@@ -136,7 +136,7 @@ class OrderBlockBacktestStrategy(BacktestStrategy, BaseOrderBlockStrategy):
             sizing = "전량 매수" if full_entry else f"위험 {self.RISK_PER_TRADE:.0%}"
             capital = self._execute_buy(
                 trades, date, buy_price, qty, capital,
-                ["매수", "오더블럭", f"존 {ob.distal:.2f}~{ob.proximal:.2f}", f"손절 {stop_px:.2f}", sizing]
+                ["매수", "오더블럭", f"존 {ob.distal:.2f}~{ob.proximal:.2f}", f"손절 {stop_px:.2f}", sizing], mrkt_code=mrkt_code
             )
             stats["entries"] += 1
             used.add(ob.ob_idx)
@@ -147,10 +147,10 @@ class OrderBlockBacktestStrategy(BacktestStrategy, BaseOrderBlockStrategy):
             # 진입봉 손절 — 일봉은 장중 순서를 모르므로 저가가 손절가에 닿았으면 손절로 본다 (보수적)
             # 같은 봉 부분익절은 판정하지 않는다 (같은 이유)
             if row["STCK_LWPR"] <= stop_px:
-                px = sell_tick(stop_px, mrkt_code)
+                px = fill_sell(stop_px, mrkt_code)
                 capital = self._execute_sell(
                     trades, date, px, capital,
-                    ["손절", "진입봉", f"손익 {(px - entry) / entry * 100:+.1f}%"]
+                    ["손절", "진입봉", f"손익 {(px - entry) / entry * 100:+.1f}%"], mrkt_code=mrkt_code
                 )
                 self._close_cycle(stats, cycle, px, hold_qty, "손절")
                 signal, entry, stop, peak, hold_qty, cycle = 3, 0.0, 0.0, 0.0, 0, None
@@ -160,7 +160,7 @@ class OrderBlockBacktestStrategy(BacktestStrategy, BaseOrderBlockStrategy):
         # 평가 종료 시 보유분은 마지막 종가로 청산 (통계에도 반영)
         if hold_qty > 0 and cycle:
             self._close_cycle(stats, cycle, float(df.iloc[-1]["STCK_CLPR"]), hold_qty, "최종 청산")
-        final_capital = self._liquidate_final_position(trades, eval_df, capital)
+        final_capital = self._liquidate_final_position(trades, eval_df, capital, mrkt_code=mrkt_code)
 
         result = self._format_result(prices_df, params, trades, final_capital, eval_df)
         result["strategy_stats"] = self._summarize_stats(stats, mrkt_code)

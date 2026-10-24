@@ -8,7 +8,7 @@
 """
 import pandas as pd
 from typing import Dict, List, Tuple
-from .base_strategy import BacktestStrategy, buy_tick, sell_tick
+from .base_strategy import BacktestStrategy, buy_tick, fill_buy, fill_sell, sell_tick
 from app.domain.swing.indicators import TechnicalIndicators
 from app.domain.swing.trading.strategies.base_single_ema import BaseSingleEMAStrategy
 
@@ -64,7 +64,7 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
                 exit_line = sell_tick(self.calculate_exit_line(entry_price, peak_price, atr), mrkt_code)
 
                 if exit_line > 0 and row["STCK_LWPR"] <= exit_line:
-                    sell_price = sell_tick(min(exit_line, row["STCK_OPRC"]), mrkt_code)
+                    sell_price = fill_sell(min(exit_line, row["STCK_OPRC"]), mrkt_code)
                     gain_pct = (sell_price - entry_price) / entry_price * 100 if entry_price else 0
                     peak_gain = (peak_price - entry_price) / entry_price * 100 if entry_price else 0
                     if peak_gain >= self.TRAILING_ACTIVATE_PCT:
@@ -75,7 +75,7 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
                         stage = "손절"
                     current_capital = self._execute_sell(
                         trades, current_date, sell_price, current_capital,
-                        [stage, f"청산선 {sell_price:.2f}", f"손익 {gain_pct:+.1f}%"]
+                        [stage, f"청산선 {sell_price:.2f}", f"손익 {gain_pct:+.1f}%"], mrkt_code=mrkt_code
                     )
                     signal = 3
                     peak_price, entry_price, stop_loss, hold_qty = 0.0, 0.0, 0.0, 0
@@ -87,11 +87,11 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
                     if row["STCK_HGPR"] >= target:
                         sell_qty = int(hold_qty * self.FIRST_PROFIT_TAKE_RATIO)
                         if sell_qty > 0:
-                            px = sell_tick(max(target, row["STCK_OPRC"]), mrkt_code)
+                            px = fill_sell(max(target, row["STCK_OPRC"]), mrkt_code)
                             current_capital = self._execute_partial_sell(
                                 trades, current_date, px, sell_qty, current_capital,
                                 [f"부분익절(+{self.PARTIAL_TAKE_PROFIT_PCT:.0f}%)",
-                                 f"목표가 {px:.2f}"]
+                                 f"목표가 {px:.2f}"], mrkt_code=mrkt_code
                             )
                             hold_qty -= sell_qty
                             signal = 2      # PEAK는 리셋하지 않는다 (잔량은 계속 추세 추적)
@@ -118,9 +118,9 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
                 if matched:
                     # 신호 가격이 당일 [저가, 고가] 범위 안이면 해당 가격으로 체결 (호가 올림)
                     if signal_price > 0 and row["STCK_LWPR"] <= signal_price <= row["STCK_HGPR"]:
-                        buy_price = buy_tick(signal_price, mrkt_code)
+                        buy_price = fill_buy(signal_price, mrkt_code)
                     else:
-                        buy_price = row["STCK_CLPR"]
+                        buy_price = fill_buy(row["STCK_CLPR"], mrkt_code)
                     atr = row.get("atr", 0)
 
                     # 포지션 사이징 — 실전과 동일 (전량 모드 or conviction)
@@ -134,7 +134,8 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
                     if buy_quantity > 0:
                         sizing_reason = "전량 매수" if full_entry else f"conviction={entry_pct / self.MAX_ENTRY_PCT:.2f}"
                         reasons = ["매수"] + signal_reasons + [sizing_reason]
-                        current_capital = self._execute_buy(trades, current_date, buy_price, buy_quantity, current_capital, reasons)
+                        current_capital = self._execute_buy(trades, current_date, buy_price, buy_quantity, current_capital, reasons,
+                                                            mrkt_code=mrkt_code)
                         signal = 1
                         peak_price = buy_price
                         entry_price = buy_price
@@ -144,7 +145,7 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
                         hold_qty = buy_quantity
 
         # 최종 청산 및 결과 포맷팅
-        final_capital = self._liquidate_final_position(trades, eval_df, current_capital)
+        final_capital = self._liquidate_final_position(trades, eval_df, current_capital, mrkt_code=mrkt_code)
         result = self._format_result(prices_df, params, trades, final_capital, eval_df)
         return result
 

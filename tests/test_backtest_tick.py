@@ -13,9 +13,8 @@ import unittest
 import numpy as np
 import pandas as pd
 
-from app.domain.swing.backtest.strategies import single_ema_backtest_strategy as single_ema_module
 from app.domain.swing.backtest.strategies.base_strategy import (
-    buy_tick, ceil_tick, floor_tick, sell_tick,
+    buy_tick, ceil_tick, fill_buy, fill_sell, floor_tick, sell_tick, tick_size, trade_costs,
 )
 from app.domain.swing.backtest.strategies.single_ema_backtest_strategy import SingleEMABacktestStrategy
 
@@ -72,22 +71,34 @@ class SingleEMABacktestTickTest(unittest.TestCase):
         for p in prices:
             self.assertAlmostEqual(p, round(p, 2), places=9)
 
-    def test_domestic_result_unchanged(self):
-        """국내 종목은 헬퍼 도입 전(ceil_tick/floor_tick 직접 사용)과 결과가 같다"""
-        df = _bars(10_000.0, seed=3)
-        new = SingleEMABacktestStrategy().compute(df.copy(), _params("J"))
+    def test_domestic_uses_tick_table(self):
+        """국내 체결가는 국내 호가표 단위다 (10,000원대 = 10원)"""
+        result = SingleEMABacktestStrategy().compute(_bars(10_000.0, seed=3), _params("J"))
+        prices = [t["price"] for t in result["trades"] if "최종 청산" not in t["reasons"]]
+        self.assertTrue(prices, "매매가 없어 검증 불가 — 합성 데이터 확인")
+        for p in prices:
+            self.assertEqual(p % tick_size(p), 0, f"{p} 가 호가 단위가 아님")
 
-        legacy = (lambda p, _m="": ceil_tick(p), lambda p, _m="": floor_tick(p))
-        original = (single_ema_module.buy_tick, single_ema_module.sell_tick)
-        single_ema_module.buy_tick, single_ema_module.sell_tick = legacy
-        try:
-            old = SingleEMABacktestStrategy().compute(df.copy(), _params("J"))
-        finally:
-            single_ema_module.buy_tick, single_ema_module.sell_tick = original
 
-        self.assertEqual(new["total_return"], old["total_return"])
-        self.assertEqual([t["price"] for t in new["trades"]], [t["price"] for t in old["trades"]])
+class CostModelTest(unittest.TestCase):
 
+    def test_slippage_one_tick_against_us(self):
+        self.assertEqual(fill_buy(150.211, "NAS"), 150.23)     # 올림 150.22 + $0.01
+        self.assertEqual(fill_sell(149.789, "NAS"), 149.77)    # 내림 149.78 − $0.01
+        self.assertEqual(fill_buy(15_555, "J"), 15_570)        # 올림 15,560 + 10원
+        self.assertEqual(fill_sell(15_555, "J"), 15_540)       # 내림 15,550 − 10원
+
+    def test_costs_by_market(self):
+        self.assertEqual(trade_costs("J"), (0.00147, 0.0020))
+        self.assertEqual(trade_costs("NAS"), (0.0025, 0.0))    # 미국: 거래세 없음
+
+    def test_us_sell_has_no_tax(self):
+        trades = []
+        strategy = SingleEMABacktestStrategy()
+        strategy._execute_buy(trades, "d", 100.0, 10, 10_000, ["매수"], mrkt_code="NAS")
+        strategy._execute_sell(trades, "d", 110.0, 9_000, ["매도"], mrkt_code="NAS")
+        self.assertEqual(trades[0]["commission"], 100.0 * 10 * 0.0025)
+        self.assertEqual(trades[1]["tax"], 0.0)
 
 if __name__ == "__main__":
     unittest.main()
