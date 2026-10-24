@@ -58,6 +58,16 @@ class StockService:
             logger.error(f"일별 데이터 저장 실패: {e}", exc_info=True)
             raise DatabaseError("일별 데이터 저장에 실패했습니다")
 
+    async def save_intraday_sample(self, sample: dict) -> None:
+        """장중 5분 샘플 저장"""
+        try:
+            await self.repo.save_intraday_sample(sample)
+            await self.db.commit()
+        except SQLAlchemyError as e:
+            await self.db.rollback()
+            logger.error(f"장중 샘플 저장 실패: {e}", exc_info=True)
+            raise DatabaseError("장중 샘플 저장에 실패했습니다")
+
     async def get_stock_history(self, mrkt_code: str, st_code: str, start_date: datetime) -> List[dict]:
         """일별 데이터 조회"""
         try:

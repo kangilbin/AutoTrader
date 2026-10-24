@@ -316,6 +316,12 @@ async def process_single_swing(
             )
             cached_indicators["today_low"] = float(current_low)
 
+            # 장중 5분 샘플 저장 (장중 규칙 검증용) — 실패해도 매매는 계속한다
+            await _store_intraday_sample(
+                mrkt_code, st_code, current_price, cached_indicators["today_open"],
+                current_high, current_low, acml_vol,
+            )
+
             avg_daily_amount = cached_indicators["avg_daily_amount"]
 
             # === 2. 체결 미확인 주문 재확인 (신호 로직보다 우선) ===
@@ -556,6 +562,23 @@ async def process_single_swing(
             return RESULT_FAILED
         finally:
             await db.close()
+
+
+async def _store_intraday_sample(mrkt_code, st_code, current_price, today_open,
+                                 current_high, current_low, acml_vol) -> None:
+    """장중 5분 시세 샘플 저장 — 매매 세션과 분리된 세션 (실패가 매매 상태 커밋을 건드리지 않게)"""
+    db = await Database.get_session()
+    try:
+        await StockService(db).save_intraday_sample({
+            "MRKT_CODE": mrkt_code, "ST_CODE": st_code,
+            "SAMPLE_DT": datetime.now().replace(second=0, microsecond=0),
+            "CUR_PRICE": current_price, "OPEN_PRICE": today_open or None,
+            "HIGH_PRICE": current_high, "LOW_PRICE": current_low, "ACML_VOL": acml_vol,
+        })
+    except Exception as e:
+        logger.warning(f"[{st_code}] 장중 샘플 저장 실패 (매매는 계속): {e}")
+    finally:
+        await db.close()
 
 
 # ==================== SIGNAL 핸들러 ====================

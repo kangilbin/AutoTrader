@@ -8,7 +8,7 @@ from typing import Optional, List
 from datetime import datetime
 
 from app.core.market_code import US_MARKETS, is_overseas
-from app.domain.stock.entity import Stock, StockHistory
+from app.domain.stock.entity import Stock, StockHistory, StockIntradaySample
 from app.domain.stock.schemas import StockResponse, StockHistoryResponse
 import logging
 
@@ -112,6 +112,13 @@ class StockRepository:
         await self.db.execute(query)
         await self.db.flush()
         return len(history_data)
+
+    async def save_intraday_sample(self, sample: dict) -> None:
+        """장중 샘플 저장 (flush만) — 같은 (종목, 분)은 여러 스윙이 겹쳐도 한 번만 남긴다"""
+        query = mysql_insert(StockIntradaySample).values(sample)
+        query = query.on_duplicate_key_update(MRKT_CODE=query.inserted.MRKT_CODE)   # 이미 있으면 그대로
+        await self.db.execute(query)
+        await self.db.flush()
 
     async def find_history(self, mrkt_code: str, st_code: str, start_date: datetime) -> List[dict]:
         """일별 데이터 조회"""
