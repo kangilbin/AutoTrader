@@ -31,6 +31,7 @@ class OBParams:
     require_fvg: bool = False         # 임펄스 구간에 공정가치갭(3봉 갭)
     require_sweep: bool = False       # OB(또는 직전 3봉)가 직전 스윙 저점을 깨고 내려갔다 (매도 유동성 스윕)
     require_discount: bool = False    # 근접선이 임펄스 구간(저점→고점)의 50% 이하
+    require_trend: bool = True        # BOS 종가 > EMA120 (장기 추세 필터 — 기본 켜짐, 완화 실험용 스위치)
 
 
 @dataclass(frozen=True)
@@ -125,7 +126,7 @@ def detect_order_blocks(df: pd.DataFrame, params: OBParams) -> List[OrderBlock]:
             continue
 
         a, av, ema = atr[k], avg_vol[k], trend_ema[k]
-        if np.isnan(a) or np.isnan(av) or np.isnan(ema) or a <= 0:
+        if np.isnan(a) or np.isnan(av) or (params.require_trend and np.isnan(ema)) or a <= 0:
             continue   # 지표 워밍업 구간
         if c[k] - l[ob_idx] < params.displacement_atr * a:
             continue   # 변위 부족
@@ -133,7 +134,7 @@ def detect_order_blocks(df: pd.DataFrame, params: OBParams) -> List[OrderBlock]:
             continue   # 임펄스 거래량 부족
         if h[ob_idx] - l[ob_idx] > params.max_zone_atr * a:
             continue   # 존이 너무 넓다 (R이 커진다)
-        if not c[k] > ema:
+        if params.require_trend and not c[k] > ema:
             continue   # 장기 하락 추세
 
         if params.require_fvg and not _has_fvg(h, l, ob_idx + 1, k):

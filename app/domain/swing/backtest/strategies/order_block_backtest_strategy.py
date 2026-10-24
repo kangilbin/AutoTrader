@@ -37,6 +37,7 @@ class OrderBlockBacktestStrategy(BacktestStrategy, BaseOrderBlockStrategy):
     SWING_TARGET_MIN_R = 1.5
     SWING_TARGET_MAX_R = 3.0
     TIME_STOP_DAYS = 0               # 4-4 N거래일 안에 +1R 미도달이면 시가 청산 (0이면 끔)
+    TREND_FILTER = True              # 기본 필터 완화 실험용 — False면 BOS 종가 > EMA120 조건을 끈다
 
     def __init__(self):
         super().__init__("오더블럭 전략")
@@ -44,7 +45,8 @@ class OrderBlockBacktestStrategy(BacktestStrategy, BaseOrderBlockStrategy):
     @classmethod
     def ob_params(cls) -> OBParams:
         return replace(super().ob_params(), require_fvg=cls.REQUIRE_FVG,
-                       require_sweep=cls.REQUIRE_SWEEP, require_discount=cls.REQUIRE_DISCOUNT)
+                       require_sweep=cls.REQUIRE_SWEEP, require_discount=cls.REQUIRE_DISCOUNT,
+                       require_trend=cls.TREND_FILTER)
 
     def min_bars(self, params: dict) -> int:
         """장기 추세 EMA 워밍업 + 직전 봉"""

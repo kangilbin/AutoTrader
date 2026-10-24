@@ -17,6 +17,7 @@ import argparse
 import asyncio
 import json
 import math
+import multiprocessing as mp
 import random
 import statistics as st
 import sys
@@ -266,11 +267,137 @@ def ablation(data, regimes, periods) -> Dict:
     return out
 
 
+# ==================== 기본 필터 완화 ====================
+
+def relax_grid(data, regimes, periods) -> Dict:
+    """기본 탐지 필터(거래량·변위·EMA120 추세) 완화 조합 — v1 청산 그대로
+
+    채택 규칙(결과 보기 전 고정): 학습 순 R 최고 조합(매매 수 ≥ v1) → 검증에서도 v1보다 좋을 때만 기본값 변경.
+    실전에 쓸 만하다는 판단은 별개: 검증 순 R > 0 이고 t ≥ 2.
+    """
+    out = {}
+    for vol in (1.5, 1.2, 0.0):
+        for disp in (2.0, 1.5):
+            for trend in (True, False):
+                label = f"거래량{vol:g} 변위{disp:g} 추세{'켬' if trend else '끔'}"
+                ov = {"IMPULSE_VOL_RATIO": vol, "DISPLACEMENT_ATR": disp, "TREND_FILTER": trend}
+                out[label] = {}
+                for period in periods:
+                    cycles = run_period(variant(ov), data, period, regimes)
+                    out[label][period] = metrics(cycles, period_years(period))
+                row = " | ".join(f"{p} n={out[label][p].get('n')} R={out[label][p].get('mean_r')} "
+                                 f"t={out[label][p].get('t')}" for p in periods)
+                print(f"[relax] {label:20} {row}", flush=True)
+    return out
+
+
+# ==================== 청산 구조 ====================
+
+NEVER = 1e9   # "없음"을 R 배수로 표현 (도달 불가)
+WORKERS = max(1, (mp.cpu_count() or 2) - 1)
+
+# fork로 띄운 작업 프로세스가 물려받는 데이터 (종목 DataFrame을 작업마다 직렬화하지 않도록)
+_SHARED: Dict = {}
+
+
+def _grid_task(args):
+    label, ov, period = args
+    cycles = run_period(variant(ov), _SHARED["data"], period, _SHARED["regimes"])
+    return label, period, metrics(cycles, period_years(period))
+
+
+def _random_task(args):
+    period, p, k, seed, ov = args
+    cls = type("R", (RandomEntry,), {"P": p, "K": k, "SEED": seed, **ov})
+    cycles = run_period(cls(), _SHARED["data"], period)
+    return st.mean(c["r_net"] for c in cycles) if cycles else None
+
+
+def _pool():
+    return mp.get_context("fork").Pool(WORKERS)
+
+
+def exit_configs() -> Dict[str, Dict]:
+    """청산 조합 36개 — 손절 버퍼 × 본전 상향 × 부분익절 × 트레일링"""
+    configs = {}
+    for buffer in (0.3, 1.0):
+        for be_label, be in (("본전1R", 1.0), ("본전2R", 2.0), ("본전없음", NEVER)):
+            for tp_label, tp in (("부분2R", 2.0), ("부분없음", NEVER)):
+                for tr_label, act, mult in (("트레일2R×3", 2.0, 3.0), ("트레일1R×3", 1.0, 3.0), ("트레일2R×5", 2.0, 5.0)):
+                    label = f"버퍼{buffer:g} {be_label} {tp_label} {tr_label}"
+                    configs[label] = {"STOP_ATR_BUFFER": buffer, "BREAKEVEN_R": be, "PARTIAL_TP_R": tp,
+                                      "TRAIL_ACTIVATE_R": act, "TRAIL_ATR_MULT": mult}
+    return configs
+
+
+def exit_grid(data, regimes, periods, runs: int) -> Dict:
+    """청산 구조 비교 (진입은 오더블럭 그대로)
+
+    채택 규칙(결과 보기 전 고정, 계획서 v2와 같은 규율):
+      1. 학습 순 R 최고 조합 (학습 매매 200건 미만 제외)
+      2. 검증 순 R > 0 이고 t ≥ 2 → 실전 후보
+      3. 학습 상위 3개는 같은 청산의 무작위 진입 대조군(runs회)과 비교 — 검증에서 상위 5% 안이어야 진입에 가치
+    """
+    out = {"grid": {}, "random": {}}
+    _SHARED.update(data=data, regimes=regimes)
+    configs = exit_configs()
+    tasks = [(label, ov, period) for label, ov in configs.items() for period in periods]
+    with _pool() as pool:
+        for label, period, m in pool.imap_unordered(_grid_task, tasks):
+            out["grid"].setdefault(label, {})[period] = m
+    for label in configs:
+        row = " | ".join(f"{p} n={out['grid'][label][p].get('n')} R={out['grid'][label][p].get('mean_r')} "
+                         f"t={out['grid'][label][p].get('t')}" for p in periods)
+        print(f"[exits] {label:34} {row}", flush=True)
+
+    eligible = [(k, v) for k, v in out["grid"].items() if v["train"].get("n", 0) >= 200]
+    top = sorted(eligible, key=lambda kv: kv[1]["train"]["mean_r"], reverse=True)[:3]
+    for label, res in top:
+        ov = configs[label]
+        k = r_over_atr_variant(data, "valid", ov)
+        means = random_baseline_variant(data, "valid", runs, res["valid"]["n"], k, ov)
+        ob = res["valid"]["mean_r"]
+        out["random"][label] = {
+            "runs": len(means), "mean_of_means": round(st.mean(means), 3) if means else None,
+            "p95": round(sorted(means)[int(0.95 * (len(means) - 1))], 3) if means else None,
+            "order_block_percentile": round(sum(1 for m in means if m < ob) / len(means), 3) if means else None,
+        }
+        print(f"[대조군] {label}: " + json.dumps(out["random"][label], ensure_ascii=False), flush=True)
+    return out
+
+
+def r_over_atr_variant(data, period, ov) -> float:
+    ratios = []
+    base = type("B", (OrderBlockBacktestStrategy,), dict(ov))
+
+    class Probe(base):
+        def _find_entry(self, ctx, i, row, prev, atr, used, stats):
+            found = super()._find_entry(ctx, i, row, prev, atr, used, stats)
+            if found and atr > 0:
+                ratios.append((found["price"] - found["stop"]) / atr)
+            return found
+
+    run_period(Probe(), data, period)
+    return st.median(ratios) if ratios else 1.5
+
+
+def random_baseline_variant(data, period, runs, target_n, k, ov) -> List[float]:
+    """같은 청산의 무작위 진입 runs회 — 진입 수를 오더블럭과 맞추도록 p를 한 번 보정한 뒤 병렬 실행"""
+    p = 0.01
+    probe = run_period(type("R", (RandomEntry,), {"P": p, "K": k, "SEED": 10_000, **ov})(), data, period)
+    if probe:
+        p = min(0.5, p * target_n / len(probe))
+    _SHARED["data"] = data
+    with _pool() as pool:
+        means = pool.map(_random_task, [(period, p, k, seed, ov) for seed in range(runs)])
+    return [m for m in means if m is not None]
+
+
 # ==================== CLI ====================
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("mode", choices=["baseline", "random", "ablation"])
+    ap.add_argument("mode", choices=["baseline", "random", "ablation", "relax", "exits"])
     ap.add_argument("--final", action="store_true", help="최종 확인 기간까지 (마지막에 한 번만)")
     ap.add_argument("--runs", type=int, default=100)
     ap.add_argument("--out", default="")
@@ -282,6 +409,18 @@ def main():
     data = tradable(universe)
     print(f"종목 {len(data)} (KR {sum(1 for k in data if k[0] == 'J')}, US {sum(1 for k in data if k[0] != 'J')}), "
           f"시장 국면 {list(regimes)}")
+
+    if args.mode == "exits":
+        results = exit_grid(data, regimes, periods, args.runs)
+        if args.out:
+            Path(args.out).write_text(json.dumps(results, ensure_ascii=False, indent=2))
+        return
+
+    if args.mode == "relax":
+        results = relax_grid(data, regimes, periods)
+        if args.out:
+            Path(args.out).write_text(json.dumps(results, ensure_ascii=False, indent=2))
+        return
 
     if args.mode == "ablation":
         results = ablation(data, regimes, periods)
