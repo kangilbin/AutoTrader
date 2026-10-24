@@ -119,13 +119,15 @@ def active_order_block(df: pd.DataFrame, candidates: list[OrderBlock],
 ### 3.4 활성 판정 (`active_order_block`)
 
 ```
-후보 중  bos_idx < as_of  이고  as_of − bos_idx ≤ OB_MAX_AGE  인 것에 대해
-    구간 = (bos_idx+1 … as_of)
+후보 중  bos_idx ≤ as_of  이고  as_of − bos_idx ≤ OB_MAX_AGE  인 것에 대해
+    구간 = (bos_idx+1 … as_of)          # bos_idx == as_of 면 빈 구간 → 활성 (BOS 다음 날 첫 리테스트 가능)
     touched = 구간 저가 최소 ≤ proximal
-    broken  = 구간 종가 최소 < distal
-    둘 다 아니면 활성
+    터치 안 됐으면 활성
 활성 중 bos_idx 최대 1개 반환 (없으면 None)
 ```
+
+- (구현 시 변경) 종가 붕괴(`종가 < distal`) 조건은 두지 않는다 — distal ≤ proximal이므로 붕괴는 항상 터치를 포함한다.
+- (구현 시 변경) `bos_idx < as_of` → `≤`. BOS 봉이 완성된 뒤라 선견이 아니고, BOS 다음 날 되돌림도 정상적인 첫 리테스트다.
 
 - BOS 봉 자체(`bos_idx`)는 터치 판정에서 제외한다 — 임펄스 첫날 저가가 존 안일 수 있다.
 - **백테스트**: 봉 i 판정 시 `as_of = i−1`. 후보는 `detect_order_blocks`를 전체 df에 한 번만 돌려 만들고, `bos_idx ≤ i−1`인 것만 고려하므로 선견이 없다 (k의 피벗 확정·품질 지표 모두 k 이전 정보).
@@ -162,7 +164,7 @@ class BaseOrderBlockStrategy:
         """R = entry − stop.  exit = stop
            peak ≥ entry + BREAKEVEN_R×R  → max(exit, entry)
            peak ≥ entry + TRAIL_ACTIVATE_R×R and atr>0 → max(exit, peak − TRAIL_ATR_MULT×atr)
-           R ≤ 0 이면 0 (판정 불가)"""
+           R ≤ 0 이면 stop 반환 (구현 시 변경: 0을 돌리면 실전에서 영영 팔지 않는다)"""
 
     @classmethod
     def exit_stage(cls, entry, peak, stop) -> str:   # "손절" | "본전방어" | "이익확정"
@@ -209,7 +211,6 @@ if curr < ob.distal: setex ob_broken:{symbol} (당일 TTL) → 리셋 후 None
 if exists ob_broken:{symbol} → 리셋 후 None
 if open_ < ob.distal  → 리셋 후 None                # 갭 붕괴
 if get ob_used:{swing_id} == ob.ob_date → None     # 같은 날 재진입 방지
-if prdy_ctrt/100 < −MAX_DROP_RATIO → 리셋 후 None
 
 stop = stop_price(ob.distal, atr)
 current_signal = (low ≤ ob.proximal
@@ -402,7 +403,6 @@ prev = i−1 봉,  atr = prev.atr  (전일 완성봉)
   open < ob.distal   → stats.gap_invalid[mrkt] += 1, continue
   low > ob.proximal  → continue
   buy = buy_tick(min(open, ob.proximal))
-  (buy / prev.close − 1) < −MAX_DROP_RATIO → continue      # 실전 prdy_ctrt 판정과 같은 시점의 값
   stop = stop_price(ob.distal, atr);  stop_pct_ok(buy, stop) 아니면 continue
   qty = entry_qty(capital, buy, stop, full_entry);  qty ≤ 0 → continue
   매수 → signal 1, entry=buy, peak=buy, used.add(ob.ob_idx)
@@ -444,7 +444,7 @@ prev = i−1 봉,  atr = prev.atr  (전일 완성봉)
 |------|-------|
 | `test_order_block_detection.py` | 피벗은 j+2봉 전엔 확정 안 됨 / BOS는 피벗당 1회 / 마지막 음봉 선택 / 변위·거래량·존폭·EMA120 각각 미달 시 제외 / 터치·붕괴·만료 시 비활성 / BOS 봉 저가는 터치 판정 제외 / 가장 최근 OB 선택 / `as_of` 이후 데이터를 바꿔도 결과 불변 (**선견 회귀 테스트**) / `PROXIMAL_SOURCE="body"` |
 | `test_order_block_backtest.py` | 합성 시나리오: 근접선 체결가 / 갭 붕괴 무진입 / 진입봉 손절 / 2R 부분익절 → 본전·트레일링 청산 / 손절폭 7% 초과 무진입 / R 사이징 수량·80% 상한·전량 모드 / 미국 종목 호가 0.01 |
-| `test_order_block_strategy.py` | 연속 2회 후 BUY + stop_price / 원격선 이탈 시 당일 무효 / ob_used 재진입 차단 / 급락 차단 / 청산선 3단계 / STOP_PRICE None 폴백 / ATR 0에서도 손절 동작 |
+| `test_order_block_strategy.py` | 연속 2회 후 BUY + stop_price / 원격선 이탈 시 당일 무효 / ob_used 재진입 차단 / 청산선 3단계 / STOP_PRICE None 폴백 / ATR 0에서도 손절 동작 |
 | `test_strategy_description.py` | `'O'` 등록 시 REQUIRED_KEYS / 상수 patch → 문장 반영 |
 | `test_swing_entity.py` | STOP_PRICE 기록·유지(부분익절)·초기화(reset/orphan/adopt) / validate `'O'` |
 | 기존 전체 | 단일 이평선 동작 불변 — 특히 `test_swing_trade_scenarios.py` |
