@@ -12,6 +12,8 @@ from zoneinfo import ZoneInfo
 from decimal import Decimal, InvalidOperation
 from app.domain.swing.indicators import TechnicalIndicators
 from app.domain.swing.trading.strategies.base_single_ema import BaseSingleEMAStrategy
+from app.domain.swing.trading.strategies.base_order_block import BaseOrderBlockStrategy
+from app.domain.swing.order_block import active_order_block, detect_order_blocks
 from app.domain.swing.repository import SwingRepository
 from app.domain.swing.entity import SwingTrade, EmaOption
 from app.domain.swing.schemas import SwingCreateRequest, SwingResponse
@@ -693,11 +695,60 @@ class SwingService:
                 f"ATR={indicators_data['atr']:.2f}, "
                 f"OBV_Z={indicators_data['obv_z']:.2f}"
             )
+
+            # 오더블럭 스윙이면 OB 캐시도 함께 — 다음 워밍업까지 기다리지 않고 등록 당일부터 판정
+            if (mrkt_code, st_code) in await self.repo.find_active_stock_codes_by_type('O'):
+                await self.cache_order_block(redis_client, mrkt_code, st_code)
             return True
 
         except Exception as e:
             logger.error(f"[{st_code}] 지표 캐싱 실패: {e}")
             return False
+
+    async def _calculate_order_block(self, mrkt_code: str, st_code: str) -> dict | None:
+        """완성봉 3년치로 활성 오더블럭 1개 (백테스트와 같은 탐지 함수 — as_of = 마지막 완성봉)"""
+        start_date = datetime.now() - relativedelta(years=3)
+        history = await StockService(self.db).get_stock_history(mrkt_code, st_code, start_date)
+        if not history or len(history) <= BaseOrderBlockStrategy.TREND_EMA_PERIOD:
+            return None
+
+        df = pd.DataFrame(history).sort_values("STCK_BSOP_DATE").reset_index(drop=True)
+        df = TechnicalIndicators.prepare_indicators_from_df(df, ema_long=BaseOrderBlockStrategy.TREND_EMA_PERIOD)
+        params = BaseOrderBlockStrategy.ob_params()
+        ob = active_order_block(df, detect_order_blocks(df, params), len(df) - 1, params)
+        if ob is None:
+            return None
+        return {
+            "ob_date": ob.ob_date, "bos_date": ob.bos_date,
+            "proximal": ob.proximal, "distal": ob.distal,
+            "as_of_date": str(df.iloc[-1]["STCK_BSOP_DATE"]),
+        }
+
+    async def cache_order_block(self, redis_client, mrkt_code: str, st_code: str) -> bool:
+        """오더블럭 캐시 갱신 — 활성 OB가 없거나 계산에 실패하면 키를 지운다
+
+        어제 존이 남아 있으면 오늘 그 존으로 매수하게 된다 (터치·만료로 이미 소멸했을 수 있다).
+        실패해도 매수만 멈추고 청산은 STOP_PRICE·ATR로 계속 동작한다.
+
+        Returns:
+            활성 OB를 캐싱했는지
+        """
+        key = f"ob_zone:{st_code}"
+        try:
+            zone = await self._calculate_order_block(mrkt_code, st_code)
+        except Exception as e:
+            logger.warning(f"[{st_code}] 오더블럭 계산 실패 → 캐시 삭제 (매수만 중단): {e}", exc_info=True)
+            zone = None
+
+        if zone is None:
+            await redis_client.delete(key)
+            logger.info(f"[{st_code}] 활성 오더블럭 없음")
+            return False
+
+        await redis_client.setex(key, market_cache_ttl(mrkt_code), json.dumps(zone))
+        logger.info(f"[{st_code}] 오더블럭 캐싱: 존 {zone['distal']:.2f}~{zone['proximal']:.2f} "
+                    f"(OB {zone['ob_date']}, BOS {zone['bos_date']})")
+        return True
 
     async def warmup_ema_cache(self, redis_client, scope: str = "all") -> Dict[str, Any]:
         """
@@ -767,13 +818,25 @@ class SwingService:
                     logger.error(f"[{st_code}] 지표 캐싱 실패: {e}", exc_info=True)
                     fail_count += 1
 
+            # 3. 오더블럭 스윙 종목은 활성 OB도 캐싱 (완성봉 기준, 없으면 키 삭제)
+            ob_codes = await self.repo.find_active_stock_codes_by_type('O')
+            if scope == "overseas":
+                ob_codes = [(m, s) for m, s in ob_codes if is_overseas(m)]
+            elif scope == "domestic":
+                ob_codes = [(m, s) for m, s in ob_codes if not is_overseas(m)]
+            ob_active = 0
+            for mrkt_code, st_code in ob_codes:
+                ob_active += await self.cache_order_block(redis_client, mrkt_code, st_code)
+
             result = {
                 "success": success_count,
                 "fail": fail_count,
-                "total": len(active_codes)
+                "total": len(active_codes),
+                "order_block": {"total": len(ob_codes), "active": ob_active},
             }
             logger.info(
-                f"=== 지표 캐시 워밍업 완료: 성공 {success_count}, 실패 {fail_count} ==="
+                f"=== 지표 캐시 워밍업 완료: 성공 {success_count}, 실패 {fail_count}, "
+                f"오더블럭 {ob_active}/{len(ob_codes)} ==="
             )
             return result
 

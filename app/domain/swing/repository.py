@@ -223,6 +223,16 @@ class SwingRepository:
         result = await self.db.execute(query)
         return Decimal(result.scalar_one())
 
+    async def find_active_stock_codes_by_type(self, swing_type: str) -> List[tuple]:
+        """활성화된 특정 전략 종목 (MRKT_CODE, ST_CODE) 목록 — 전략 전용 캐시 워밍업용 (예: 오더블럭)"""
+        query = (
+            select(SwingTrade.MRKT_CODE, SwingTrade.ST_CODE)
+            .filter(SwingTrade.USE_YN == 'Y', SwingTrade.SWING_TYPE == swing_type)
+            .distinct()
+        )
+        result = await self.db.execute(query)
+        return [tuple(row) for row in result.all()]
+
     async def find_active_stock_codes(self) -> List[tuple]:
         """
         활성화된 종목 코드 목록 조회 (EMA 캐시 워밍업용)
