@@ -307,6 +307,14 @@ class EntryExitConditionTest(unittest.TestCase):
         buy = _run(BASE_BARS + [RETEST], strategy=strategy)["trades"][0]
         self.assertEqual(buy["price"], 101.11)
 
+    def test_rebound_after_intraday_break_is_skipped(self):
+        """저가가 원격선(98.5) 아래면 장중 붕괴 — 반등해도 사지 않는다 (실전 ob_broken과 같은 규칙)"""
+        broken = (105.0, 105.5, 98.0, 101.5, 100)
+        strategy = type("R", (_V2,), {"REBOUND_ATR": 0.3})()
+        result = _run(BASE_BARS + [broken], strategy=strategy)
+        self.assertEqual(result["trades"], [])
+        self.assertEqual(result["strategy_stats"]["blocked"]["rebound"], 1)
+
     def test_rebound_too_far_is_not_chased(self):
         strategy = type("R", (_V2,), {"REBOUND_ATR": 0.8})()        # 100.5 + 1.6 = 102.1 > 근접선 + 0.5
         result = _run(BASE_BARS + [RETEST], strategy=strategy)

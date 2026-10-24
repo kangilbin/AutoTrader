@@ -238,8 +238,11 @@ class OrderBlockBacktestStrategy(BacktestStrategy, BaseOrderBlockStrategy):
 
         if self.REBOUND_ATR > 0:
             # 일봉 근사: 저점을 찍은 뒤 저가 + k·ATR 까지 반등했다면 그 가격에 산다 (추격 제한 안에서만)
+            # 저가가 원격선 아래면 장중 붕괴 — 실전은 그 순간 그날 매수를 막는다(ob_broken).
+            # 걸러내지 않으면 손절가 바로 위에서 사 R이 0에 가까워진다 (CDNS 2021-10-04: 1,000R 이상)
             rebound_px = float(row["STCK_LWPR"]) + self.REBOUND_ATR * atr
-            if row["STCK_HGPR"] < rebound_px or rebound_px > ob.proximal + self.ENTRY_CHASE_ATR * atr:
+            if (row["STCK_LWPR"] < ob.distal or row["STCK_HGPR"] < rebound_px
+                    or rebound_px > ob.proximal + self.ENTRY_CHASE_ATR * atr):
                 stats["blocked"]["rebound"] += 1
                 return None
             price, rebound = fill_buy(rebound_px, ctx["mrkt_code"]), True
