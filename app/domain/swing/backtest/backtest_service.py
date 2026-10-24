@@ -135,6 +135,7 @@ async def run_backtest(db: AsyncSession, swing_data: SwingCreateRequest) -> dict
 
     params = {
         "st_code": swing_data.ST_CODE,
+        "mrkt_code": swing_data.MRKT_CODE,    # 호가 단위 결정 (국내 호가표 / 미국 $0.01)
         "swing_type": swing_data.SWING_TYPE,
         "short_term": short_term,
         "medium_term": medium_term,

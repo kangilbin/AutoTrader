@@ -8,7 +8,7 @@
 """
 import pandas as pd
 from typing import Dict, List, Tuple
-from .base_strategy import BacktestStrategy, ceil_tick, floor_tick
+from .base_strategy import BacktestStrategy, buy_tick, sell_tick
 from app.domain.swing.indicators import TechnicalIndicators
 from app.domain.swing.trading.strategies.base_single_ema import BaseSingleEMAStrategy
 
@@ -34,6 +34,7 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
     def compute(self, prices_df: pd.DataFrame, params: Dict) -> Dict:
         initial_capital = params["init_amount"]
         eval_start = pd.to_datetime(params["eval_start"])
+        mrkt_code = params.get("mrkt_code", "")   # 호가 단위 (없으면 국내)
 
         df = self._prepare_data(prices_df)
         df = self._calculate_indicators(df)
@@ -64,10 +65,10 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
                 # 청산선 폭은 전일 완성봉 ATR — 실전도 장 전 캐시(전일 완성봉) ATR로 판정한다.
                 # 당일 봉 ATR엔 당일 고저가 섞여, 급락일에 ATR이 커지며 청산선이 내려가 손절을 피하는 선견이 된다
                 atr = prev_row["atr"] if pd.notna(prev_row["atr"]) else 0
-                exit_line = floor_tick(self.calculate_exit_line(entry_price, peak_price, atr))
+                exit_line = sell_tick(self.calculate_exit_line(entry_price, peak_price, atr), mrkt_code)
 
                 if exit_line > 0 and row["STCK_LWPR"] <= exit_line:
-                    sell_price = floor_tick(min(exit_line, row["STCK_OPRC"]))
+                    sell_price = sell_tick(min(exit_line, row["STCK_OPRC"]), mrkt_code)
                     gain_pct = (sell_price - entry_price) / entry_price * 100 if entry_price else 0
                     peak_gain = (peak_price - entry_price) / entry_price * 100 if entry_price else 0
                     if peak_gain >= self.TRAILING_ACTIVATE_PCT:
@@ -90,7 +91,7 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
                     if row["STCK_HGPR"] >= target:
                         sell_qty = int(hold_qty * self.FIRST_PROFIT_TAKE_RATIO)
                         if sell_qty > 0:
-                            px = floor_tick(max(target, row["STCK_OPRC"]))
+                            px = sell_tick(max(target, row["STCK_OPRC"]), mrkt_code)
                             current_capital = self._execute_partial_sell(
                                 trades, current_date, px, sell_qty, current_capital,
                                 [f"부분익절(+{self.PARTIAL_TAKE_PROFIT_PCT:.0f}%)",
@@ -121,7 +122,7 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
                 if matched:
                     # 신호 가격이 당일 [저가, 고가] 범위 안이면 해당 가격으로 체결 (호가 올림)
                     if signal_price > 0 and row["STCK_LWPR"] <= signal_price <= row["STCK_HGPR"]:
-                        buy_price = ceil_tick(signal_price)
+                        buy_price = buy_tick(signal_price, mrkt_code)
                     else:
                         buy_price = row["STCK_CLPR"]
                     atr = row.get("atr", 0)
@@ -141,8 +142,8 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
                         signal = 1
                         peak_price = buy_price
                         entry_price = buy_price
-                        atr_stop = floor_tick(buy_price - atr * self.ATR_MULTIPLIER) if pd.notna(atr) and atr > 0 else 0.0
-                        max_stop = floor_tick(buy_price * (1 - self.MAX_STOP_LOSS_PCT / 100))
+                        atr_stop = sell_tick(buy_price - atr * self.ATR_MULTIPLIER, mrkt_code) if pd.notna(atr) and atr > 0 else 0.0
+                        max_stop = sell_tick(buy_price * (1 - self.MAX_STOP_LOSS_PCT / 100), mrkt_code)
                         stop_loss = max(atr_stop, max_stop) if atr_stop > 0 else 0.0
                         hold_qty = buy_quantity
 

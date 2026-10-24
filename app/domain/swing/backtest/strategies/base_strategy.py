@@ -6,6 +6,9 @@ from abc import ABC, abstractmethod
 from typing import Dict, List
 import pandas as pd
 
+from app.core.market_code import is_overseas
+from app.core.price import normalize_order_price
+
 # 한국 주식 호가 단위표
 _TICK_TABLE = [
     (2_000,    1),
@@ -36,6 +39,22 @@ def floor_tick(price: float) -> float:
     """매도용: 호가 단위 내림 (불리한 방향)"""
     t = tick_size(price)
     return math.floor(price / t) * t
+
+
+# 위 호가표는 국내 전용이다. 미국 종목에 쓰면 $2,000 미만이 1단위가 되어 정수 달러로
+# 올림/내림된다($150.21 → 매수 $151). 실전 주문과 같은 규칙을 쓰도록 시장별로 나눈다.
+def buy_tick(price: float, mrkt_code: str = "") -> float:
+    """매수 체결가: 시장별 호가 단위로 올림 (불리한 방향)"""
+    if is_overseas(mrkt_code):
+        return normalize_order_price(price, is_buy=True)
+    return ceil_tick(price)
+
+
+def sell_tick(price: float, mrkt_code: str = "") -> float:
+    """매도 체결가: 시장별 호가 단위로 내림 (불리한 방향)"""
+    if is_overseas(mrkt_code):
+        return normalize_order_price(price, is_buy=False)
+    return floor_tick(price)
 
 
 def records_without_nan(df: pd.DataFrame, columns: List[str]) -> List[Dict]:
