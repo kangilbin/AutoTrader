@@ -26,7 +26,7 @@ class SwingTrade(Base):
     USE_YN = Column(CHAR(1), nullable=False, default='N', comment='사용 여부')
     INIT_AMOUNT = Column(DECIMAL(15, 2), nullable=False, comment='초기 투자금')
     CUR_AMOUNT = Column(DECIMAL(15, 2), nullable=False, comment='현재 투자금')
-    SWING_TYPE = Column(CHAR(1), nullable=False, comment='스윙 타입 (A: 이평선, B: 일목균형표)')
+    SWING_TYPE = Column(CHAR(1), nullable=False, comment='스윙 타입 (S: 단일 이평선, O: 오더블럭, A/B: 백테스트 전용)')
     FULL_ENTRY_YN = Column(CHAR(1), nullable=False, default='N', server_default='N',
                            comment='전량 매수 여부 (Y: 배정금 전량, N: 신호 강도 기반 사이징)')
     SIGNAL = Column(Integer, nullable=False, default=0, comment='매매 신호 상태 (0:대기, 1:보유-익절전, 2:보유-익절후, 3:수급이탈대기, 4:수급재유입대기)')
@@ -34,6 +34,8 @@ class SwingTrade(Base):
     HOLD_QTY = Column(Integer, nullable=True, default=0, comment='보유 수량')
     EOD_SIGNALS = Column(String(500), nullable=True, comment='EOD 매도 신호 JSON')
     PEAK_PRICE = Column(DECIMAL(15, 2), nullable=True, comment='매수 이후 최고 종가')
+    # 오더블럭 전략: 매수 시 확정한 손절가 (근거인 OB가 다음 날 캐시에서 소멸하므로 영구 저장). 그 외 전략은 NULL
+    STOP_PRICE = Column(DECIMAL(15, 2), nullable=True, comment='매수 시 확정 손절가 (오더블럭 전략, 그 외 NULL)')
     REG_DT = Column(DateTime, default=datetime.now, nullable=False, comment='등록일')
     MOD_DT = Column(DateTime, comment='수정일')
 
@@ -49,8 +51,8 @@ class SwingTrade(Base):
             raise ValidationError(f"시장코드는 {VALID_MRKT_CODES} 중 하나여야 합니다")
         if not self.ST_CODE:
             raise ValidationError("종목코드는 필수입니다")
-        if self.SWING_TYPE not in ('S', 'A', 'B'):
-            raise ValidationError("스윙 타입은 [S,A,B]여야 합니다")
+        if self.SWING_TYPE not in ('S', 'O', 'A', 'B'):
+            raise ValidationError("스윙 타입은 [S,O,A,B]여야 합니다")
         if self.FULL_ENTRY_YN not in (None, 'Y', 'N'):
             raise ValidationError("전량 매수 여부는 [Y,N]이어야 합니다")
 
@@ -78,14 +80,16 @@ class SwingTrade(Base):
 
     # ==================== 상태 전환 ====================
 
-    def transition_to_buy(self, entry_price: float, hold_qty: int, peak_price: float) -> None:
-        """매수 완료 (SIGNAL 0 -> 1)"""
+    def transition_to_buy(self, entry_price: float, hold_qty: int, peak_price: float,
+                          stop_price: float = None) -> None:
+        """매수 완료 (SIGNAL 0 -> 1) — stop_price는 매수 시 손절가를 확정하는 전략(오더블럭)만 넘긴다"""
         if self.SIGNAL != 0:
             raise ValidationError(f"매수는 대기 상태(0)에서만 가능합니다. 현재: {self.SIGNAL}")
         self.SIGNAL = 1
         self.ENTRY_PRICE = to_price(entry_price)
         self.HOLD_QTY = hold_qty
         self.PEAK_PRICE = to_price(peak_price)
+        self.STOP_PRICE = to_price(stop_price) if stop_price else None
         self.MOD_DT = datetime.now()
 
     def adopt_position(self, hold_qty: int, entry_price: float, current_price: float) -> None:
@@ -110,6 +114,7 @@ class SwingTrade(Base):
         self.ENTRY_PRICE = to_price(entry_price)
         # PEAK는 평단을 하한으로 둔다 — 평단 아래로 잡히면 트레일링 익절 기준이 비정상적으로 낮아짐
         self.PEAK_PRICE = to_price(max(current_price, entry_price))
+        self.STOP_PRICE = None  # 편입분은 OB 근거가 없다 → 전략이 폴백 손절을 쓴다
         self.MOD_DT = datetime.now()
 
     def clear_orphan_position(self) -> None:
@@ -117,6 +122,7 @@ class SwingTrade(Base):
         self.HOLD_QTY = 0
         self.ENTRY_PRICE = None
         self.PEAK_PRICE = None
+        self.STOP_PRICE = None
         self.MOD_DT = datetime.now()
 
     def transition_to_partial(self, sold_qty: int) -> None:
@@ -147,6 +153,7 @@ class SwingTrade(Base):
         self.ENTRY_PRICE = None
         self.HOLD_QTY = 0
         self.PEAK_PRICE = None
+        self.STOP_PRICE = None
         self.MOD_DT = datetime.now()
 
     def transition_to_reentry_waiting(self) -> None:
