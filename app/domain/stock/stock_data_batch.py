@@ -122,34 +122,40 @@ async def fetch_and_store_3_years_data(user_id: str, mrkt_code: str, st_code: st
         semaphore = asyncio.Semaphore(3)
 
         async def process_date_range(range_start, range_end):
+            """구간 하나 조회 — 데이터 없음은 [] (상장 전 구간 등), 조회 실패는 예외"""
             task_start_time = time.time()
             async with semaphore:
+                # AsyncSession은 동시 사용이 안 된다. 구간들이 바깥 db를 같이 쓰면 일부가
+                # "concurrent operations are not permitted"로 빠지고, 빠진 채 DATA_YN='Y'가 되어
+                # 3년치에 몇 달짜리 구멍이 영구히 남았다 (ISRG·VRT·QQQ·PATH 실측). 구간마다 따로 연다.
+                task_db = await Database.get_session()
                 try:
                     if is_overseas(mrkt_code):
                         response = await foreign_api.get_stock_data(
                             user_id, st_code,
                             range_start.strftime('%Y%m%d'),
                             range_end.strftime('%Y%m%d'),
-                            db, excd=mrkt_code
+                            task_db, excd=mrkt_code
                         )
                     else:
                         response = await get_stock_data(
                             user_id, st_code,
                             range_start.strftime('%Y%m%d'),
                             range_end.strftime('%Y%m%d'),
-                            db
+                            task_db
                         )
                     if response and "output2" in response:
                         api_data_count = len(response["output2"])
                         task_time = time.time() - task_start_time
                         logger.debug(f"API call completed for {range_start} to {range_end}: {api_data_count} records in {task_time:.2f}s")
                         return response["output2"]
-                    else:
-                        logger.warning(f"No data for {range_start} to {range_end}")
-                        return None
+                    logger.warning(f"No data for {range_start} to {range_end}")
+                    return []
                 except Exception as e:
                     logger.error(f"Error processing {range_start} to {range_end}: {e}")
-                    return None
+                    raise
+                finally:
+                    await task_db.close()
 
         logger.info(f"Processing all {len(date_ranges)} tasks in parallel")
 
@@ -166,7 +172,7 @@ async def fetch_and_store_3_years_data(user_id: str, mrkt_code: str, st_code: st
             if isinstance(result, Exception):
                 failed_tasks += 1
                 logger.error(f"Task failed: {result}")
-            elif result is not None:
+            elif result:
                 try:
                     # history_data 변환
                     history_data = []
@@ -191,8 +197,12 @@ async def fetch_and_store_3_years_data(user_id: str, mrkt_code: str, st_code: st
                 except Exception as db_error:
                     failed_tasks += 1
                     logger.error(f"DB insert failed for batch {i+1}: {db_error}")
-            else:
-                failed_tasks += 1
+            # result == [] : 정상 응답이지만 데이터 없음 (상장 전 구간 등) — 실패 아님
+
+        # 한 구간이라도 실패하면 'Y'(적재 완료)로 닫지 않는다 — 구멍 난 이력이 완료로 굳는다.
+        # 아래 except가 DATA_YN='E'로 남기므로 활성화 경로는 다음 활성화 때 재적재한다.
+        if failed_tasks:
+            raise RuntimeError(f"{failed_tasks}/{len(date_ranges)}개 구간 적재 실패")
 
         # 상태 업데이트: 완료
         await stock_service.update_stock(mrkt_code, st_code, {"DATA_YN": 'Y'})
