@@ -61,7 +61,9 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
                 # 같은 캔들에서 PEAK 갱신 후 청산이 동시에 발동하는 오류를 방지
                 peak_price = max(peak_price, prev_row["STCK_HGPR"])
 
-                atr = row["atr"] if pd.notna(row["atr"]) else 0
+                # 청산선 폭은 전일 완성봉 ATR — 실전도 장 전 캐시(전일 완성봉) ATR로 판정한다.
+                # 당일 봉 ATR엔 당일 고저가 섞여, 급락일에 ATR이 커지며 청산선이 내려가 손절을 피하는 선견이 된다
+                atr = prev_row["atr"] if pd.notna(prev_row["atr"]) else 0
                 exit_line = floor_tick(self.calculate_exit_line(entry_price, peak_price, atr))
 
                 if exit_line > 0 and row["STCK_LWPR"] <= exit_line:
