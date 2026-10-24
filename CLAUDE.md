@@ -99,6 +99,7 @@ app/
 │   │   ├── router.py        # API 엔드포인트
 │   │   ├── indicators.py    # 지표 캐시 스키마/계산
 │   │   ├── tech_analysis.py # 기술 지표 계산 (TA-Lib)
+│   │   ├── order_block.py   # 오더블럭 탐지 순수 함수 (실전 워밍업·백테스트 공용)
 │   │   ├── trading/         # 실시간 매매 실행
 │   │   │   ├── auto_swing_batch.py       # 정기 매매 배치 (오케스트레이터)
 │   │   │   ├── order_executor.py         # 주문 실행(단일 주문)·체결 확인
@@ -106,7 +107,9 @@ app/
 │   │   │   └── strategies/
 │   │   │       ├── base_trading_strategy.py  # TradingStrategy 추상 클래스
 │   │   │       ├── base_single_ema.py        # 단일 EMA 공통 로직/파라미터
-│   │   │       └── single_ema_strategy.py    # 실전 전략 (유일)
+│   │   │       ├── single_ema_strategy.py    # 실전 전략 S: 단일 이평선
+│   │   │       ├── base_order_block.py       # 오더블럭 공통 상수/계산 (실전·백테스트)
+│   │   │       └── order_block_strategy.py   # 실전 전략 O: 오더블럭
 │   │   └── backtest/        # 백테스팅 (실전 전략과 분리)
 │   │       ├── backtest_service.py
 │   │       ├── strategy_factory.py
@@ -114,7 +117,8 @@ app/
 │   │           ├── base_strategy.py              # BacktestStrategy 추상 클래스
 │   │           ├── ema_strategy.py               # A: 이평선
 │   │           ├── ichimoku_strategy.py          # B: 일목균형표
-│   │           └── single_ema_backtest_strategy.py  # S: 단일 20EMA
+│   │           ├── single_ema_backtest_strategy.py  # S: 단일 20EMA
+│   │           └── order_block_backtest_strategy.py # O: 오더블럭
 │   ├── stock/               # 종목 마스터 + 일별 데이터 수집 배치
 │   │   ├── stock_data_batch.py       # 일별 OHLCV 수집
 │   │   └── price_adjustment_batch.py # 액면분할 등 가격 보정
@@ -244,7 +248,8 @@ async def create_swing(
 
    | SWING_TYPE | 전략 |
    |------------|------|
-   | `S` | `SingleEMAStrategy` — 단일 20EMA + 단일 청산선 (**현재 유일한 실전 전략**) |
+   | `S` | `SingleEMAStrategy` — 단일 20EMA + 단일 청산선 |
+   | `O` | `OrderBlockStrategy` — BOS 직전 음봉(오더블럭) 첫 리테스트 매수, 손절가 매수 시 확정(`STOP_PRICE`) |
    | 그 외 | `SingleEMAStrategy` 폴백 (warning 로그) |
 
    **백테스트** — `backtest/strategy_factory.py` → `BacktestStrategy` 상속
@@ -254,9 +259,15 @@ async def create_swing(
    | `A` | `EMAStrategy` — EMA 골든크로스 (단기/중기/장기) |
    | `B` | `IchimokuStrategy` — 일목균형표 신호 |
    | `S` | `SingleEMABacktestStrategy` — 단일 20EMA (실전과 동일 정의) |
+   | `O` | `OrderBlockBacktestStrategy` — 오더블럭 (실전과 동일 정의, `strategy_stats` 포함) |
 
    `EMAStrategy`·`IchimokuStrategy`는 백테스트에만 등록되어 있어 실전 매매에서는
    호출되지 않는다. 실전 전략 추가 시 `TradingStrategyFactory._strategies`에 등록해야 한다.
+
+   **오더블럭(`O`)**: 장 전 워밍업이 완성봉으로 활성 OB를 찾아 Redis `ob_zone:{st_code}`에 둔다
+   (없으면 키 삭제). 매수 수량은 손절가 기준 R 사이징(`calc_entry_qty`), 손절가는 `SWING_TRADE.STOP_PRICE`에
+   매수 시 확정한다. 2026-10-24 백테스트(국내 30·미국 13종목)는 비용 차감 후 우위가 확인되지 않았다 —
+   근거·재검토 조건은 `docs/02-design/features/order-block-strategy.design.md` 12장.
 
    **실전 전략은 `describe()`를 구현해야 한다** — AI 종목 분석(`domain/stock_review`)이
    `TradingStrategyFactory.describe_all()`을 Gemini에 넘겨 종목에 맞는 전략을 고르게 한다.
@@ -304,7 +315,7 @@ async def create_swing(
 | `USER_PUSH_TOKEN` | `UserPushToken` | `domain/notification/entity.py` | Expo 푸시 토큰 |
 | `STOCK_INFO` | `Stock` | `domain/stock/entity.py` | 종목 마스터 (국내/NYS/NAS/AMS) |
 | `STOCK_DAY_HISTORY` | `StockHistory` | `domain/stock/entity.py` | 일별 OHLCV — **완성봉만 적재** |
-| `SWING_TRADE` | `SwingTrade` | `domain/swing/entity.py` | 스윙 매매 설정 + SIGNAL 상태 |
+| `SWING_TRADE` | `SwingTrade` | `domain/swing/entity.py` | 스윙 매매 설정 + SIGNAL 상태 (`STOP_PRICE`: 오더블럭 손절가) |
 | `EMA_OPT` | `EmaOption` | `domain/swing/entity.py` | 3-EMA 기간 설정 (아래 주의 참고) |
 | `TRADE_HISTORY` | `TradeHistory` | `domain/trade_history/entity.py` | 체결 내역 + 실현손익 |
 
