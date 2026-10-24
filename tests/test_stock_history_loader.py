@@ -100,6 +100,23 @@ class LoaderTest(unittest.IsolatedAsyncioTestCase):
         await self._run(fetch)
         self.assertEqual(_FakeStockService.updates, ["P", "Y"])
 
+    async def test_years_controls_range(self):
+        """기간 인자 — 기본 3년, 검증용으로 더 길게 받을 수 있다"""
+        starts = {}
+
+        for years in (3, 6):
+            seen = []
+
+            async def fetch(user_id, code, start, end, db):
+                seen.append(start)
+                return {"output2": [_bar(start)]}
+
+            with patch.object(stock_data_batch, "get_stock_data", side_effect=fetch):
+                await stock_data_batch.fetch_and_store_3_years_data("U", "J", "005930", {}, years=years)
+            starts[years] = min(seen)
+
+        self.assertEqual(int(starts[3][:4]) - int(starts[6][:4]), 3)
+
 
 if __name__ == "__main__":
     unittest.main()

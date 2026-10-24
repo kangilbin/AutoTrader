@@ -76,15 +76,20 @@ def is_today_incomplete(mrkt_code: str) -> bool:
     return now.time() < config["time"]
 
 
-async def fetch_and_store_3_years_data(user_id: str, mrkt_code: str, st_code: str, stock_data: dict):
+async def fetch_and_store_3_years_data(user_id: str, mrkt_code: str, st_code: str, stock_data: dict,
+                                       years: int = 3):
     """
-    3년치 주식 데이터를 백그라운드에서 병렬로 가져와서 DB에 저장하는 배치 작업
+    N년치(기본 3년) 주식 데이터를 백그라운드에서 병렬로 가져와서 DB에 저장하는 배치 작업
+
+    서비스(스윙 활성화·수정주가 재적재)는 기본값 3년을 쓴다. 더 긴 기간은 전략 검증용 일회성 적재에만 쓴다
+    (서비스의 지표·백테스트는 최근 3년만 읽으므로 오래된 행이 있어도 영향이 없다).
 
     Args:
         user_id: 사용자 ID
         mrkt_code: 시장 코드
         st_code: 종목 코드
         stock_data: 주식 메타 정보
+        years: 적재 기간 (년)
     """
     db = await Database.get_session()
     try:
@@ -104,7 +109,7 @@ async def fetch_and_store_3_years_data(user_id: str, mrkt_code: str, st_code: st
             end_date = today
             logger.info(f"[{mrkt_code}/{st_code}] 세션 완료 - 금일({end_date})까지 적재")
 
-        start_date = end_date - relativedelta(years=3)
+        start_date = end_date - relativedelta(years=years)
         current_date = start_date
 
         # 날짜 범위 생성
