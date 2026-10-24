@@ -20,7 +20,8 @@ import pandas as pd
 
 from app.domain.swing.backtest.strategies.order_block_backtest_strategy import OrderBlockBacktestStrategy
 from app.domain.swing.order_block import (
-    OrderBlock, active_order_block, confirmed_pivot_highs, detect_order_blocks,
+    OrderBlock, _swept_low, active_order_block, confirmed_pivot_highs, confirmed_pivot_lows,
+    detect_order_blocks, weekly_uptrend,
 )
 from app.domain.swing.trading.strategies.base_order_block import BaseOrderBlockStrategy
 
@@ -218,6 +219,115 @@ class ExitLineTest(unittest.TestCase):
         """체결가가 손절가 이하면 청산선 = 손절가 (0이면 실전에서 영영 안 판다)"""
         self.assertEqual(self.S.calculate_exit_line(97.0, 97.0, 98.0, 2.0), 98.0)
 
+
+
+# ==================== v2 조건 (백테스트 전용, 기본 꺼짐) ====================
+
+# 고점 103 → BOS 종가 103.2 → 상승폭이 작아 근접선 101이 임펄스 50%(100.9) 위 = 할인 구간 아님
+SHALLOW_BARS = [
+    (100.0, 101.0, 99.0, 100.5, 100),
+    (100.5, 102.0, 100.0, 101.5, 100),
+    (101.5, 103.0, 101.0, 102.0, 100),    # 2: 고점 103
+    (102.0, 102.5, 101.0, 101.5, 100),
+    (101.5, 102.0, 100.0, 100.5, 100),
+    (100.5, 101.0, 98.5, 99.0, 100),      # 5: OB
+    (99.0, 102.5, 99.0, 102.3, 200),
+    (102.3, 103.3, 102.0, 103.2, 200),    # 7: BOS (103.2 > 103)
+]
+
+
+class QualityConditionTest(unittest.TestCase):
+
+    def test_fvg_required(self):
+        self.assertEqual(len(detect_order_blocks(_df(BASE_BARS), replace(P, require_fvg=True))), 1,
+                         "봉7 저가 102 > 봉5 고가 101 — 갭이 있다")
+        no_gap = [b if i != 7 else (102.5, 107.0, 100.5, 106.5, 200) for i, b in enumerate(BASE_BARS)]
+        self.assertEqual(detect_order_blocks(_df(no_gap), replace(P, require_fvg=True)), [])
+
+    def test_discount_required(self):
+        self.assertEqual(len(detect_order_blocks(_df(SHALLOW_BARS), P)), 1)
+        self.assertEqual(detect_order_blocks(_df(SHALLOW_BARS), replace(P, require_discount=True)), [])
+        self.assertEqual(len(detect_order_blocks(_df(BASE_BARS), replace(P, require_discount=True))), 1)
+
+    def test_sweep(self):
+        lows = pd.Series([10, 9, 8, 9, 10, 11, 12, 11, 7.5, 9]).to_numpy(dtype=float)   # 저점 8(봉2) → 봉8이 깸
+        pivots = confirmed_pivot_lows(lows, 2)
+        self.assertTrue(_swept_low(lows, 8, pivots))
+        self.assertFalse(_swept_low(lows, 6, pivots), "직전 저점을 깨지 않았다")
+
+    def test_proximal_mean(self):
+        ob = detect_order_blocks(_df(BASE_BARS), replace(P, proximal_source="mean"))[0]
+        self.assertEqual(ob.proximal, (101.0 + 98.5) / 2)
+
+
+class WeeklyStructureTest(unittest.TestCase):
+
+    def test_no_lookahead(self):
+        """행 i의 판정은 지난주까지 — 이후 봉을 지워도 앞부분 판정이 같다"""
+        import math
+        # 상승 추세 + 30일 주기 눌림 (주봉 스윙이 생기도록)
+        closes = [100 + x * 0.4 + 6 * math.sin(x / 30 * 2 * math.pi) for x in range(260)]
+        bars = [(c, c + 1, c - 1, c, 100) for c in closes]
+        full = weekly_uptrend(_df(bars))
+        part = weekly_uptrend(_df(bars[:150]))
+        self.assertTrue((full[:145] == part[:145]).all(), "이후 봉이 앞부분 판정을 바꿨다")
+        self.assertTrue(full[-40:].all(), "꾸준한 상승 추세인데 상승 구조로 판정되지 않음")
+
+    def test_breakdown_clears_uptrend(self):
+        import math
+        up = [100 + x * 0.4 + 6 * math.sin(x / 30 * 2 * math.pi) for x in range(200)]
+        down = [up[-1] - x * 1.0 for x in range(1, 80)]                # 급락으로 직전 스윙 저점 이탈
+        bars = [(c, c + 1, c - 1, c, 100) for c in up + down]
+        flags = weekly_uptrend(_df(bars))
+        self.assertTrue(flags[190])
+        self.assertFalse(flags[-1], "직전 스윙 저점을 깨고 내려갔는데 상승 구조로 남음")
+
+
+class _V2(_FixedIndicators):
+    pass
+
+
+class EntryExitConditionTest(unittest.TestCase):
+
+    def test_market_filter_fail_closed(self):
+        strategy = type("M", (_V2,), {"MARKET_FILTER": True})()
+        result = _run(BASE_BARS + [RETEST], strategy=strategy)
+        self.assertEqual(result["trades"], [], "지수 국면 데이터가 없으면 사지 않는다")
+        self.assertEqual(result["strategy_stats"]["blocked"]["market"], 1)
+
+        dates = pd.to_datetime(_df(BASE_BARS + [RETEST])["STCK_BSOP_DATE"])
+        bull = pd.Series(True, index=dates)
+        result = _run(BASE_BARS + [RETEST], strategy=type("M", (_V2,), {"MARKET_FILTER": True})(),
+                      market_regime=bull)
+        self.assertEqual(result["trades"][0]["action"], "BUY")
+
+    def test_rebound_entry_price(self):
+        """저가 100.5 + 0.3×ATR(2) = 101.1 까지 반등했을 때 그 가격(+슬리피지)에 산다"""
+        strategy = type("R", (_V2,), {"REBOUND_ATR": 0.3})()
+        buy = _run(BASE_BARS + [RETEST], strategy=strategy)["trades"][0]
+        self.assertEqual(buy["price"], 101.11)
+
+    def test_rebound_too_far_is_not_chased(self):
+        strategy = type("R", (_V2,), {"REBOUND_ATR": 0.8})()        # 100.5 + 1.6 = 102.1 > 근접선 + 0.5
+        result = _run(BASE_BARS + [RETEST], strategy=strategy)
+        self.assertEqual(result["trades"], [])
+        self.assertEqual(result["strategy_stats"]["blocked"]["rebound"], 1)
+
+    def test_time_stop(self):
+        weak_retest = (103.0, 103.5, 100.5, 101.5, 100)               # 고가 103.5 < +1R 104.12
+        flat = [(101.5, 102.0, 100.8, 101.6, 100), (101.6, 102.2, 101.0, 101.8, 100),
+                (101.8, 102.0, 101.2, 101.5, 100)]
+        strategy = type("T", (_V2,), {"TIME_STOP_DAYS": 2})()
+        trades = _run(BASE_BARS + [weak_retest] + flat, strategy=strategy)["trades"]
+        self.assertEqual([t["action"] for t in trades], ["BUY", "SELL"])
+        self.assertIn("시간청산", trades[1]["reasons"])
+        self.assertEqual(trades[1]["price"], 101.59)                 # 진입 2거래일 뒤 시가 101.6 − 슬리피지
+
+    def test_swing_target(self):
+        """부분익절 목표 = BOS 이후 전일까지 최고가 108 (1.5R~3R 범위 안)"""
+        strategy = type("S", (_V2,), {"TARGET_MODE": "swing"})()
+        trades = _run(BASE_BARS + [RETEST] + AFTER_ENTRY, strategy=strategy)["trades"]
+        self.assertEqual(trades[1]["price"], 107.99)                 # max(108, 시가 102) − 슬리피지
 
 if __name__ == "__main__":
     unittest.main()
