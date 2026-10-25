@@ -38,6 +38,8 @@ class OrderBlockBacktestStrategy(BacktestStrategy, BaseOrderBlockStrategy):
     SWING_TARGET_MAX_R = 3.0
     TIME_STOP_DAYS = 0               # 4-4 N거래일 안에 +1R 미도달이면 시가 청산 (0이면 끔)
     TREND_FILTER = True              # 기본 필터 완화 실험용 — False면 BOS 종가 > EMA120 조건을 끈다
+    COOLDOWN_MODE = "obv"            # v3 E4 — "obv"(현행: OBV z 이탈→재유입) / "none"(바로 대기) / "days"(고정 N거래일)
+    COOLDOWN_DAYS = 10
 
     def __init__(self):
         super().__init__("오더블럭 전략")
@@ -85,6 +87,7 @@ class OrderBlockBacktestStrategy(BacktestStrategy, BaseOrderBlockStrategy):
         hold_qty = 0
         used = set()        # 매수에 쓴 진입 근거 (OB: 미터치 규칙상 다음 봉부터 소멸하지만 안전장치)
         cycle: Optional[Dict] = None
+        cooldown_from = 0   # 마지막 전량 매도 봉 (고정 N일 쿨다운용)
 
         for i in range(first, len(df)):
             row, prev = df.iloc[i], df.iloc[i - 1]
@@ -104,6 +107,7 @@ class OrderBlockBacktestStrategy(BacktestStrategy, BaseOrderBlockStrategy):
                     )
                     self._close_cycle(stats, cycle, px, hold_qty, "시간청산", date, mrkt_code)
                     signal, entry, stop, peak, hold_qty, cycle = 3, 0.0, 0.0, 0.0, 0, None
+                    cooldown_from = i
                     continue
                 if cycle["days_to_1r"] is None and row["STCK_HGPR"] >= entry + cycle["r"]:
                     cycle["days_to_1r"] = i - cycle["entry_i"]
@@ -118,6 +122,7 @@ class OrderBlockBacktestStrategy(BacktestStrategy, BaseOrderBlockStrategy):
                     )
                     self._close_cycle(stats, cycle, px, hold_qty, stage, date, mrkt_code)
                     signal, entry, stop, peak, hold_qty, cycle = 3, 0.0, 0.0, 0.0, 0, None
+                    cooldown_from = i
                     continue
 
                 if signal == 1 and cycle["target"] is not None:     # None = 부분익절 없음
@@ -134,7 +139,12 @@ class OrderBlockBacktestStrategy(BacktestStrategy, BaseOrderBlockStrategy):
                         signal = 2      # PEAK는 유지 (잔량도 같은 청산선이 지킨다)
                 continue
 
-            # === 2단계: 수급 안정화 대기 (단일 이평선과 동일) ===
+            # === 2단계: 수급 안정화 대기 (기본: 단일 이평선과 동일한 OBV 2단계) ===
+            if signal in (3, 4) and self.COOLDOWN_MODE != "obv":
+                if self.COOLDOWN_MODE == "none" or i - cooldown_from >= self.COOLDOWN_DAYS:
+                    signal = 0
+                else:
+                    continue
             if signal == 3:
                 obv_z = row.get("obv_z", 0)
                 if pd.notna(obv_z) and obv_z < self.COOLDOWN_OBV_EXIT:
@@ -185,6 +195,7 @@ class OrderBlockBacktestStrategy(BacktestStrategy, BaseOrderBlockStrategy):
                 )
                 self._close_cycle(stats, cycle, px, hold_qty, "손절", date, mrkt_code)
                 signal, entry, stop, peak, hold_qty, cycle = 3, 0.0, 0.0, 0.0, 0, None
+                cooldown_from = i
             elif row["STCK_HGPR"] >= entry + cycle["r"]:
                 cycle["days_to_1r"] = 0
 
@@ -289,6 +300,7 @@ class OrderBlockBacktestStrategy(BacktestStrategy, BaseOrderBlockStrategy):
             "entry_date": cycle["entry_date"].strftime("%Y%m%d"),
             "exit_date": exit_date.strftime("%Y%m%d"),
             "r_gross": round(gross, 4), "r_net": round(net, 4),
+            "entry": round(cycle["entry"], 4), "r": round(cycle["r"], 4),
             "stage": stage, "days_to_1r": cycle["days_to_1r"],
         })
 
