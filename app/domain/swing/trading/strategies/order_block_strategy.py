@@ -58,18 +58,31 @@ class OrderBlockStrategy(TradingStrategy, BaseOrderBlockStrategy):
             ],
             "매수수량": f"손절 시 배정금의 {cls.RISK_PER_TRADE * 100:g}%만 잃도록 (상한 {cls.MAX_ENTRY_PCT * 100:g}%), "
                         f"전량 매수 설정 시 {cls.FULL_ENTRY_PCT * 100:g}%. 진입은 사이클당 1회 (추가 매수 없음)",
-            "청산": [
-                f"손절가 = 오더블럭 하단 − ATR×{cls.STOP_ATR_BUFFER:g} (매수 시 확정, R = 진입가 − 손절가)",
-                f"고점 +{cls.BREAKEVEN_R:g}R → 본전, +{cls.TRAIL_ACTIVATE_R:g}R → 고점 − ATR×{cls.TRAIL_ATR_MULT:g} 로 상향 (내려가지 않음)",
-                "청산선 이탈 시 전량 매도",
-                f"+{cls.PARTIAL_TP_R:g}R 도달 시 절반 부분익절 (1회)",
-            ],
+            "청산": cls._describe_exits(),
             "매도후": f"OBV z < {cls.COOLDOWN_OBV_EXIT:g} (수급 이탈) → OBV z > {cls.COOLDOWN_OBV_REENTRY:g} "
                       f"(재유입) 확인 후 매수 대기. 이미 매매한 오더블럭은 다시 쓰지 않는다",
             "잘맞는종목": "상승 추세 중 눌림과 재상승을 반복하는 종목, 거래량을 동반한 강한 상승 이력이 있는 종목",
             "안맞는종목": f"장기 하락 추세({cls.TREND_EMA_PERIOD}일 EMA 아래), 갭이 잦은 종목(존을 건너뛴다), "
                           "거래량이 적은 종목, 되돌림 없이 한 방향으로만 오르는 종목(진입 기회 없음)",
         }
+
+    @classmethod
+    def _describe_exits(cls) -> list:
+        """청산 설명 — 꺼진 단계(본전 상향·부분익절, 값 0)는 넣지 않는다"""
+        steps = []
+        if cls.BREAKEVEN_R > 0:
+            steps.append(f"고점 +{cls.BREAKEVEN_R:g}R → 본전")
+        steps.append(f"+{cls.TRAIL_ACTIVATE_R:g}R → 고점 − ATR×{cls.TRAIL_ATR_MULT:g}")
+        exits = [
+            f"손절가 = 오더블럭 하단 − ATR×{cls.STOP_ATR_BUFFER:g} (매수 시 확정, R = 진입가 − 손절가)",
+            f"청산선을 {', '.join(steps)} 로 상향 (내려가지 않음)",
+            "청산선 이탈 시 전량 매도",
+        ]
+        if cls.PARTIAL_TP_R > 0:
+            exits.append(f"+{cls.PARTIAL_TP_R:g}R 도달 시 절반 부분익절 (1회)")
+        else:
+            exits.append("부분익절 없이 추세를 끝까지 따라간다 (승률 낮고 소수의 큰 수익으로 메우는 구조)")
+        return exits
 
     # ========================================
     # 지표
@@ -254,7 +267,7 @@ class OrderBlockStrategy(TradingStrategy, BaseOrderBlockStrategy):
         stop = cls._resolve_stop(symbol, entry, stop_price)
         target = cls.partial_target(entry, stop)
         curr_price = float(current_price)
-        if curr_price < target:
+        if target is None or curr_price < target:
             return None
 
         logger.info(f"[{symbol}] 부분 익절: 현재가 {curr_price:,.2f} ≥ 목표 {target:,.2f} "

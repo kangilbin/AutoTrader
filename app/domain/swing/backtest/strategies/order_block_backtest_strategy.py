@@ -120,7 +120,7 @@ class OrderBlockBacktestStrategy(BacktestStrategy, BaseOrderBlockStrategy):
                     signal, entry, stop, peak, hold_qty, cycle = 3, 0.0, 0.0, 0.0, 0, None
                     continue
 
-                if signal == 1:
+                if signal == 1 and cycle["target"] is not None:     # None = 부분익절 없음
                     target = cycle["target"]
                     sell_qty = int(hold_qty * self.FIRST_PROFIT_TAKE_RATIO)
                     if row["STCK_HGPR"] >= target and sell_qty > 0:
@@ -262,8 +262,8 @@ class OrderBlockBacktestStrategy(BacktestStrategy, BaseOrderBlockStrategy):
             "leg_high": float(df["STCK_HGPR"].iloc[ob.bos_idx:i].max()),
         }
 
-    def _target(self, entry: float, stop: float, leg_high: Optional[float]) -> float:
-        """부분익절 목표 — 기본 2R, "swing"이면 직전 고점 (1.5R 미만이면 기본으로)"""
+    def _target(self, entry: float, stop: float, leg_high: Optional[float]) -> Optional[float]:
+        """부분익절 목표 — 기본 PARTIAL_TP_R(0이면 None=부분익절 없음), "swing"이면 직전 고점 (1.5R 미만이면 기본으로)"""
         r = entry - stop
         if self.TARGET_MODE == "swing" and leg_high:
             target = min(leg_high, entry + self.SWING_TARGET_MAX_R * r)

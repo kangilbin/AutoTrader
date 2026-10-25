@@ -13,6 +13,7 @@
   봉9  저가 100.5          → 첫 리테스트 (매수 101 + 슬리피지 1틱 = 101.01, 손절 98.5 − 0.6 = 97.9, R = 3.11)
 """
 import unittest
+from unittest.mock import patch
 from dataclasses import replace
 from typing import List, Tuple
 
@@ -137,6 +138,14 @@ class _FixedIndicators(OrderBlockBacktestStrategy):
         return df
 
 
+# 2026-10-25 이전 청산 값 — 본전 상향·부분익절·단계별 청산선 장치를 검증할 때 명시적으로 쓴다
+LEGACY_EXITS = {"STOP_ATR_BUFFER": 0.3, "BREAKEVEN_R": 1.0, "PARTIAL_TP_R": 2.0, "TRAIL_ATR_MULT": 3.0}
+
+
+class _Legacy(_FixedIndicators):
+    STOP_ATR_BUFFER, BREAKEVEN_R, PARTIAL_TP_R, TRAIL_ATR_MULT = 0.3, 1.0, 2.0, 3.0
+
+
 def _run(bars, strategy=None, **params):
     df = _df(bars).drop(columns=["atr", "avg_vol20", "ema120"])
     p = {"st_code": "X", "mrkt_code": "NAS", "swing_type": "O", "init_amount": 10_000,
@@ -147,8 +156,8 @@ def _run(bars, strategy=None, **params):
 class BacktestScenarioTest(unittest.TestCase):
 
     def test_full_cycle(self):
-        """첫 리테스트 매수 → 2R 부분익절 → 트레일링 청산"""
-        result = _run(BASE_BARS + [RETEST] + AFTER_ENTRY)
+        """(이전 청산 값) 첫 리테스트 매수 → 2R 부분익절 → 트레일링 청산"""
+        result = _run(BASE_BARS + [RETEST] + AFTER_ENTRY, strategy=_Legacy())
         trades = result["trades"]
         self.assertEqual([t["action"] for t in trades], ["BUY", "SELL", "SELL"])
 
@@ -175,10 +184,10 @@ class BacktestScenarioTest(unittest.TestCase):
 
     def test_stop_on_entry_bar(self):
         """진입봉 저가가 손절가에 닿으면 손절로 본다 (장중 순서 불명 → 보수적)"""
-        deep = (105.0, 105.5, 97.5, 98.0, 100)
+        deep = (105.0, 105.5, 96.0, 98.0, 100)                       # 저가 96.0 ≤ 손절 98.5 − 1.0×2 = 96.5
         trades = _run(BASE_BARS + [deep])["trades"]
         self.assertEqual([t["action"] for t in trades], ["BUY", "SELL"])
-        self.assertEqual(trades[1]["price"], 97.89)       # 손절가 97.9 − 슬리피지
+        self.assertEqual(trades[1]["price"], 96.49)                  # 손절가 96.5 − 슬리피지       # 손절가 97.9 − 슬리피지
         self.assertIn("진입봉", trades[1]["reasons"])
 
     def test_sharp_retest_still_buys(self):
@@ -200,6 +209,13 @@ class BacktestScenarioTest(unittest.TestCase):
         buy = _run(BASE_BARS + [RETEST], full_entry=True)["trades"][0]
         self.assertEqual(buy["quantity"], 98)             # int(10000 × 0.99 / 101.01)
 
+    def test_default_exits_full_cycle(self):
+        """기본 청산: 부분익절 없이 보유, 고점 111 − ATR×5 = 101 위라 평가 종료까지 들고 간다"""
+        trades = _run(BASE_BARS + [RETEST] + AFTER_ENTRY)["trades"]
+        self.assertEqual([t["action"] for t in trades], ["BUY", "SELL"])
+        self.assertIn("손절 96.50", trades[0]["reasons"])
+        self.assertIn("최종 청산", trades[1]["reasons"])
+
     def test_registered_in_factory(self):
         from app.domain.swing.backtest.strategy_factory import StrategyFactory
         self.assertIsInstance(StrategyFactory.get_strategy("O"), OrderBlockBacktestStrategy)
@@ -208,12 +224,24 @@ class BacktestScenarioTest(unittest.TestCase):
 class ExitLineTest(unittest.TestCase):
     S = BaseOrderBlockStrategy
 
-    def test_stages(self):
+    def test_default_has_no_breakeven(self):
+        """기본(2026-10-25~): 본전 상향 없음 — +2R 전까지 손절가 유지, 이후 고점 − ATR×5"""
         entry, stop, atr = 100.0, 97.0, 2.0                       # R = 3
-        self.assertEqual(self.S.calculate_exit_line(entry, 102.9, stop, atr), 97.0)    # < +1R
-        self.assertEqual(self.S.calculate_exit_line(entry, 103.0, stop, atr), 100.0)   # +1R → 본전
-        self.assertEqual(self.S.calculate_exit_line(entry, 106.0, stop, atr), 100.0)   # +2R, 106−6=100
-        self.assertEqual(self.S.calculate_exit_line(entry, 110.0, stop, atr), 104.0)   # 110−6
+        self.assertEqual(self.S.calculate_exit_line(entry, 105.9, stop, atr), 97.0)    # +1R 넘어도 손절가
+        self.assertEqual(self.S.calculate_exit_line(entry, 106.0, stop, atr), 97.0)    # +2R, 106−10=96 < 97
+        self.assertEqual(self.S.calculate_exit_line(entry, 112.0, stop, atr), 102.0)   # 112−10
+        self.assertEqual(self.S.exit_stage(entry, 104.0, stop), "손절", "본전 단계가 꺼져 있다")
+        self.assertIsNone(self.S.partial_target(entry, stop), "부분익절이 꺼져 있다")
+
+    def test_stages_with_legacy_values(self):
+        with patch.multiple(BaseOrderBlockStrategy, **LEGACY_EXITS):
+            entry, stop, atr = 100.0, 97.0, 2.0
+            self.assertEqual(self.S.calculate_exit_line(entry, 102.9, stop, atr), 97.0)    # < +1R
+            self.assertEqual(self.S.calculate_exit_line(entry, 103.0, stop, atr), 100.0)   # +1R → 본전
+            self.assertEqual(self.S.calculate_exit_line(entry, 106.0, stop, atr), 100.0)   # +2R, 106−6=100
+            self.assertEqual(self.S.calculate_exit_line(entry, 110.0, stop, atr), 104.0)   # 110−6
+            self.assertEqual(self.S.exit_stage(entry, 104.0, stop), "본전방어")
+            self.assertEqual(self.S.partial_target(entry, stop), 106.0)
 
     def test_non_positive_r_exits_at_stop(self):
         """체결가가 손절가 이하면 청산선 = 손절가 (0이면 실전에서 영영 안 판다)"""

@@ -269,25 +269,49 @@ def ablation(data, regimes, periods) -> Dict:
 
 # ==================== 기본 필터 완화 ====================
 
-def relax_grid(data, regimes, periods) -> Dict:
-    """기본 탐지 필터(거래량·변위·EMA120 추세) 완화 조합 — v1 청산 그대로
+# 청산 구조 실험(exits) 학습 1위 — 진입 완화 실험의 기준 청산
+BEST_EXIT = {"STOP_ATR_BUFFER": 1.0, "BREAKEVEN_R": 1e9, "PARTIAL_TP_R": 1e9,
+             "TRAIL_ACTIVATE_R": 2.0, "TRAIL_ATR_MULT": 5.0}
 
-    채택 규칙(결과 보기 전 고정): 학습 순 R 최고 조합(매매 수 ≥ v1) → 검증에서도 v1보다 좋을 때만 기본값 변경.
-    실전에 쓸 만하다는 판단은 별개: 검증 순 R > 0 이고 t ≥ 2.
+
+def relax_grid(data, regimes, periods, base: Optional[Dict] = None, control_runs: int = 0, min_n: int = 0) -> Dict:
+    """기본 탐지 필터(거래량·변위·EMA120 추세) 완화 조합 — 청산은 base (없으면 v1)
+
+    relax (v1 청산) 채택 규칙: 학습 순 R 최고 조합(매매 수 ≥ v1) → 검증에서도 v1보다 좋을 때만 기본값 변경.
+    relax_exits (새 청산) 채택 규칙: 학습 순 R 최고(매매 수 ≥ min_n) → 검증에서 기준 조합보다 좋고,
+      검증 순 R > 0·t ≥ 2, 학습 상위 2개는 무작위 진입 대조군 상위 5% 안.
     """
-    out = {}
+    base = base or {}
+    combos = {}
     for vol in (1.5, 1.2, 0.0):
         for disp in (2.0, 1.5):
             for trend in (True, False):
                 label = f"거래량{vol:g} 변위{disp:g} 추세{'켬' if trend else '끔'}"
-                ov = {"IMPULSE_VOL_RATIO": vol, "DISPLACEMENT_ATR": disp, "TREND_FILTER": trend}
-                out[label] = {}
-                for period in periods:
-                    cycles = run_period(variant(ov), data, period, regimes)
-                    out[label][period] = metrics(cycles, period_years(period))
-                row = " | ".join(f"{p} n={out[label][p].get('n')} R={out[label][p].get('mean_r')} "
-                                 f"t={out[label][p].get('t')}" for p in periods)
-                print(f"[relax] {label:20} {row}", flush=True)
+                combos[label] = {**base, "IMPULSE_VOL_RATIO": vol, "DISPLACEMENT_ATR": disp, "TREND_FILTER": trend}
+
+    out = {"grid": {}, "random": {}}
+    _SHARED.update(data=data, regimes=regimes)
+    with _pool() as pool:
+        for label, period, m in pool.imap_unordered(_grid_task, [(l, ov, p) for l, ov in combos.items() for p in periods]):
+            out["grid"].setdefault(label, {})[period] = m
+    for label in combos:
+        row = " | ".join(f"{p} n={out['grid'][label][p].get('n')} R={out['grid'][label][p].get('mean_r')} "
+                         f"t={out['grid'][label][p].get('t')}" for p in periods)
+        print(f"[relax] {label:20} {row}", flush=True)
+
+    if control_runs:
+        eligible = [(k, v) for k, v in out["grid"].items() if v["train"].get("n", 0) >= min_n]
+        for label, res in sorted(eligible, key=lambda kv: kv[1]["train"]["mean_r"], reverse=True)[:2]:
+            ov = combos[label]
+            k = r_over_atr_variant(data, "valid", ov)
+            means = random_baseline_variant(data, "valid", control_runs, res["valid"]["n"], k, ov)
+            ob = res["valid"]["mean_r"]
+            out["random"][label] = {
+                "runs": len(means), "mean_of_means": round(st.mean(means), 3) if means else None,
+                "p95": round(sorted(means)[int(0.95 * (len(means) - 1))], 3) if means else None,
+                "order_block_percentile": round(sum(1 for m in means if m < ob) / len(means), 3) if means else None,
+            }
+            print(f"[대조군] {label}: " + json.dumps(out["random"][label], ensure_ascii=False), flush=True)
     return out
 
 
@@ -393,11 +417,49 @@ def random_baseline_variant(data, period, runs, target_n, k, ov) -> List[float]:
     return [m for m in means if m is not None]
 
 
+# ==================== 청산 민감도 ====================
+
+def exit_sensitivity(data, regimes, periods) -> Dict:
+    """BEST_EXIT 주변 27개 (손절 버퍼 × 트레일 폭 × 트레일 시작) — 넓은 평지인지 확인
+
+    판정 기준(결과 보기 전 고정):
+      1. 중심에서 한 칸 움직인 이웃 6개가 학습·검증 모두 순 R > 0
+      2. 27개 검증 순 R 중앙값 ≥ 0.15 (중심 검증값 +0.31의 절반)
+    """
+    buffers, mults, acts = (0.7, 1.0, 1.5), (4.0, 5.0, 6.0), (1.5, 2.0, 3.0)
+    combos = {}
+    for b in buffers:
+        for m in mults:
+            for a in acts:
+                combos[(b, m, a)] = {**BEST_EXIT, "STOP_ATR_BUFFER": b, "TRAIL_ATR_MULT": m, "TRAIL_ACTIVATE_R": a}
+
+    grid = {}
+    _SHARED.update(data=data, regimes=regimes)
+    tasks = [(key, ov, p) for key, ov in combos.items() for p in periods]
+    with _pool() as pool:
+        for key, period, m in pool.imap_unordered(_grid_task, tasks):
+            grid.setdefault(key, {})[period] = m
+    for key in combos:
+        b, m, a = key
+        row = " | ".join(f"{p} n={grid[key][p].get('n')} R={grid[key][p].get('mean_r')} t={grid[key][p].get('t')}"
+                         for p in periods)
+        print(f"[sens] 버퍼{b:g} 트레일{a:g}R×{m:g} {row}", flush=True)
+
+    center = (1.0, 5.0, 2.0)
+    neighbors = [(0.7, 5.0, 2.0), (1.5, 5.0, 2.0), (1.0, 4.0, 2.0), (1.0, 6.0, 2.0), (1.0, 5.0, 1.5), (1.0, 5.0, 3.0)]
+    neighbors_ok = all(grid[k]["train"].get("mean_r", -1) > 0 and grid[k]["valid"].get("mean_r", -1) > 0 for k in neighbors)
+    median_valid = st.median(grid[k]["valid"].get("mean_r", 0) for k in combos)
+    verdict = {"neighbors_positive": neighbors_ok, "median_valid_r": round(median_valid, 3),
+               "plateau": neighbors_ok and median_valid >= 0.15, "center": grid[center]}
+    print("[판정] " + json.dumps(verdict, ensure_ascii=False), flush=True)
+    return {"grid": {f"{k[0]}|{k[1]}|{k[2]}": v for k, v in grid.items()}, "verdict": verdict}
+
+
 # ==================== CLI ====================
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("mode", choices=["baseline", "random", "ablation", "relax", "exits"])
+    ap.add_argument("mode", choices=["baseline", "random", "ablation", "relax", "exits", "relax_exits", "sensitivity"])
     ap.add_argument("--final", action="store_true", help="최종 확인 기간까지 (마지막에 한 번만)")
     ap.add_argument("--runs", type=int, default=100)
     ap.add_argument("--out", default="")
@@ -412,6 +474,18 @@ def main():
 
     if args.mode == "exits":
         results = exit_grid(data, regimes, periods, args.runs)
+        if args.out:
+            Path(args.out).write_text(json.dumps(results, ensure_ascii=False, indent=2))
+        return
+
+    if args.mode == "sensitivity":
+        results = exit_sensitivity(data, regimes, periods)
+        if args.out:
+            Path(args.out).write_text(json.dumps(results, ensure_ascii=False, indent=2))
+        return
+
+    if args.mode == "relax_exits":
+        results = relax_grid(data, regimes, periods, base=BEST_EXIT, control_runs=args.runs, min_n=338)
         if args.out:
             Path(args.out).write_text(json.dumps(results, ensure_ascii=False, indent=2))
         return
