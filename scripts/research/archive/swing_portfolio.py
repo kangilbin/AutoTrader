@@ -39,7 +39,7 @@ PERIODS = {"dev": ("2020-05-01", "2026-10-23"), "holdout": ("2015-01-01", "2019-
 ALLOCATION = 10_000_000           # 스윙 1개 배정금 (시장별 통화 단위)
 FX_COST = 0.0025                  # 미국 환전 비용 (매수·매도 각각, 원화 투자 기준)
 SLIPPAGE_TICKS_V3 = 2             # 계획서 3.5 — 모든 체결 2틱 (시가·갭일만 2틱보다 보수적)
-MIN_WARMUP_BARS = 200             # 구간 시작 전 이만큼 일봉이 없으면 그 구간에서 제외
+MIN_WARMUP_BARS = 130             # 구간 시작 전 이만큼 일봉이 없으면 그 구간에서 제외 (EMA120 워밍업 121봉 + 여유)
 
 
 # ==================== 전략 (v3 체결 모델 + 품질 점수 문턱) ====================
@@ -51,6 +51,7 @@ class V3Strategy(OrderBlockBacktestStrategy):
     그 사이 반등분을 내고 산다고 본다. 당일 고가를 넘지는 않는다.
     """
     ENTRY_DELAY_ATR = 0.1
+    FULL_ENTRY = False                # True면 신호 시 배정금 99% 매수 (서비스 FULL_ENTRY_YN='Y'와 같은 규칙)
     QUALITY_MIN = 0.0                 # 품질 점수 문턱 (0이면 전부 매수)
     QUALITY: Dict[Tuple, float] = {}  # (종목, ob_date) → 점수 — 실행 전에 채운다
 
@@ -71,7 +72,7 @@ class V3Strategy(OrderBlockBacktestStrategy):
 
     def compute(self, prices_df, params):
         self._code = params.get("st_code")     # 품질 점수 조회용 (인스턴스는 종목마다 새로 만든다)
-        return super().compute(prices_df, params)
+        return super().compute(prices_df, {**params, "full_entry": self.FULL_ENTRY or params.get("full_entry", False)})
 
 
 class V3Random(V3Strategy):
@@ -93,11 +94,13 @@ class V3Random(V3Strategy):
 
 # ==================== 품질 점수 (계획서 3.3) ====================
 
-def quality_scores(data: Dict[tuple, pd.DataFrame], index_close: Dict[str, pd.Series]) -> Dict[Tuple, float]:
+def quality_scores(data: Dict[tuple, pd.DataFrame], index_close: Dict[str, pd.Series],
+                   since: Optional[str] = None) -> Dict[Tuple, float]:
     """OB마다 품질 점수 — 그 OB의 BOS일 이전에 형성된 같은 시장 OB들과 비교한 백분위 평균 (선견 없음)
 
     요소: 변위/ATR(↑) · 임펄스 거래량/20일 평균(↑) · 존 폭/ATR(↓) · 60일 상대 강도(종목 − 지수, ↑)
     과거 OB가 50개 미만이면 점수를 매기지 않는다 (None → 문턱 적용 안 함).
+    since: 이 날짜 이후 BOS만 비교 대상으로 (종목마다 과거 데이터 길이가 달라도 같은 조건이 되도록).
     """
     s = OrderBlockBacktestStrategy()
     rows = []
@@ -120,6 +123,8 @@ def quality_scores(data: Dict[tuple, pd.DataFrame], index_close: Dict[str, pd.Se
                          "disp": (close[k] - ob.distal) / atr, "vol": vol,
                          "zone": (float(df["STCK_HGPR"].iloc[j]) - ob.distal) / atr, "rs": rs})
     scores = {}
+    if since:
+        rows = [r for r in rows if r["date"] >= pd.Timestamp(since)]
     for mk in ("KR", "US"):
         obs = sorted((r for r in rows if r["mk"] == mk), key=lambda r: r["date"])
         for n, r in enumerate(obs):
@@ -201,6 +206,28 @@ def portfolio_metrics(curves: List[pd.DataFrame], cycles: List[Dict], start: str
     }
 
 
+def buy_and_hold(data: Dict[tuple, pd.DataFrame], start: str, end: str) -> Dict:
+    """같은 종목들을 구간 시작일에 배정금만큼 사서 보유 — 시장별 합산 (비용 1회 반영)"""
+    out = {}
+    for mk in ("KR", "US"):
+        curves = []
+        for (m, c), df in data.items():
+            if ("KR" if m == "J" else "US") != mk:
+                continue
+            sub = df[(df["STCK_BSOP_DATE"] <= end.replace("-", ""))]
+            if (sub["STCK_BSOP_DATE"] < start.replace("-", "")).sum() < MIN_WARMUP_BARS:
+                continue
+            sub = sub[sub["STCK_BSOP_DATE"] >= start.replace("-", "")]
+            close = sub["STCK_CLPR"].astype(float).to_numpy()
+            cost = 0.00147 if mk == "KR" else 0.0025 + FX_COST
+            qty = int(ALLOCATION * (1 - cost) // close[0])
+            cash = ALLOCATION - qty * close[0] * (1 + cost)
+            idx = pd.to_datetime(sub["STCK_BSOP_DATE"].astype(str))
+            curves.append(pd.DataFrame({"equity": cash + qty * close, "invested": qty * close}, index=idx))
+        out[mk] = portfolio_metrics(curves, [], start, end)
+    return out
+
+
 def benchmark(index_df: Optional[pd.DataFrame], start: str, end: str) -> Dict:
     """지수 ETF 단순 보유"""
     if index_df is None:
@@ -236,7 +263,7 @@ def run_config(strategy_cls, period: str) -> Dict:
         })
         mk = "KR" if m == "J" else "US"
         cycles = []
-        for cy in result["strategy_stats"]["cycles"]:
+        for cy in result.get("strategy_stats", {}).get("cycles", []):   # 단일 이평선 등은 사이클 기록 없음
             cy = dict(cy)
             if mk == "US" and cy.get("r"):   # 환전 비용(매수·매도 각 FX_COST)을 R 단위로 환산해 뺀다
                 cy["r_net"] -= 2 * FX_COST * cy["entry"] / cy["r"]
@@ -299,7 +326,8 @@ def random_runs(period: str, overrides: Dict, runs: int, target: Dict[str, int])
 
 def dev(runs: int, out: str):
     data, regimes, index_close = prepare()
-    V3Strategy.QUALITY = quality_scores(data, index_close)     # fork 전에 채워 작업 프로세스가 물려받는다
+    # fork 전에 채워 작업 프로세스가 물려받는다. 개발 구간은 2019-06 이후 OB만 비교 (과거 적재 길이가 종목마다 달라서)
+    V3Strategy.QUALITY = quality_scores(data, index_close, since="2019-06-01")
     print(f"종목 {len(data)} · 품질 점수 {len(V3Strategy.QUALITY)}개 OB", flush=True)
     obr._SHARED.update(data=data, regimes=regimes)
 

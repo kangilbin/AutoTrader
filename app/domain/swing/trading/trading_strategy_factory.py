@@ -5,7 +5,6 @@ import logging
 from typing import Type
 from .strategies.base_trading_strategy import TradingStrategy
 from .strategies.single_ema_strategy import SingleEMAStrategy
-from .strategies.order_block_strategy import OrderBlockStrategy
 
 logger = logging.getLogger(__name__)
 
@@ -22,8 +21,7 @@ class TradingStrategyFactory:
 
     # 실시간 거래 전략 매핑
     _strategies: dict[str, Type[TradingStrategy]] = {
-        'S': SingleEMAStrategy,  # 단일 20EMA 전략
-        'O': OrderBlockStrategy,  # 오더블럭 전략
+        'S': SingleEMAStrategy,  # 단일 20EMA 전략 (현재 유일한 실전 전략)
     }
 
     @classmethod
@@ -31,14 +29,14 @@ class TradingStrategyFactory:
         """
         SWING_TYPE에 따른 실시간 거래 전략 클래스 반환
 
-        등록되지 않은 타입은 SingleEMAStrategy로 폴백합니다 (warning 로그).
+        현재는 모든 타입이 SingleEMAStrategy를 사용합니다.
+        향후 다른 실시간 거래 전략이 추가되면 매핑을 확장하세요.
 
         Args:
             swing_type: SWING_TRADE.SWING_TYPE
                 - 'A': 이평선 전략
                 - 'B': 일목균형표 전략 (현재 SingleEMAStrategy 사용)
                 - 'S': 단일 20EMA 전략
-                - 'O': 오더블럭 전략
                 - 기타: SingleEMAStrategy (기본값)
 
         Returns:

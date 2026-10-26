@@ -131,37 +131,5 @@ class TestSwingTransitions(unittest.TestCase):
             s.transition_to_waiting()
 
 
-class StopPriceLifecycleTest(unittest.TestCase):
-    """STOP_PRICE — 오더블럭 손절가는 매수 시 확정되고, 포지션이 끝나면 비워진다"""
-
-    def test_recorded_on_buy_and_kept_on_partial(self):
-        s = _make_swing(SWING_TYPE="O", SIGNAL=0)
-        s.transition_to_buy(entry_price=101, hold_qty=10, peak_price=101, stop_price=97.9)
-        self.assertEqual(s.STOP_PRICE, Decimal("97.90"))
-        s.transition_to_partial(sold_qty=5)
-        self.assertEqual(s.STOP_PRICE, Decimal("97.90"), "부분익절 후에도 잔량 손절가 유지")
-
-    def test_single_ema_buy_leaves_null(self):
-        s = _make_swing(SWING_TYPE="S", SIGNAL=0)
-        s.transition_to_buy(entry_price=101, hold_qty=10, peak_price=101)
-        self.assertIsNone(s.STOP_PRICE)
-
-    def test_cleared_when_position_ends(self):
-        for end in ("reset_cycle", "clear_orphan_position"):
-            with self.subTest(end):
-                s = _make_swing(SWING_TYPE="O", SIGNAL=0)
-                s.transition_to_buy(entry_price=101, hold_qty=10, peak_price=101, stop_price=97.9)
-                getattr(s, end)()
-                self.assertIsNone(s.STOP_PRICE)
-
-    def test_adopted_position_has_no_stop(self):
-        """편입분은 OB 근거가 없다 — 이전 사이클 값이 남아 있으면 안 된다"""
-        s = _make_swing(SWING_TYPE="O", SIGNAL=0, STOP_PRICE=Decimal("50"))
-        s.adopt_position(hold_qty=10, entry_price=101, current_price=102)
-        self.assertIsNone(s.STOP_PRICE)
-
-    def test_order_block_type_is_valid(self):
-        _make_swing(SWING_TYPE="O").validate()
-
 if __name__ == "__main__":
     unittest.main()

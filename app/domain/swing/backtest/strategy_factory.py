@@ -6,7 +6,6 @@ from .strategies.base_strategy import BacktestStrategy
 from .strategies.ema_strategy import EMAStrategy
 from .strategies.ichimoku_strategy import IchimokuStrategy
 from .strategies.single_ema_backtest_strategy import SingleEMABacktestStrategy
-from .strategies.order_block_backtest_strategy import OrderBlockBacktestStrategy
 
 
 class StrategyFactory:
@@ -17,7 +16,6 @@ class StrategyFactory:
         "A": EMAStrategy(),
         "B": IchimokuStrategy(),
         "S": SingleEMABacktestStrategy(),
-        "O": OrderBlockBacktestStrategy(),
     }
     
     @classmethod
@@ -26,7 +24,7 @@ class StrategyFactory:
         전략 타입에 해당하는 전략 객체 반환
         
         Args:
-            strategy_type: "A" (이평선), "B" (일목균형표), "S" (단일 이평선), "O" (오더블럭)
+            strategy_type: "A" (이평선), "B" (일목균형표), "C" (단순 이평선)
             
         Returns:
             BacktestStrategy 인스턴스

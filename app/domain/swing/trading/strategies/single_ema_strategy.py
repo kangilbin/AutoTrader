@@ -434,7 +434,6 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
         cached_indicators: Dict,
         signal: int = 1,
         peak_price: float = 0,
-        stop_price: Optional[float] = None,   # 미사용 — 청산선을 매 사이클 진입가·ATR로 재계산한다
     ) -> Dict:
         """청산 판정 — 단일 청산선(3단계)
 
@@ -490,7 +489,6 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
         current_price: Decimal,
         entry_price: Decimal,
         signal: int,
-        stop_price: Optional[float] = None,   # 미사용 — 목표가는 진입가 대비 % 기준
     ) -> Optional[Dict]:
         """부분 익절 — 목표 수익률 도달 시 절반 확정 (SIGNAL 1에서만, 1회)
 
