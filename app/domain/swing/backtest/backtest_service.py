@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.domain.stock.service import StockService
 from .strategy_factory import StrategyFactory
 from app.domain.swing.schemas import SwingCreateRequest
+from app.exceptions.domain import ValidationError
 
 # ===== 백테스트 잡 실행 환경 =====
 _EXECUTOR = ThreadPoolExecutor(max_workers=min(4, (os.cpu_count() or 2)))
@@ -45,20 +46,21 @@ async def compute_backtest_offloaded(prices_df: pd.DataFrame, params: dict) -> d
 async def run_backtest(db: AsyncSession, swing_data: SwingCreateRequest) -> dict:
     """백테스트 실행 및 결과 반환"""
     if not swing_data.MRKT_CODE:
-        raise ValueError("시장 코드는 필수입니다.")
+        raise ValidationError("시장 코드는 필수입니다.", field="MRKT_CODE")
 
     if not swing_data.ST_CODE:
-        raise ValueError("주식 코드는 필수입니다.")
+        raise ValidationError("주식 코드는 필수입니다.", field="ST_CODE")
 
     if not swing_data.SWING_TYPE:
-        raise ValueError("전략 타입은 필수입니다.")
+        raise ValidationError("전략 타입은 필수입니다.", field="SWING_TYPE")
 
     # 전략 타입 검증
     available_strategies = StrategyFactory.get_available_strategies()
     if swing_data.SWING_TYPE not in available_strategies:
-        raise ValueError(
+        raise ValidationError(
             f"지원하지 않는 전략 타입: {swing_data.SWING_TYPE}. "
-            f"사용 가능한 타입: {available_strategies}"
+            f"사용 가능한 타입: {available_strategies}",
+            field="SWING_TYPE"
         )
 
     short_term = swing_data.SHORT_TERM or 5
@@ -76,7 +78,7 @@ async def run_backtest(db: AsyncSession, swing_data: SwingCreateRequest) -> dict
     stock_service = StockService(db)
     price_days = await stock_service.get_stock_history(swing_data.MRKT_CODE, swing_data.ST_CODE, start_date)
     if not price_days:
-        raise ValueError("주가 데이터가 없습니다.")
+        raise ValidationError("주가 데이터가 없습니다.", field="ST_CODE")
 
     prices_df = pd.DataFrame(price_days)
 
