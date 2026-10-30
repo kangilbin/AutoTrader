@@ -1,4 +1,5 @@
 import pandas as pd
+import talib as ta
 import asyncio
 import os
 from datetime import datetime
@@ -82,6 +83,10 @@ async def run_backtest(db: AsyncSession, swing_data: SwingCreateRequest) -> dict
 
     prices_df = pd.DataFrame(price_days)
 
+    # EMA20 계산 (전체 기간 기준으로 계산해야 1년치 값도 정확함)
+    close_arr = pd.to_numeric(prices_df["STCK_CLPR"], errors="coerce").values
+    prices_df["ema20"] = ta.EMA(close_arr, timeperiod=medium_term)
+
     params = {
         "st_code": swing_data.ST_CODE,
         "swing_type": swing_data.SWING_TYPE,
@@ -98,9 +103,14 @@ async def run_backtest(db: AsyncSession, swing_data: SwingCreateRequest) -> dict
 
     # 최근 1년치 주가 데이터 추출
     one_year_mask = prices_df["STCK_BSOP_DATE"] >= eval_start
-    one_year_df = prices_df.loc[one_year_mask, ["STCK_BSOP_DATE", "STCK_OPRC", "STCK_HGPR", "STCK_LWPR", "STCK_CLPR"]].copy()
+    one_year_df = prices_df.loc[one_year_mask].copy()
     one_year_df["STCK_BSOP_DATE"] = one_year_df["STCK_BSOP_DATE"].dt.strftime("%Y%m%d")
-    price_history = one_year_df.to_dict(orient="records")
+
+    price_history = one_year_df[["STCK_BSOP_DATE", "STCK_OPRC", "STCK_HGPR", "STCK_LWPR", "STCK_CLPR"]].to_dict(orient="records")
+    ema20_history = one_year_df[["STCK_BSOP_DATE", "ema20"]].assign(
+        ema20=one_year_df["ema20"].round(2).where(one_year_df["ema20"].notna(), None)
+    ).to_dict(orient="records")
 
     backtest_result["price_history"] = price_history
+    backtest_result["ema20_history"] = ema20_history
     return backtest_result
