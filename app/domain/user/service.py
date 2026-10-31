@@ -44,7 +44,7 @@ class UserService:
         # 새 액세스 토큰 발급
         access_token = create_access_token(
             user_id,
-            user_info={"USER_NAME": user_info.get("USER_NAME"), "PHONE": user_info.get("PHONE")}
+            user_info={"USER_NAME": user_info.get("USER_NAME"), "EMAIL": user_info.get("EMAIL"), "PHONE": user_info.get("PHONE")}
         )
 
         return access_token
@@ -69,7 +69,7 @@ class UserService:
                 await redis.hset(user_id, mapping={
                     **existing,
                     "USER_NAME": user_data.get("USER_NAME"),
-                    "EMAIL": user_data.get("EMAIL"),
+                    "PHONE": user_data.get("PHONE"),
                 })
             return {"user": user_data, "access_token": access_token}
         except SQLAlchemyError as e:

@@ -106,6 +106,15 @@ class SwingService:
     async def update_swing(self, swing_id: int, data: dict) -> dict:
         """스윙 수정"""
         try:
+            # INIT_AMOUNT 변경 시 차액을 CUR_AMOUNT에도 반영
+            if "INIT_AMOUNT" in data:
+                swing = await self.repo.find_by_id(swing_id)
+                if not swing:
+                    raise NotFoundError("스윙 전략", swing_id)
+
+                diff = Decimal(data["INIT_AMOUNT"]) - swing.INIT_AMOUNT
+                data["CUR_AMOUNT"] = swing.CUR_AMOUNT + diff
+
             data["MOD_DT"] = datetime.now()
             result = await self.repo.update(swing_id, data)
             await self.db.commit()

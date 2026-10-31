@@ -154,7 +154,8 @@ class OAuthService:
             await redis.hset(user_id, mapping={
                 "refresh_token": refresh_token,
                 "USER_NAME": user_name,
-                "EMAIL": email
+                "EMAIL": email,
+                "PHONE": user_phone
             })
             await redis.expire(user_id, int(settings.token_refresh_exp.total_seconds()))
 
