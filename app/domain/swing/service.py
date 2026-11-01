@@ -263,6 +263,13 @@ class SwingService:
 
             # 지표 계산
             df = pd.DataFrame(price_history)
+
+            # 일평균 거래대금 계산 (최근 20일)
+            recent_20 = df.tail(20) if len(df) >= 20 else df
+            avg_daily_amount = float(
+                (recent_20['ACML_VOL'].astype(float) * recent_20['STCK_CLPR'].astype(float)).mean()
+            )
+
             indicators = TechnicalIndicators.prepare_indicators_from_df(df)
 
             if len(indicators) < 8:
@@ -305,7 +312,8 @@ class SwingService:
                 "close": yesterday['STCK_CLPR'],
                 "high": yesterday['STCK_HGPR'],  # 어제 고가
                 "low": yesterday['STCK_LWPR'],   # 어제 저가
-                "date": yesterday['STCK_BSOP_DATE']
+                "date": yesterday['STCK_BSOP_DATE'],
+                "avg_daily_amount": avg_daily_amount,  # 일평균 거래대금 (체결 분할용)
             }
 
             now = datetime.now()
@@ -378,6 +386,13 @@ class SwingService:
 
                     # 지표 계산
                     df = pd.DataFrame(price_history)
+
+                    # 일평균 거래대금 계산 (최근 20일)
+                    recent_20 = df.tail(20) if len(df) >= 20 else df
+                    avg_daily_amount = float(
+                        (recent_20['ACML_VOL'].astype(float) * recent_20['STCK_CLPR'].astype(float)).mean()
+                    )
+
                     indicators = TechnicalIndicators.prepare_indicators_from_df(df)
 
                     if len(indicators) < 8:
@@ -426,7 +441,8 @@ class SwingService:
                         "close": float(yesterday['STCK_CLPR']),
                         "high": float(yesterday['STCK_HGPR']),  # 어제 고가
                         "low": float(yesterday['STCK_LWPR']),   # 어제 저가
-                        "date": yesterday['STCK_BSOP_DATE']
+                        "date": yesterday['STCK_BSOP_DATE'],
+                        "avg_daily_amount": avg_daily_amount,   # 일평균 거래대금 (체결 분할용)
                     }
 
                     now = datetime.now()

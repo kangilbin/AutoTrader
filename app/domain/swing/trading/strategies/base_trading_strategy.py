@@ -249,7 +249,42 @@ class TradingStrategy(ABC):
         prdy_ctrt = float(current_price_data.get("prdy_ctrt", 0))
 
 
+        avg_daily_amount = cached_indicators["avg_daily_amount"]
+        original_entry_price = entry_price
+        original_hold_qty = hold_qty
         new_signal = current_signal
+
+        # ------------------------------------------
+        # 부분 실행 진행 중 체크 (신호 로직보다 우선)
+        # ------------------------------------------
+        partial_key = f"partial_exec:{swing_id}"
+        partial_state_str = await redis_client.get(partial_key)
+
+        if partial_state_str and user_id:
+            partial_result = await SwingOrderExecutor.continue_partial_execution(
+                redis_client=redis_client,
+                swing_id=swing_id,
+                user_id=user_id,
+                st_code=st_code,
+                current_price=current_price,
+                avg_daily_amount=avg_daily_amount,
+                cached_indicators=cached_indicators,
+                current_entry_price=entry_price,
+                current_hold_qty=hold_qty,
+                db=db
+            )
+            entry_price = partial_result.get("entry_price", entry_price)
+            hold_qty = partial_result.get("hold_qty", hold_qty)
+
+            if partial_result.get("completed") or partial_result.get("aborted"):
+                new_signal = partial_result.get("signal_on_complete", current_signal) or current_signal
+
+            return {
+                "new_signal": new_signal,
+                "entry_price": entry_price,
+                "hold_qty": hold_qty,
+                "updated": True,
+            }
 
         # ------------------------------------------
         # SIGNAL 0: 대기 상태 - 1차 매수 신호 확인
@@ -269,18 +304,23 @@ class TradingStrategy(ABC):
 
             if entry_result and entry_result.get("action") == "BUY":
                 if user_id:
-                    order_result = await SwingOrderExecutor.execute_first_buy(
+                    target_amount = init_amount * Decimal(buy_ratio) / Decimal(100)
+                    order_result = await SwingOrderExecutor.execute_buy_with_partial(
+                        redis_client=redis_client,
+                        swing_id=swing_id,
                         user_id=user_id,
                         st_code=st_code,
                         current_price=current_price,
-                        init_amount=init_amount,
-                        buy_ratio=buy_ratio
+                        target_amount=target_amount,
+                        avg_daily_amount=avg_daily_amount,
+                        signal_on_complete=1
                     )
 
                     if order_result.get("success"):
-                        new_signal = 1
                         entry_price = order_result.get("avg_price", int(current_price))
                         hold_qty = order_result.get("qty", 0)
+                        if order_result.get("completed", True):
+                            new_signal = 1
 
                         # 거래 내역 저장 (비율 추가)
                         reasons = entry_result.get("reasons", ["1차 매수"]).copy()
@@ -360,20 +400,27 @@ class TradingStrategy(ABC):
 
                     if eod_result.get("action") == "SELL_PARTIAL":
                         logger.warning(
-                            f"[{user_id} - 주식: {st_code}] EOD 1차 매도 신호! 사유={eod_result.get('reason')}"
+                            f"[{user_id} - 주식: {st_code}] EOD 1차 매도 신호! 사유={eod_result.get('reasons')}"
                         )
 
                         if user_id:
                             # 1차 분할 매도 (sell_ratio%)
-                            order_result = await SwingOrderExecutor.execute_first_sell(
+                            sell_qty = int(hold_qty * sell_ratio / 100)
+                            order_result = await SwingOrderExecutor.execute_sell_with_partial(
+                                redis_client=redis_client,
+                                swing_id=swing_id,
                                 user_id=user_id,
                                 st_code=st_code,
-                                sell_ratio=sell_ratio
+                                current_price=current_price,
+                                target_qty=sell_qty,
+                                avg_daily_amount=avg_daily_amount,
+                                signal_on_complete=3
                             )
 
                             if order_result.get("success"):
-                                new_signal = 3
-                                hold_qty = order_result.get("remaining", 0)
+                                hold_qty -= order_result.get("qty", 0)
+                                if order_result.get("completed", True):
+                                    new_signal = 3
 
                                 # 거래 내역 저장
                                 trade_service = TradeHistoryService(db)
@@ -381,7 +428,7 @@ class TradingStrategy(ABC):
                                     swing_id=swing_id,
                                     trade_type="S",
                                     order_result=order_result,
-                                    reasons=[eod_result.get("reason", "EOD 1차 매도")]
+                                    reasons=eod_result.get("reasons", ["EOD 1차 매도"])
                                 )
 
                                 logger.info(f"[{user_id} - 주식: {st_code}] EOD 1차 분할 매도 완료 (sell_ratio={sell_ratio}%, 잔량={hold_qty}주)")
@@ -392,20 +439,28 @@ class TradingStrategy(ABC):
 
                     elif eod_result.get("action") == "SELL_ALL":
                         logger.warning(
-                            f"[{user_id} - 주식: {st_code}] EOD 2차 매도 신호! 사유={eod_result.get('reason')}"
+                            f"[{user_id} - 주식: {st_code}] EOD 2차 매도 신호! 사유={eod_result.get('reasons')}"
                         )
 
                         if user_id:
                             # 전량 매도
-                            order_result = await SwingOrderExecutor.execute_second_sell(
+                            order_result = await SwingOrderExecutor.execute_sell_with_partial(
+                                redis_client=redis_client,
+                                swing_id=swing_id,
                                 user_id=user_id,
-                                st_code=st_code
+                                st_code=st_code,
+                                current_price=current_price,
+                                target_qty=hold_qty,
+                                avg_daily_amount=avg_daily_amount,
+                                signal_on_complete=0
                             )
 
                             if order_result.get("success"):
-                                new_signal = 0
-                                entry_price = 0
-                                hold_qty = 0
+                                hold_qty -= order_result.get("qty", 0)
+                                if order_result.get("completed", True):
+                                    new_signal = 0
+                                    entry_price = 0
+                                    hold_qty = 0
 
                                 # 거래 내역 저장
                                 trade_service = TradeHistoryService(db)
@@ -413,7 +468,7 @@ class TradingStrategy(ABC):
                                     swing_id=swing_id,
                                     trade_type="S",
                                     order_result=order_result,
-                                    reasons=[eod_result.get("reason", "EOD 전량 매도")]
+                                    reasons=eod_result.get("reasons", ["EOD 전량 매도"])
                                 )
 
                                 logger.info(f"[{user_id} - 주식: {st_code}] EOD 전량 매도 완료, 사이클 종료")
@@ -439,16 +494,19 @@ class TradingStrategy(ABC):
 
                         if entry_result and entry_result.get("action") == "BUY":
                             if user_id:
-                                order_result = await SwingOrderExecutor.execute_second_buy(
+                                second_target_amount = init_amount * Decimal(100 - buy_ratio) / Decimal(100)
+                                order_result = await SwingOrderExecutor.execute_buy_with_partial(
+                                    redis_client=redis_client,
+                                    swing_id=swing_id,
                                     user_id=user_id,
                                     st_code=st_code,
                                     current_price=current_price,
-                                    init_amount=init_amount,
-                                    buy_ratio=buy_ratio
+                                    target_amount=second_target_amount,
+                                    avg_daily_amount=avg_daily_amount,
+                                    signal_on_complete=2
                                 )
 
                                 if order_result.get("success"):
-                                    new_signal = 2
                                     new_avg_price = order_result.get("avg_price", int(current_price))
                                     new_qty = order_result.get("qty", 0)
                                     entry_price = SwingOrderExecutor.calculate_avg_entry_price(
@@ -458,10 +516,12 @@ class TradingStrategy(ABC):
                                         new_price=new_avg_price
                                     )
                                     hold_qty = hold_qty + new_qty
+                                    if order_result.get("completed", True):
+                                        new_signal = 2
 
                                     # 거래 내역 저장 (비율 추가)
                                     reasons = entry_result.get("reasons", ["2차 매수"]).copy()
-                                    reasons.append(f"{buy_ratio}%")
+                                    reasons.append(f"{100 - buy_ratio}%")
                                     trade_service = TradeHistoryService(db)
                                     await trade_service.record_trade(
                                         swing_id=swing_id,
@@ -534,15 +594,22 @@ class TradingStrategy(ABC):
                     if eod_result.get("action") == "SELL_PARTIAL":
                         if user_id:
                             # 1차 분할 매도 (sell_ratio%)
-                            order_result = await SwingOrderExecutor.execute_first_sell(
+                            sell_qty = int(hold_qty * sell_ratio / 100)
+                            order_result = await SwingOrderExecutor.execute_sell_with_partial(
+                                redis_client=redis_client,
+                                swing_id=swing_id,
                                 user_id=user_id,
                                 st_code=st_code,
-                                sell_ratio=sell_ratio
+                                current_price=current_price,
+                                target_qty=sell_qty,
+                                avg_daily_amount=avg_daily_amount,
+                                signal_on_complete=3
                             )
 
                             if order_result.get("success"):
-                                new_signal = 3
-                                hold_qty = order_result.get("remaining", 0)
+                                hold_qty -= order_result.get("qty", 0)
+                                if order_result.get("completed", True):
+                                    new_signal = 3
 
                                 # 거래 내역 저장
                                 trade_service = TradeHistoryService(db)
@@ -566,15 +633,23 @@ class TradingStrategy(ABC):
 
                         if user_id:
                             # 전량 매도
-                            order_result = await SwingOrderExecutor.execute_second_sell(
+                            order_result = await SwingOrderExecutor.execute_sell_with_partial(
+                                redis_client=redis_client,
+                                swing_id=swing_id,
                                 user_id=user_id,
-                                st_code=st_code
+                                st_code=st_code,
+                                current_price=current_price,
+                                target_qty=hold_qty,
+                                avg_daily_amount=avg_daily_amount,
+                                signal_on_complete=0
                             )
 
                             if order_result.get("success"):
-                                new_signal = 0
-                                entry_price = 0
-                                hold_qty = 0
+                                hold_qty -= order_result.get("qty", 0)
+                                if order_result.get("completed", True):
+                                    new_signal = 0
+                                    entry_price = 0
+                                    hold_qty = 0
 
                                 # 거래 내역 저장
                                 trade_service = TradeHistoryService(db)
@@ -611,16 +686,19 @@ class TradingStrategy(ABC):
             if entry_result and entry_result.get("action") == "BUY":
                 if user_id:
                     # 재진입 1차 매수 (기존 잔량 유지 + 추가 매수)
-                    order_result = await SwingOrderExecutor.execute_first_buy(
+                    reentry_target_amount = init_amount * Decimal(buy_ratio) / Decimal(100)
+                    order_result = await SwingOrderExecutor.execute_buy_with_partial(
+                        redis_client=redis_client,
+                        swing_id=swing_id,
                         user_id=user_id,
                         st_code=st_code,
                         current_price=current_price,
-                        init_amount=init_amount,
-                        buy_ratio=buy_ratio
+                        target_amount=reentry_target_amount,
+                        avg_daily_amount=avg_daily_amount,
+                        signal_on_complete=1
                     )
 
                     if order_result.get("success"):
-                        new_signal = 1
                         # 기존 잔량 + 새로 매수한 수량으로 평단가 재계산
                         new_avg_price = order_result.get("avg_price", int(current_price))
                         new_qty = order_result.get("qty", 0)
@@ -631,6 +709,8 @@ class TradingStrategy(ABC):
                             new_price=new_avg_price
                         )
                         hold_qty = hold_qty + new_qty
+                        if order_result.get("completed", True):
+                            new_signal = 1
 
                         # 거래 내역 저장 (재진입)
                         reasons = ["재진입 매수", f"{buy_ratio}%"]
@@ -662,15 +742,23 @@ class TradingStrategy(ABC):
                     logger.info(f"[{st_code}] 2차 전량 매도 실행 (잔량: {hold_qty}주)")
 
                     if user_id:
-                        order_result = await SwingOrderExecutor.execute_second_sell(
+                        order_result = await SwingOrderExecutor.execute_sell_with_partial(
+                            redis_client=redis_client,
+                            swing_id=swing_id,
                             user_id=user_id,
-                            st_code=st_code
+                            st_code=st_code,
+                            current_price=current_price,
+                            target_qty=hold_qty,
+                            avg_daily_amount=avg_daily_amount,
+                            signal_on_complete=0
                         )
 
                         if order_result.get("success"):
-                            new_signal = 0
-                            entry_price = 0
-                            hold_qty = 0
+                            hold_qty -= order_result.get("qty", 0)
+                            if order_result.get("completed", True):
+                                new_signal = 0
+                                entry_price = 0
+                                hold_qty = 0
 
                             # 거래 내역 저장
                             trade_service = TradeHistoryService(db)
@@ -691,5 +779,9 @@ class TradingStrategy(ABC):
             "new_signal": new_signal,
             "entry_price": entry_price,
             "hold_qty": hold_qty,
-            "updated": new_signal != current_signal
+            "updated": (
+                new_signal != current_signal
+                or hold_qty != original_hold_qty
+                or entry_price != original_entry_price
+            )
         }

@@ -3,15 +3,14 @@
 
 **매수 조건 (Entry Conditions):**
 1. EMA 추세: 현재가 >= 실시간 EMA20 * 0.995 (0.5% 여유)
-2. 수급 강도: (외국인 >= 1.5%) AND (OBV z-score >= 1.0)
-3. 급등 필터: 당일 상승률 <= 5%
-4. 괴리율 필터: EMA 괴리율 <= 5%
-5. 추세 방향: +DI > -DI
-6. 연속 확인: 2회 (Redis 상태 관리, 5분 주기 노이즈 필터링)
+2. 수급 강도: OBV z-score >= 1.0
+3. 괴리율 필터: EMA 괴리율 <= 5%
+4. 추세 방향: +DI > -DI
+5. 연속 확인: 2회 (Redis 상태 관리, 5분 주기 노이즈 필터링)
 
 **2차 매수 조건 (20분 경과 후):**
-- **시나리오 A (추세 강화형):** EMA + ATR × (0.3~2.0), ADX > 25, 외국인 >= 1.5%, OBV z-score >= 1.2
-- **시나리오 B (눌림목 반등):** EMA ± ATR × 0.5, 18 <= ADX <= 23, 장중 저가 대비 0.4% 반등
+- **시나리오 A (추세 강화형):** EMA + ATR × (0.3~2.0), ADX > 25, OBV z-score >= 1.2
+- **시나리오 B (눌림목 반등):** EMA ± ATR × 0.5, 18 <= ADX <= 23, OBV z-score > 0.5, 장중 저가 대비 0.4% 반등
 
 **매도 조건 (Exit Conditions) - 이원화된 하이브리드 전략:**
 
@@ -53,12 +52,7 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
     # 실전 전용 파라미터
     # ========================================
     # 매수 조건
-    FRGN_STRONG_THRESHOLD = 1.5     # 외국인 순매수 비율 최소값
     CONSECUTIVE_REQUIRED = 2         # 연속 확인 횟수 (10분)
-
-    # 2차 매수 조건 (외국인 비율 추가)
-    TREND_BUY_FRGN_THRESHOLD = 1.5   # 외국인 비율 최소값 (추세 강화형)
-    PULLBACK_BUY_FRGN_MIN = 0.5      # 외국인 비율 최소값 (눌림목 반등)
     PULLBACK_BUY_OBV_MIN = 0.5       # OBV z-score 최소값 (눌림목 반등, 베이스는 0.0)
 
     # 공통
@@ -111,7 +105,8 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
                 'close': data['close'],
                 'high': data['high'],
                 'low': data['low'],
-                'date': data['date']
+                'date': data['date'],
+                'avg_daily_amount': data['avg_daily_amount'],
             }
         except Exception as e:
             logger.warning(f"[{symbol}] 캐시 조회 실패: {e}")
@@ -312,13 +307,11 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
 
         # 조건 검증
         price_above_ema = curr_price >= realtime_ema20 * 0.995  # 0.5% 여유
-        frgn_ratio = (frgn_ntby_qty / acml_vol * 100) if acml_vol > 0 else 0
-        supply_strong = (frgn_ratio >= cls.FRGN_STRONG_THRESHOLD) and (realtime_obv_z >= cls.OBV_Z_BUY_THRESHOLD)
-        surge_filtered = prdy_ctrt <= (cls.MAX_SURGE_RATIO * 100)
+        supply_strong = realtime_obv_z >= cls.OBV_Z_BUY_THRESHOLD
         gap_filtered = gap_ratio <= cls.MAX_GAP_RATIO
         trend_upward = realtime_plus_di > realtime_minus_di
 
-        current_signal = all([price_above_ema, supply_strong, surge_filtered, gap_filtered, trend_upward])
+        current_signal = all([price_above_ema, supply_strong, gap_filtered, trend_upward])
 
         # 연속성 체크 (Redis, swing_id별 분리)
         prev_state_key = f"entry:{swing_id}"
@@ -406,8 +399,6 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
                 logger.debug(f"[{symbol}] 하락장 감지 (EMA20={realtime_ema20:.0f} < EMA120={realtime_ema120:.0f}), 2차 매수 금지")
                 return None
 
-            frgn_ratio = (frgn_ntby_qty / acml_vol * 100) if acml_vol > 0 else 0
-
             # === 시나리오 A: 추세 강화형 ===
             # 가격 가드레일: EMA + ATR × (0.3 ~ 2.5)
             trend_lower = realtime_ema20 + (atr * cls.TREND_BUY_ATR_LOWER)
@@ -418,8 +409,8 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
                 if realtime_adx > cls.TREND_BUY_ADX_MIN:
                     # 추세 방향: +DI > -DI
                     if realtime_plus_di > realtime_minus_di:
-                        # 수급 지속: 외국인 AND OBV
-                        if frgn_ratio >= cls.TREND_BUY_FRGN_THRESHOLD and realtime_obv_z >= cls.TREND_BUY_OBV_THRESHOLD:
+                        # 수급 지속: OBV z-score
+                        if realtime_obv_z >= cls.TREND_BUY_OBV_THRESHOLD:
                             logger.info(f"[{symbol}] ✅ 2차 매수 신호 (추세 강화형): EMA+ATR×{(curr_price-realtime_ema20)/atr:.2f}")
                             return {
                                 'action': 'BUY',
@@ -437,8 +428,8 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
                 if cls.PULLBACK_BUY_ADX_MIN <= realtime_adx <= cls.PULLBACK_BUY_ADX_MAX:
                     # 추세 방향: +DI > -DI
                     if realtime_plus_di > realtime_minus_di:
-                        # 수급 유지: 외국인 OR OBV (중립 이상)
-                        supply_ok = (frgn_ratio > cls.PULLBACK_BUY_FRGN_MIN) or (realtime_obv_z > cls.PULLBACK_BUY_OBV_MIN)
+                        # 수급 유지: OBV z-score (중립 이상)
+                        supply_ok = realtime_obv_z > cls.PULLBACK_BUY_OBV_MIN
                         if supply_ok:
                             # 반등 신호: 장중 저가 대비 0.4% 반등
                             intraday_low_key = f"intraday_low:{swing_id}"

@@ -33,7 +33,8 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
     """단일 20EMA 백테스팅 전략 (하이브리드 매도 로직)"""
 
     # === 백테스팅 전용 파라미터 ===
-    CONSECUTIVE_REQUIRED = 1  # 백테스팅에서는 연속 확인 불필요
+    CONSECUTIVE_REQUIRED = 1     # 백테스팅에서는 연속 확인 불필요
+    PULLBACK_BUY_OBV_MIN = 0.5   # 시나리오 B OBV 기준
 
     # === 거래 비용 ===
     COMMISSION_RATE = 0.00147
@@ -101,6 +102,19 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
                     current_capital = self._execute_sell(trades, current_date, sell_price, current_capital, reason, sell_all=True)
                     position_status, buy_count = None, 0
                     eod_signal_dates = {k: None for k in eod_signal_dates}
+
+                elif position_status == 'SELL_PRIMARY':
+                    # 매도 신호 없음: 재진입 조건 체크 (실전 SIGNAL 3 재진입과 동일)
+                    matched, signal_reason = self._check_entry_conditions(row)
+                    if matched and current_capital > 0:
+                        buy_price = row["STCK_CLPR"]
+                        buy_amount = current_capital * buy_ratio
+                        buy_quantity = int(buy_amount / buy_price)
+                        if buy_quantity > 0:
+                            current_capital = self._execute_buy(trades, current_date, buy_price, buy_quantity, current_capital, f"재진입 매수({signal_reason})")
+                            buy_count = 1
+                            position_status = 'BUY_COMPLETE'
+                            eod_signal_dates = {k: None for k in eod_signal_dates}
 
             # === 2단계: 포지션 미보유 또는 추가매수 가능 시 매수 조건 체크 ===
             can_buy = position_status is None or (position_status == 'BUY_COMPLETE' and buy_count < 2)
