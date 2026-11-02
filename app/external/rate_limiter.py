@@ -45,13 +45,17 @@ class KeyedRateLimiter:
         self._locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
         self._sent: dict[str, deque[float]] = defaultdict(deque)
         self._blocked_until: dict[str, float] = {}
+        self._last_sent: dict[str, float] = {}
 
-    async def acquire(self, key: str, limit_per_window: float) -> None:
+    async def acquire(self, key: str, limit_per_window: float, min_gap: float = 0.0) -> None:
         """창 한도에 여유가 생길 때까지 대기한 뒤 호출 1건을 기록한다
 
         Args:
             key: 유량 한도의 축 (KIS 앱키)
             limit_per_window: 창 안에서 허용할 호출 건수 (KIS 한도)
+            min_gap: 같은 키의 직전 호출로부터 최소로 벌릴 간격(초) — 주문 POST 용.
+                KIS 는 창 한도 안의 호출도 직전 요청과 붙은 주문은 '초당 거래건수 초과'로 거절한다
+                (모의 실측: 호가 조회 0.6초 뒤 주문은 7/8 거절, 2초 뒤는 5/5 통과).
         """
         if not key or limit_per_window <= 0:
             return
@@ -71,12 +75,18 @@ class KeyedRateLimiter:
                     await asyncio.sleep(blocked - now)
                     continue
 
+                gap_wait = self._last_sent.get(key, float("-inf")) + min_gap - now
+                if gap_wait > 0:
+                    await asyncio.sleep(gap_wait)
+                    continue
+
                 sent = self._sent[key]
                 while sent and sent[0] <= now - self._window:
                     sent.popleft()
 
                 if len(sent) < limit:
                     sent.append(now)
+                    self._last_sent[key] = now
                     return
 
                 # 창이 꽉 찼다 — 가장 오래된 건이 창 밖으로 빠지는 시점까지 대기

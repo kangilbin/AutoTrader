@@ -130,7 +130,7 @@ class ThrottleRoutingTest(unittest.IsolatedAsyncioTestCase):
         self._orig = http_client.kis_rate_limiter
 
         class SpyLimiter:
-            async def acquire(self_inner, key, rate):
+            async def acquire(self_inner, key, rate, min_gap=0.0):
                 self.calls.append((key, rate))
 
         http_client.kis_rate_limiter = SpyLimiter()

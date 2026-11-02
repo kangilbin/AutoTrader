@@ -11,6 +11,10 @@ logger = logging.getLogger(__name__)
 
 RATE_LIMIT_MSG = "초당 거래건수를 초과"
 MAX_RATE_LIMIT_RETRIES = 3
+# 모의서버의 신규 주문 POST 는 같은 앱키의 직전 요청과 이만큼 벌린다. 창 한도(조회 건수)만으로는 부족하다 —
+# 모의서버는 호가 조회 0.6초 뒤 주문을 7/8 거절했고 2초 뒤는 5/5 통과했다 (2026-11-02 실측).
+# 실전은 한도가 훨씬 넉넉하고(13/s) 같은 증상이 관측되지 않아 적용하지 않는다. 비용은 주문당 최대 2초 지연이다.
+ORDER_MIN_GAP_SEC = 2.0
 RATE_LIMIT_DELAY = 1.0
 # 재시도 지터. 동시에 유량을 초과한 요청들이 고정 간격으로 재시도하면 같은 순간에
 # 다시 몰려 또 초과한다 (배치가 스윙 N건을 동시에 돌리므로 실제로 발생).
@@ -88,7 +92,7 @@ def _appkey(kwargs: dict) -> str | None:
     return (kwargs.get("headers") or {}).get("appkey")
 
 
-async def _throttle(url: str, kwargs: dict) -> None:
+async def _throttle(url: str, kwargs: dict, order: bool = False) -> None:
     """KIS 유량 제한 — 앱키 단위로 호출 간격을 벌린다
 
     KIS 한도는 앱키 기준이라 전역 제한은 축이 틀리다. 헤더의 appkey를 키로 쓰고,
@@ -102,7 +106,7 @@ async def _throttle(url: str, kwargs: dict) -> None:
     settings = get_settings()
     is_simulation = url.startswith(settings.DEV_API_URL)
     limit = settings.KIS_RATE_LIMIT_SIM if is_simulation else settings.KIS_RATE_LIMIT_REAL
-    await kis_rate_limiter.acquire(appkey, limit)
+    await kis_rate_limiter.acquire(appkey, limit, min_gap=ORDER_MIN_GAP_SEC if (order and is_simulation) else 0.0)
 
 
 async def fetch(method: str, url: str, service_name: str = "External API", *, order: bool = False, **kwargs):
@@ -126,7 +130,7 @@ async def fetch(method: str, url: str, service_name: str = "External API", *, or
     # 호출부는 전부 response["body"] 를 바로 꺼내므로 None 은 엉뚱한 곳에서 터진다.
     for _ in range(MAX_RATE_LIMIT_RETRIES + MAX_TRANSPORT_RETRIES + 1):
         try:
-            await _throttle(url, kwargs)
+            await _throttle(url, kwargs, order)
             response = await get_client().request(method, url, **kwargs)
 
             # 느린 응답 계측. raise_for_status 앞에 두어 느린 4xx/5xx 도 잡는다.
