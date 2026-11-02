@@ -175,6 +175,20 @@ class SwingRepository:
         await self.db.flush()
         return result.rowcount > 0
 
+    async def find_holdings(self, account_no: str, overseas: bool) -> List[SwingTrade]:
+        """계좌·시장에서 관리 중인(USE_YN='Y') 보유 스윙 (HOLD_QTY > 0) — 풀의 보유 종목 수·열린 리스크 계산용
+
+        SIGNAL 이 아니라 HOLD_QTY 로 거른다: 편입 대기(SIGNAL 0 + 보유)도 실제 포지션이라 위험에 들어간다.
+        USE_YN='Y' 만 센다: 배치는 활성 스윙만 청산 판정·실보유 정리를 하므로, 비활성 스윙에 남은 HOLD_QTY 는
+        낡은 값일 수 있다 (모의 계좌 실측: DB 보유 3종목, KIS 잔고 1종목). 그런 행이 풀 한도를 영구히 차지하면 안 된다.
+        """
+        market = SwingTrade.MRKT_CODE.in_(US_MARKETS) if overseas else SwingTrade.MRKT_CODE.not_in(US_MARKETS)
+        query = select(SwingTrade).filter(
+            SwingTrade.ACCOUNT_NO == account_no, SwingTrade.USE_YN == 'Y', market, SwingTrade.HOLD_QTY > 0
+        )
+        result = await self.db.execute(query)
+        return list(result.scalars().all())
+
     async def find_by_account_nos(self, account_nos: List[str]) -> List:
         """계좌번호 목록에 속한 스윙 전체 조회 (동반 삭제 전 영향 확인용)"""
         if not account_nos:

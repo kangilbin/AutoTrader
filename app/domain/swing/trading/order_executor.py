@@ -246,30 +246,84 @@ class SwingOrderExecutor:
         return cls.SELL_LABELS.get(signal_on_complete, "매도")
 
     @classmethod
-    async def _amount_reason(cls, swing_id: int, amount: float, db, label: str) -> str | None:
-        """설정 금액(INIT_AMOUNT) 대비 금액 비율 → "투입 33.5%" / "회수 35.2%"
+    async def _amount_reason(
+        cls, swing_id: int, amount: float, db, label: str,
+        equity: float | None = None, user_id: str | None = None,
+    ) -> str | None:
+        """금액 비율 사유 → "투입 33.5%" / "회수 35.2%"
 
-        분모를 CUR_AMOUNT가 아니라 INIT_AMOUNT로 두는 이유:
-        CUR_AMOUNT는 매수 시 차감·매도 시 가산되므로(entity.deduct_amount/add_amount)
-        기준이 매번 달라져 누적 투입·회수 규모를 읽을 수 없다.
-        분모가 같으므로 "투입 33.5% → 회수 35.2%"를 그대로 비교할 수 있다.
+        기준(분모)은 세 가지다:
+        - equity 가 주어지면(풀 매수: 할당기가 이미 읽은 총자산) 총자산 — "투입 2.5% (총자산 대비)"
+        - 풀이 켜진 계좌·시장이면(user_id 가 있을 때) INIT_AMOUNT 가 남아 있어도 지금 시점의 총자산 —
+          풀이 켜지면 배치가 모든 스윙을 총자산 기준으로 매수하므로 매수·매도 사유의 기준을 같게 한다.
+        - 설정 금액(INIT_AMOUNT)이 있으면 그 금액 (풀을 쓰지 않는 기존 스윙, 문구 그대로).
+          분모를 CUR_AMOUNT가 아니라 INIT_AMOUNT로 두는 이유: CUR_AMOUNT는 매수 시 차감·매도 시
+          가산되므로(entity.deduct_amount/add_amount) 기준이 매번 달라져 누적 투입·회수 규모를 읽을 수 없다.
+          분모가 같으므로 "투입 33.5% → 회수 35.2%"를 그대로 비교할 수 있다.
+        총자산은 계좌·시장별로 짧게(30초) 캐시한다 — 시장 급락으로 풀 스윙이 동시에 매도될 때
+        매도마다 KIS 잔고를 읽으면 다른 주문의 유량 한도를 잡아먹는다.
 
-        부가 정보이므로 조회 실패/INIT_AMOUNT 없음이면 None을 반환해
-        체결 이력 저장 자체는 막지 않는다.
+        부가 정보이므로 조회 실패/기준 없음이면 None을 반환해 체결 이력 저장 자체는 막지 않는다.
         """
         if amount <= 0:
             return None
         try:
-            from app.domain.swing.repository import SwingRepository
-            swing = await SwingRepository(db).find_by_id(swing_id)
-            init_amount = float(swing.INIT_AMOUNT) if swing and swing.INIT_AMOUNT else 0.0
+            if not equity:
+                from app.domain.swing.repository import SwingRepository
+                swing = await SwingRepository(db).find_by_id(swing_id)
+                equity = await cls._pool_equity(swing, user_id, db) if swing and user_id else None
+                if not equity:
+                    init_amount = float(swing.INIT_AMOUNT) if swing and swing.INIT_AMOUNT else 0.0
+                    if init_amount > 0:
+                        return f"{label} {amount / init_amount * 100:.1f}%"
         except Exception as e:
             logger.warning(f"[SWING {swing_id}] {label} 비율 계산 실패({e}) → 사유 생략")
             return None
 
-        if init_amount <= 0:
+        if not equity or equity <= 0:
             return None
-        return f"{label} {amount / init_amount * 100:.1f}%"
+        return f"{label} {amount / equity * 100:.1f}% (총자산 대비)"
+
+    EQUITY_CACHE_TTL: float = 30.0                 # 사유 표시용 총자산 캐시 시간(초)
+    _equity_cache: Dict[tuple, tuple] = {}         # (계좌, 시장) → (조회 시각, 총자산 또는 None=풀 꺼짐·읽기 실패)
+    _equity_inflight: Dict[tuple, Any] = {}        # (계좌, 시장) → 진행 중인 조회 (동시 호출이 하나로 합쳐진다)
+
+    @classmethod
+    async def _pool_equity(cls, swing, user_id: str, db) -> float | None:
+        """풀이 켜진 계좌·시장의 스윙이면 지금 총자산, 아니면 None (30초 캐시 — 꺼짐·읽기 실패도 캐시한다)"""
+        import time
+        from app.domain.pool.entity import pool_market_of
+        from app.domain.pool.repository import PoolRepository
+        from app.domain.swing.trading.pool_state import fetch_account_snapshot
+
+        market = pool_market_of(swing.MRKT_CODE)
+        key = (swing.ACCOUNT_NO, market)
+        cached = cls._equity_cache.get(key)
+        if cached and time.monotonic() - cached[0] < cls.EQUITY_CACHE_TTL:
+            return cached[1]
+
+        # 급락으로 풀 스윙이 동시에 매도되면 모두 캐시가 비어 있는 채 들어온다 — 진행 중인 조회가 있으면 그 결과를 기다려
+        # 잔고 조회가 한 번만 나가게 한다 (캐시만으로는 이 동시 호출을 못 막는다)
+        inflight = cls._equity_inflight.get(key)
+        if inflight is not None:
+            return await inflight
+
+        future = asyncio.get_running_loop().create_future()
+        cls._equity_inflight[key] = future
+        try:
+            setting = await PoolRepository(db).find(swing.ACCOUNT_NO, market)
+            equity = None
+            if setting is not None and setting.is_active():
+                snapshot = await fetch_account_snapshot(user_id, db, swing.ACCOUNT_NO, market, with_buying_power=False)
+                equity = snapshot.equity if snapshot else None
+            cls._equity_cache[key] = (time.monotonic(), equity)
+            future.set_result(equity)
+            return equity
+        except BaseException:
+            future.set_result(None)     # 기다리던 호출은 '기준 없음'으로 끝낸다 (사유 문구만 생략된다)
+            raise
+        finally:
+            cls._equity_inflight.pop(key, None)
 
     # ========================================
     # 주문 실행 (단일 주문)
@@ -327,6 +381,22 @@ class SwingOrderExecutor:
         return {"success": True, "qty": executed_qty, "avg_price": avg_price,
                 "amount": float(executed_qty * avg_price), "order_no": order_no}
 
+    @classmethod
+    async def execute_plain(
+        cls, side: str, user_id: str, st_code: str, price: Decimal, qty: int,
+        db, mrkt_code: str, account_no: str,
+    ) -> Dict[str, Any]:
+        """스윙에 속하지 않는 주문(파킹 ETF) — 주문 전송 + 체결 확인(부분 체결 잔량 취소·재조회 포함)만 한다
+
+        체결 이력(TRADE_HISTORY)은 스윙 ID가 필요해 남기지 않고, 체결 미확인은 pending_order 로 추적하지 않는다.
+        호출부(파킹)는 다음 사이클에 KIS 잔고를 다시 읽으므로 미확인 주문의 결과는 거기서 드러난다.
+        """
+        if qty <= 0:
+            return {"success": False, "reason": "수량 부족"}
+        return await cls._place_and_confirm(
+            side, 0, user_id, st_code, price, qty, 0, db, mrkt_code, account_no, pending_extra={},
+        )
+
     @staticmethod
     def _fill_reason(executed_qty: int, ord_qty: int) -> list:
         """일부만 체결됐을 때만 사유를 남긴다 — 기록만 보고 잔량 취소를 알 수 있게"""
@@ -345,8 +415,11 @@ class SwingOrderExecutor:
         mrkt_code: str = "",
         reasons: list = None,
         account_no: str = None,
+        equity: float = None,
     ) -> Dict[str, Any]:
         """매수 (단일 주문)
+
+        equity: 풀 매수가 넘기는 총자산 — 있으면 체결 이력의 "투입 %"를 총자산 기준으로 적는다.
 
         일부만 체결되면 체결분만 반영한다 — 진입은 사이클당 1회라 잔량을 다시 사지 않는다.
         체결 이력(TRADE_HISTORY) 저장은 여기서만 한다 (매도와 동일).
@@ -370,7 +443,7 @@ class SwingOrderExecutor:
             trade_type="B",
             order_result=filled,
             reasons=((reasons or [])
-                     + [r for r in [await cls._amount_reason(swing_id, filled["amount"], db, "투입")] if r]
+                     + [r for r in [await cls._amount_reason(swing_id, filled["amount"], db, "투입", equity=equity, user_id=user_id)] if r]
                      + cls._fill_reason(filled["qty"], qty)),
             mrkt_code=mrkt_code,
         )
@@ -416,7 +489,7 @@ class SwingOrderExecutor:
             trade_type="S",
             order_result=filled,
             reasons=([cls._sell_label(signal_on_complete)] + (reasons or [])
-                     + [r for r in [await cls._amount_reason(swing_id, filled["amount"], db, "회수")] if r]
+                     + [r for r in [await cls._amount_reason(swing_id, filled["amount"], db, "회수", user_id=user_id)] if r]
                      + cls._fill_reason(filled["qty"], target_qty)),
             mrkt_code=mrkt_code,
         )
@@ -571,7 +644,7 @@ class SwingOrderExecutor:
 
         # ── 체결 확인됨 → 이력/상태 반영 ──
         return await cls._apply_pending_fill(
-            pending, execution, swing_id, st_code, current_entry_price, current_hold_qty, db,
+            pending, execution, swing_id, st_code, current_entry_price, current_hold_qty, db, user_id,
         )
 
     @classmethod
@@ -620,7 +693,7 @@ class SwingOrderExecutor:
             f"{execution['executed_qty']}주 발견 → 반영"
         )
         return await cls._apply_pending_fill(
-            pending, execution, swing_id, st_code, current_entry_price, current_hold_qty, db,
+            pending, execution, swing_id, st_code, current_entry_price, current_hold_qty, db, user_id,
         )
 
     @classmethod
@@ -633,6 +706,7 @@ class SwingOrderExecutor:
         current_entry_price: int,
         current_hold_qty: int,
         db,
+        user_id: str = None,
     ) -> Dict[str, Any]:
         """확인된 지연 체결 → 이력 기록 + 상태 결과 (resolve_pending_order·settle_after_cancel 공용)"""
         from app.domain.trade_history import TradeHistoryService
@@ -658,7 +732,7 @@ class SwingOrderExecutor:
                 order_result={"qty": executed_qty, "avg_price": avg_price,
                               "order_no": order_no, "amount": chunk_amount},
                 reasons=(["지연 체결 확인"]
-                         + [r for r in [await cls._amount_reason(swing_id, chunk_amount, db, "투입")] if r]
+                         + [r for r in [await cls._amount_reason(swing_id, chunk_amount, db, "투입", user_id=user_id)] if r]
                          + cls._fill_reason(executed_qty, ord_qty)),
                 mrkt_code=mrkt_code,
             )
@@ -678,7 +752,7 @@ class SwingOrderExecutor:
             order_result={"qty": executed_qty, "avg_price": avg_price,
                           "order_no": order_no, "amount": chunk_amount},
             reasons=([cls._sell_label(phase), "지연 체결 확인"]
-                     + [r for r in [await cls._amount_reason(swing_id, chunk_amount, db, "회수")] if r]
+                     + [r for r in [await cls._amount_reason(swing_id, chunk_amount, db, "회수", user_id=user_id)] if r]
                      + cls._fill_reason(executed_qty, target_qty)),
             mrkt_code=mrkt_code,
         )

@@ -3,7 +3,8 @@ Trade History Repository - 데이터 접근 계층
 """
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, case
-from typing import Optional, List, Tuple
+from decimal import Decimal
+from typing import Dict, Optional, List, Tuple
 from datetime import datetime
 from app.domain.trade_history.entity import TradeHistory
 from app.domain.swing.entity import SwingTrade
@@ -88,6 +89,21 @@ class TradeHistoryRepository:
         )
         result = await self.db.execute(query)
         return result.scalars().all()
+
+    async def sum_realized_pnl(self, swing_ids: List[int]) -> Dict[int, Decimal]:
+        """스윙별 확정 손익 합 (매도 거래의 REALIZED_PNL — 매도 수수료·세금 반영, 매수 수수료는 미반영)
+
+        매도 이력이 없거나 단가를 몰라 REALIZED_PNL 이 비어 있는 스윙은 결과에 없다 (호출부가 0으로 본다).
+        """
+        if not swing_ids:
+            return {}
+        query = (
+            select(TradeHistory.SWING_ID, func.coalesce(func.sum(TradeHistory.REALIZED_PNL), 0))
+            .where(TradeHistory.SWING_ID.in_(swing_ids), TradeHistory.TRADE_TYPE == "S")
+            .group_by(TradeHistory.SWING_ID)
+        )
+        result = await self.db.execute(query)
+        return {swing_id: Decimal(str(total)) for swing_id, total in result.all()}
 
     async def count_by_swing_id(self, swing_id: int) -> dict:
         """

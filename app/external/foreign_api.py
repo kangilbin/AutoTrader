@@ -173,6 +173,58 @@ async def get_us_holdings(user_id: str, db: AsyncSession, account_no: str = None
     return await get_stock_balance(user_id, db, excg_cd="NASD", account_no=account_no)
 
 
+async def get_buying_power(
+    user_id: str, db: AsyncSession, st_code: str, excd: str, price: float = 1.0, account_no: str = None,
+) -> Optional[dict]:
+    """해외 매수가능금액조회 (실전 TTTS3007R / 모의 VTTS3007R) — 지금 이 계좌로 **실제 주문할 수 있는 외화**
+
+    체결기준현재잔고의 외화예수금과 다르다 (모의 실측: 예수금 $240,095 vs 주문가능외화 $86,212). 주문 거절을 피하려면
+    '살 수 있는 돈'은 이 값으로 판단한다. `sll_ruse_psbl_amt`(매도대금 재사용 가능)도 함께 돌려준다 — 파킹 ETF 를 판 뒤
+    곧바로 재매수할 수 있는지의 근거다. 금액은 종목·가격에 영향을 받지 않는다(수량 계산용 입력).
+
+    KIS 명세(2026-11-01 확인):
+    - ovrs_ord_psbl_amt: 해외주문가능금액 — 앱 해외주식 주문화면의 **"외화"** 기준 주문가능금액
+    - ord_psbl_frcr_amt: 주문가능외화금액
+    - sll_ruse_psbl_amt: 매도재사용가능금액 — "가능금액 산정 시 사용"하는 값이라 위 주문가능금액에 이미 반영된 입력으로 본다.
+      더하면 이중 계산이 될 수 있어 더하지 않고 `reuse` 로 돌려주기만 한다 (파킹 ETF 해제 직후 변화는 모의 주문 테스트로 측정)
+    - frcr_ord_psbl_amt1: 앱 주문화면의 **"통합"**(원화 환전 포함) 기준 주문가능금액 — 쓰지 않는다
+    - echm_af_ord_psbl_*: 명세상 사용되지 않는 항목 (모의에서는 값이 채워져 나오지만 쓰지 않는다)
+
+    cash = min(ord_psbl_frcr_amt, ovrs_ord_psbl_amt) — 통합증거금으로 원화가 환전돼 쓰이는 매수력은 세지 않는다 (보수적:
+    통합증거금 계좌는 실제로는 더 살 수 있지만 모자라서 거절되는 일은 없다).
+
+    Returns:
+        {"cash": 주문가능외화, "reuse": 매도대금 재사용 가능액, "raw": 응답 output} — 조회 실패·이상 응답은 None
+        (호출부가 '알 수 없음'으로 처리한다. 예외를 던지지 않는다)
+    """
+    try:
+        user_data, access_data = await _get_user_auth(user_id, db, account_no)
+        sim = access_data.get("simulation_yn") == "Y"
+        url = settings.DEV_API_URL if sim else settings.REAL_API_URL
+        api_url = f"{url}/uapi/overseas-stock/v1/trading/inquire-psamount"
+        headers = kis_headers(access_data, tr_id="VTTS3007R" if sim else "TTTS3007R")
+        query = {
+            "CANO": user_data.get("ACCOUNT_NO")[:8],
+            "ACNT_PRDT_CD": user_data.get("ACCOUNT_NO")[-2:],
+            "OVRS_EXCG_CD": to_ovrs_excg_cd(excd),
+            # 지수 표기(1e-05)가 되지 않게 고정 소수점으로 쓰되 뒤의 0 은 뗀다. 명세의 (23.8)은 소수 '최대' 8자리라는 뜻이고,
+            # 8자리를 채워 보내면(100.00000000) 증권사가 INVALID INPUT_FILED_SIZE 로 거절한다 (모의 실측 2026-11-01)
+            "OVRS_ORD_UNPR": f"{float(price):.8f}".rstrip("0").rstrip(".") or "0",
+            "ITEM_CD": st_code,
+        }
+        response = await kis_fetch("GET", api_url, access_data, params=query, headers=headers)
+        body = response["body"]
+        if body.get("rt_cd") != "0":
+            logger.warning(f"[해외 매수가능조회] 실패: {body.get('msg1')}")
+            return None
+        out = body.get("output") or {}
+        cash = min(float(out.get("ord_psbl_frcr_amt")), float(out.get("ovrs_ord_psbl_amt")))
+        return {"cash": cash, "reuse": float(out.get("sll_ruse_psbl_amt") or 0), "raw": out}
+    except Exception as e:
+        logger.warning(f"[해외 매수가능조회] 오류 → 알 수 없음으로 처리: {e}")
+        return None
+
+
 # ============================================================
 # 주문
 # ============================================================
@@ -203,6 +255,8 @@ async def place_order_api(user_id: str, order: Order, db: AsyncSession, account_
         "ORD_SVR_DVSN_CD": "0",
         "ORD_DVSN": "00",  # 지정가 (미국 시장가 제한)
     }
+    if order.ord_dv == "sell":
+        query["SLL_TYPE"] = "00"  # 판매유형 — 매도만 "00", 매수는 필드를 보내지 않는다 (KIS 명세)
     response = await kis_fetch("POST", api_url, access_data, json=query, headers=headers, order=True)
     body = response["body"]
     return body
@@ -280,6 +334,9 @@ async def get_inquire_daily_ccld_obj(user_id: str, db: AsyncSession, excg_cd: st
     return body
 
 
+CCNL_MAX_PAGES = 20   # 주문체결내역 연속조회 상한 — 무한 반복 방지
+
+
 async def get_inquire_ccnl_obj(
     user_id: str, db: AsyncSession, excg_cd: str = "NAS",
     ord_strt_dt: str = None, ord_end_dt: str = None,
@@ -327,8 +384,21 @@ async def get_inquire_ccnl_obj(
         "CTX_AREA_FK200": fk200,
         "CTX_AREA_NK200": nk200,
     }
-    response = await kis_fetch("GET", api_url, access_data, params=query, headers=headers)
-    return response["body"]
+    # 한 페이지만 읽으면 하루 주문이 쌓였을 때 방금 낸 주문이 목록에서 빠진다 (모의: 1페이지 15건, 오래된 순 —
+    # 정렬 옵션은 모의가 무시한다). 체결 확인·미확인 주문 복구가 모두 이 목록에 의존하므로 끝까지 읽는다.
+    body = None
+    for _ in range(CCNL_MAX_PAGES):
+        response = await kis_fetch("GET", api_url, access_data, params=query, headers=headers)
+        page = response["body"]
+        if body is None:
+            body = page
+        else:
+            body["output"] = (body.get("output") or []) + (page.get("output") or [])
+        if page.get("rt_cd") != "0" or response["header"].get("tr_cont") not in ("F", "M"):
+            break
+        query = {**query, "CTX_AREA_FK200": page.get("ctx_area_fk200", ""), "CTX_AREA_NK200": page.get("ctx_area_nk200", "")}
+        headers = kis_headers(access_data, tr_id=tr_id, extra={"tr_cont": "N"})
+    return body
 
 
 # ============================================================

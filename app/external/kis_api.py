@@ -923,6 +923,54 @@ async def get_inquire_price(user_id: str, code: str, db: AsyncSession, account_n
     body = response["body"]
     return body
 
+async def get_buying_power(user_id: str, db: AsyncSession, st_code: str = "005930", account_no: str = None) -> Optional[dict]:
+    """국내 매수가능조회 (실전 TTTC8908R / 모의 VTTC8908R) — 지금 이 계좌로 **실제 주문할 수 있는 현금**
+
+    잔고 조회의 예수금과 다르다 (모의 실측: 예수금 92,655,313 vs 주문가능현금 92,192,036 vs 미수없는매수금액 92,642,163).
+
+    **cash 는 nrcvb_buy_amt(미수없는매수금액)다** — KIS 명세: "미수를 사용하지 않을 경우 nrcvb_buy_amt 를 확인".
+    - ord_psbl_cash: 예수금으로 계산된 주문가능금액 — 매도대금 재사용분이 빠져 있어, 이 값으로 판단하면 파킹 ETF 를
+      판 직후 '현금이 안 늘었다'고 보고 살 수 있는데도 중단한다.
+    - ruse_psbl_amt: 전일/금일 매도대금으로 계산된 주문가능금액 (nrcvb 가 없을 때 ord_psbl_cash 에 더해 대신한다).
+    - max_buy_amt: 미수를 쓰는 경우의 최대 금액 — 쓰면 안 된다.
+    st_code 는 수량 계산용이라 금액에는 영향이 없다. 시장가(ORD_DVSN=01) 기준 — 수량은 상한가로 보수 계산된다.
+    파킹 ETF 해제 직후 이 값이 실제로 늘어나는지는 모의 주문 테스트에서 측정한다 (checklist 4-8).
+
+    Returns:
+        {"cash": 미수 없이 살 수 있는 금액, "ord_psbl_cash", "ruse_psbl_amt", "raw": 응답 output} — 조회 실패·이상 응답은 None
+        (호출부가 '알 수 없음'으로 처리한다. 예외를 던지지 않는다)
+    """
+    try:
+        user_data, access_data = await _get_user_auth(user_id, db, account_no)
+        sim = access_data.get("simulation_yn") == "Y"
+        url = settings.DEV_API_URL if sim else settings.REAL_API_URL
+        api_url = f"{url}/uapi/domestic-stock/v1/trading/inquire-psbl-order"
+        headers = kis_headers(access_data, tr_id="VTTC8908R" if sim else "TTTC8908R")
+        query = {
+            "CANO": user_data.get("ACCOUNT_NO")[:8],
+            "ACNT_PRDT_CD": user_data.get("ACCOUNT_NO")[-2:],
+            "PDNO": st_code,
+            "ORD_UNPR": "",
+            "ORD_DVSN": "01",
+            "CMA_EVLU_AMT_ICLD_YN": "N",
+            "OVRS_ICLD_YN": "N",
+        }
+        response = await kis_fetch("GET", api_url, access_data, params=query, headers=headers)
+        body = response["body"]
+        if body.get("rt_cd") != "0":
+            logger.warning(f"[매수가능조회] 실패: {body.get('msg1')}")
+            return None
+        out = body.get("output") or {}
+        ord_cash = float(out.get("ord_psbl_cash"))              # 필수 필드 — 없으면 이상 응답으로 보고 예외 → None
+        ruse = float(out.get("ruse_psbl_amt") or 0)
+        nrcvb = out.get("nrcvb_buy_amt")
+        cash = float(nrcvb) if nrcvb not in (None, "") else ord_cash + ruse
+        return {"cash": cash, "ord_psbl_cash": ord_cash, "ruse_psbl_amt": ruse, "raw": out}
+    except Exception as e:
+        logger.warning(f"[매수가능조회] 오류 → 알 수 없음으로 처리: {e}")
+        return None
+
+
 async def get_fluctuation_rank(user_id: str, db: AsyncSession, rank_sort_cls_code: str = "0", prc_cls_code: str = "1", account_no: str = None):
     """국내주식 등락률 순위"""
     access_data = await _quote_auth(user_id, db, account_no)

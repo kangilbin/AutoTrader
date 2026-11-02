@@ -28,6 +28,8 @@ class TradeHistory(Base):
     # 매수에 동작 라벨이 없는 이유: 진입이 1회뿐이라 TRADE_TYPE='B'에서 파생되는 정보.
     # 매도의 부분/전량은 다른 컬럼으로 복원할 수 없어 남긴다.
     # 투입·회수는 INIT_AMOUNT 대비(분모 동일 → 직접 비교 가능), 진행은 이번 목표 대비.
+    # 풀 모드 스윙(INIT_AMOUNT=0)은 "투입 2.5% (총자산 대비)"처럼 총자산 대비로 적는다 (분모가 시점의 총자산이라
+    # 투입끼리·회수끼리는 비교되지만 투입↔회수의 분모는 다를 수 있다).
     TRADE_REASONS = Column(String(500), nullable=True,
                            comment='매매 사유 JSON ["전량 매도","이익확정","청산선 500.00","손익 +5.2%","회수 71.4%"]')
     REG_DT = Column(DateTime, default=datetime.now, nullable=False, comment='등록일')

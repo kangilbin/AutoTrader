@@ -89,6 +89,7 @@ def _import_all_entities():
     import app.domain.trade_history.entity  # noqa: F401
     import app.domain.device.entity  # noqa: F401
     import app.domain.notification.entity  # noqa: F401
+    import app.domain.pool.entity  # noqa: F401
 
 
 async def get_db():

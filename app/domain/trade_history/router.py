@@ -30,6 +30,17 @@ async def get_trade_stats(
     return success_response("매매 통계 조회 완료", result)
 
 
+@router.get("/{swing_id}/cycles")
+async def get_trade_cycles(
+    swing_id: int,
+    service: Annotated[TradeHistoryService, Depends(get_trade_history_service)],
+    user_id: Annotated[str, Depends(get_current_user)],
+):
+    """사이클별 수익률 + 누적 (매수→전량 매도 반복 성과)"""
+    result = await service.get_cycles(user_id, swing_id)
+    return success_response("사이클 수익률 조회 완료", result)
+
+
 @router.get("/{swing_id}/list")
 async def get_trade_history_list(
     swing_id: int,

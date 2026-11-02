@@ -32,6 +32,7 @@ from app.domain.routers import (
     health_router,
     trade_history_router,
     notification_router,
+    pool_router,
 )
 
 # 로그 레벨은 DEBUG 설정으로 제어한다 (운영: false → INFO).
@@ -154,6 +155,7 @@ app.include_router(stock_review_router)
 app.include_router(backtest_router)
 app.include_router(trade_history_router)
 app.include_router(notification_router)
+app.include_router(pool_router)
 
 
 @app.get("/", tags=["Root"])

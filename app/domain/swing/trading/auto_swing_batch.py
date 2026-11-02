@@ -19,8 +19,10 @@ SIGNAL 상태:
 - Orchestrator (이 파일): 위 세 계층을 조율
 """
 import json
+from dataclasses import replace as dc_replace
 import logging
 import asyncio
+from collections import defaultdict
 from datetime import datetime, timedelta, time as dt_time
 from decimal import Decimal
 from zoneinfo import ZoneInfo
@@ -33,10 +35,19 @@ from app.external import foreign_api
 from app.common.database import Database
 from app.exceptions import ValidationError, ExternalServiceError
 from app.domain.swing.service import SwingService
+from app.domain.swing.repository import SwingRepository
+from app.domain.pool.entity import pool_market_of
+from app.domain.pool.repository import PoolRepository
 from app.domain.stock.service import StockService
 from app.domain.stock.stock_data_batch import is_today_incomplete
 from app.domain.trade_history import TradeHistoryService
 from .order_executor import SwingOrderExecutor
+from .pool_allocator import (
+    BUY_ADOPTED, BUY_FAILED, BUY_FILLED, BUY_HALT, BUY_SKIPPED, BUY_UNCONFIRMED,
+    BuyOutcome, EntryCandidate, run_pool_entries,
+)
+from .pool_state import fetch_account_snapshot, load_positions
+from . import parking
 from .trading_strategy_factory import TradingStrategyFactory
 from .strategies.base_single_ema import BaseSingleEMAStrategy
 from app.common.redis import Redis
@@ -155,11 +166,14 @@ async def trade_job():
     finally:
         await db.close()
 
+    pool_settings = await _load_pool_settings("KR")
+    pool_candidates = defaultdict(list)
     tasks = [
-        process_single_swing(swing_row, redis_client)
+        process_single_swing(swing_row, redis_client, pool_settings, pool_candidates)
         for swing_row in swing_list
     ]
     results = await asyncio.gather(*tasks, return_exceptions=True)
+    await _run_pool_entries("BATCH", pool_settings, pool_candidates, redis_client)
 
     _log_batch_end("BATCH", results, asyncio.get_running_loop().time() - started)
 
@@ -215,7 +229,9 @@ def _summarize(results) -> dict:
 
 async def process_single_swing(
     swing_row,
-    redis_client
+    redis_client,
+    pool_settings=None,
+    pool_candidates=None,
 ):
     """
     개별 스윙 매매 오케스트레이터 (세마포어로 동시 실행 제어)
@@ -225,6 +241,9 @@ async def process_single_swing(
     Args:
         swing_row: SWING_TRADE 조인 결과 (USER_ID, API_KEY, SECRET_KEY 포함)
         redis_client: Redis 클라이언트
+        pool_settings: 풀 매수가 켜진 {(계좌, 시장): PoolSetting}. None/비면 모든 스윙이 기존 방식(배정금)이다
+        pool_candidates: 풀별 매수 후보 목록 {(계좌, 시장): [EntryCandidate]}. 풀 대상 스윙은 매수 신호가
+            확정돼도 여기에 후보만 넣고 주문하지 않는다 (사이클 끝에 풀 할당기가 한도를 보고 주문한다)
     """
     async with _SEMAPHORE:
         db = await Database.get_session()
@@ -495,11 +514,17 @@ async def process_single_swing(
             # === 4. SIGNAL별 오케스트레이션 ===
             outcome = None
             if swing.is_waiting():
+                pool_bucket = None
+                if pool_settings and pool_candidates is not None:
+                    key = _pool_key(swing.ACCOUNT_NO, mrkt_code)
+                    if key in pool_settings:
+                        pool_bucket = pool_candidates[key]
                 outcome = await _handle_waiting(
                     swing, strategy, redis_client, db, user_id, st_code,
                     current_price, frgn_ntby_qty, acml_vol,
                     prdy_vrss_vol_rate, prdy_ctrt,
-                    cached_indicators, avg_daily_amount, mrkt_code
+                    cached_indicators, avg_daily_amount, mrkt_code,
+                    pool_bucket=pool_bucket,
                 )
 
             elif swing.has_position():
@@ -603,9 +628,13 @@ async def _handle_waiting(
     swing, strategy, redis_client, db, user_id, st_code,
     current_price, frgn_ntby_qty, acml_vol,
     prdy_vrss_vol_rate, prdy_ctrt,
-    cached_indicators, avg_daily_amount, mrkt_code=""
+    cached_indicators, avg_daily_amount, mrkt_code="", pool_bucket=None
 ):
-    """대기 상태 → 매수 신호 확인 (리스크 기반 포지션 사이징)"""
+    """대기 상태 → 매수 신호 확인 (리스크 기반 포지션 사이징)
+
+    pool_bucket 이 있으면(풀 모드) 주문하지 않고 후보만 모은 뒤 돌아간다 — 수량·한도는 풀 할당기가 정한다.
+    없으면 종목별 배정금(CUR_AMOUNT) 기준의 기존 방식 그대로다.
+    """
     entry_result = await strategy.check_entry_signal(
         redis_client=redis_client,
         swing_id=swing.SWING_ID,
@@ -628,6 +657,18 @@ async def _handle_waiting(
     # 포지션 사이징 — 전량 모드면 배정금 전량(버퍼 제외), 아니면 conviction 기반
     realtime_adx = cached_indicators.get('realtime_adx', 0)
     realtime_obv_z = cached_indicators.get('realtime_obv_z', 0)
+
+    if pool_bucket is not None:
+        pool_bucket.append(EntryCandidate(
+            swing_id=swing.SWING_ID, user_id=user_id, account_no=swing.ACCOUNT_NO, st_code=st_code,
+            mrkt_code=mrkt_code or swing.MRKT_CODE, price=float(current_price),
+            conviction=strategy.calc_conviction(realtime_adx, realtime_obv_z),
+            atr=float(cached_indicators.get('atr', 0) or 0),
+            avg_daily_amount=float(avg_daily_amount or 0),
+            reasons=tuple(entry_result.get("reasons", ["매수"])),
+        ))
+        return
+
     equity = float(swing.CUR_AMOUNT)
     curr_price = float(current_price)
 
@@ -875,7 +916,7 @@ OUTCOME_STATE_SYNCED = "STATE_SYNCED"
 
 
 async def _record_recovered_fills(swing, db, fills: list, side: str, max_qty: int, label: str,
-                                  mrkt_code: str) -> tuple[int, float]:
+                                  mrkt_code: str, user_id: str = None) -> tuple[int, float]:
     """누락 체결을 TRADE_HISTORY 에 기록 (max_qty 까지). Returns: (복구 수량, 복구 금액)"""
     trade_service = TradeHistoryService(db)
     recovered_qty, recovered_amt = 0, 0.0
@@ -886,7 +927,7 @@ async def _record_recovered_fills(swing, db, fills: list, side: str, max_qty: in
         price = f["avg_price"] or (f["executed_amt"] / f["executed_qty"])
         amount = qty * price
         amount_reason = await SwingOrderExecutor._amount_reason(
-            swing.SWING_ID, amount, db, "투입" if side == "buy" else "회수"
+            swing.SWING_ID, amount, db, "투입" if side == "buy" else "회수", user_id=user_id
         )
         await trade_service.record_trade(
             swing_id=swing.SWING_ID,
@@ -927,7 +968,7 @@ async def _reconcile_after_sell_rejected(swing, db, user_id, st_code, mrkt_code)
 
     fully_sold = position["qty"] <= 0
     recovered_qty, recovered_amt = await _record_recovered_fills(
-        swing, db, fills, "sell", missing_qty, "전량 매도" if fully_sold else "부분 매도", mrkt_code
+        swing, db, fills, "sell", missing_qty, "전량 매도" if fully_sold else "부분 매도", mrkt_code, user_id
     )
     if recovered_amt > 0:
         swing.add_amount(recovered_amt)
@@ -988,7 +1029,7 @@ async def _adopt_before_buy(swing, db, user_id, st_code, mrkt_code, current_pric
     recovered_qty, recovered_amt = (0, 0.0)
     if fills:
         recovered_qty, recovered_amt = await _record_recovered_fills(
-            swing, db, fills, "buy", position["qty"], "매수", mrkt_code
+            swing, db, fills, "buy", position["qty"], "매수", mrkt_code, user_id
         )
         swing.deduct_amount(recovered_amt)
     # 체결내역에 없으면(또는 조회 실패) 외부(증권사 앱) 매수로 본다 — /list 자동등록과 같이 자금 차감 없이 편입
@@ -998,6 +1039,182 @@ async def _adopt_before_buy(swing, db, user_id, st_code, mrkt_code, current_pric
         f"누락 체결 {recovered_qty}주 {recovered_amt:,.2f} 기록"
     )
     return OUTCOME_STATE_SYNCED
+
+
+# ==================== 풀 매수 (계좌 × 시장 단위 총자산 공유) ====================
+
+
+def _pool_key(account_no: str, mrkt_code: str) -> tuple:
+    """풀 키 — 스윙의 시장코드(J/NX/UN/NYS/NAS/AMS)를 KR/US 로 묶는다"""
+    return (account_no, pool_market_of(mrkt_code))
+
+
+async def _load_pool_settings(market: str) -> dict:
+    """풀 매수가 켜진 {(계좌, 시장): PoolSetting} — 읽지 못하면 빈 값(모든 스윙 기존 방식)
+
+    빈 값으로 폴백하는 이유: 풀 모드 스윙은 INIT_AMOUNT=0 이라 기존 방식으로는 수량이 0 이 되어 매수가
+    일어나지 않는다. 설정을 못 읽은 사이클에 엉뚱한 크기로 사는 일은 없다.
+    """
+    db = await Database.get_session()
+    try:
+        active = await PoolRepository(db).find_all_active()
+        return {(s.ACCOUNT_NO, s.MARKET): s for s in active if s.MARKET == market}
+    except Exception as e:
+        logger.error(f"풀 설정 조회 실패 → 이번 사이클 풀 매수 없음 (기존 방식만): {e}", exc_info=True)
+        return {}
+    finally:
+        await db.close()
+
+
+async def _pool_buy(c: EntryCandidate, qty: int, redis_client, equity: float = None,
+                    before_order=None) -> BuyOutcome:
+    """풀 할당기가 정한 수량으로 실제 매수 — 기존 매수 경로(_handle_waiting 꼬리)와 같은 순서
+
+    실보유 확인·편입 → (before_order) → 주문·체결 확인(이력 저장) → CUR_AMOUNT 차감·SIGNAL 0→1 → 커밋 → (미확인이면) Redis → 푸시.
+
+    before_order: 주문 직전에 부르는 게이트 — 파킹 ETF 해제처럼 '사기로 확정된 뒤에만 해야 하는 일'을 맡는다.
+    None 을 돌려주면 주문을 낸다. BuyOutcome 을 돌려주면 그 결과로 끝낸다(주문 안 함).
+    스윙 상태 확인·편입 판단 뒤에 부르므로, 어차피 사지 않을 후보 때문에 파킹 ETF를 팔지 않는다.
+    """
+    db = await Database.get_session()
+    order_placed = False
+    try:
+        swing = await SwingService(db).repo.find_by_id(c.swing_id)
+        # 후보를 모은 뒤 상태가 바뀌었을 수 있다 (사용 중지·다른 처리의 체결) — 이미 달라졌으면 사지 않는다
+        if swing is None or swing.USE_YN != 'Y' or not swing.is_waiting() or (swing.HOLD_QTY or 0) > 0:
+            logger.warning(f"[{c.st_code}] 풀 매수 직전 스윙 상태가 바뀜 → 매수 안 함")
+            return BuyOutcome(BUY_SKIPPED)
+
+        current_price = Decimal(str(c.price))
+        proceed = await _adopt_before_buy(swing, db, c.user_id, c.st_code, c.mrkt_code, current_price)
+        if proceed == OUTCOME_STATE_SYNCED:
+            await db.flush()
+            await db.commit()     # 편입은 체결이 아니므로 매수 완료 푸시를 보내지 않는다
+            return BuyOutcome(BUY_ADOPTED, swing.HOLD_QTY or 0, float(swing.ENTRY_PRICE or c.price))
+        if proceed is not True:
+            await db.rollback()
+            return BuyOutcome(BUY_FAILED)
+
+        if before_order is not None:
+            gate = await before_order()
+            if gate is not None:
+                await db.rollback()
+                return gate
+
+        prev_signal, prev_hold_qty = swing.SIGNAL, swing.HOLD_QTY or 0
+        # execute_buy 안에서 주문이 나간 뒤(체결 확인 조회·이력 저장)에 예외가 날 수 있고 그때는 체결됐을 수 있다.
+        # 호출 시작부터 '주문이 나갔을 수 있음'으로 본다 — 주문 전에 실패했다면 이번 사이클에 현금을 예약만 하고
+        # 끝나 보수적이고, 실제 체결을 '실패'로 알리면 같은 사이클의 다음 후보가 같은 현금을 또 쓴다.
+        order_placed = True
+        order_result = await SwingOrderExecutor.execute_buy(
+            swing_id=swing.SWING_ID, user_id=c.user_id, st_code=c.st_code, current_price=current_price,
+            qty=qty, signal_on_complete=1, db=db, mrkt_code=c.mrkt_code,
+            reasons=list(c.reasons), account_no=swing.ACCOUNT_NO, equity=equity,
+        )
+        if not order_result.get("success"):
+            logger.error(f"[{c.st_code}] 풀 매수 실패: {order_result.get('reason')}")
+            await db.rollback()
+            return BuyOutcome(BUY_FAILED)
+
+        if order_result.get("unconfirmed"):
+            # 주문은 나갔으나 체결 미확인 — 상태·이력 반영 없이 다음 사이클에 재확인 (중복 주문 방지)
+            await db.commit()
+            await redis_client.setex(f"pending_order:{swing.SWING_ID}", 86400,
+                                     json.dumps(order_result.get("pending_order")))
+            logger.warning(f"[{c.st_code}] 풀 매수 주문 체결 미확인 → 다음 사이클 재확인 대기")
+            return BuyOutcome(BUY_UNCONFIRMED)
+
+        avg_price = order_result.get("avg_price", c.price)
+        filled_qty = order_result.get("qty", 0)
+        swing.deduct_amount(avg_price * filled_qty)
+        # 일부만 체결돼도 진입 완료 — 진입은 1회뿐이라 잔량을 다시 사지 않는다
+        swing.transition_to_buy(avg_price, filled_qty, c.price)
+        await db.flush()
+        await db.commit()
+        _fire_trade_notification(c.user_id, swing, prev_signal, c.st_code,
+                                 prev_hold_qty=prev_hold_qty, current_price=c.price)
+        return BuyOutcome(BUY_FILLED, filled_qty, avg_price)
+
+    except Exception as e:
+        await db.rollback()
+        if order_placed:
+            # 주문이 나갔을 수 있는데 체결 확인·상태 반영이 실패 — 체결됐을 수 있으니 '돈을 안 썼다'고 알리지 않는다.
+            # 다음 사이클의 _adopt_before_buy 가 실보유를 보고 편입한다.
+            logger.error(f"[{c.st_code}] 풀 매수 주문 중/후 오류 → 체결 미확인으로 처리: {e}", exc_info=True)
+            return BuyOutcome(BUY_UNCONFIRMED)
+        logger.error(f"[{c.st_code}] 풀 매수 처리 실패: {e}", exc_info=True)
+        return BuyOutcome(BUY_FAILED)
+    finally:
+        await db.close()
+
+
+async def _run_pool_entries(label: str, pool_settings: dict, pool_candidates: dict, redis_client) -> None:
+    """청산이 모두 끝난 뒤 풀별로 총자산·현금을 읽고 후보를 주문한다
+
+    스냅샷을 이 시점에 읽는 이유: 같은 사이클에서 난 매도대금과 청산 후 보유 수가 반영돼야 한다.
+    총자산을 읽지 못하면 그 풀은 이번 사이클 매수를 건너뛴다 (신호 상태는 유지되어 다음 사이클에 재시도).
+    """
+    for key, candidates in pool_candidates.items():
+        if not candidates or key not in pool_settings:
+            continue
+        account_no, market = key
+        setting = pool_settings[key]
+        user_id = candidates[0].user_id
+        db = await Database.get_session()
+        lock_token = None
+        try:
+            if setting.parking_enabled():
+                # 파킹 버튼과 같은 풀을 동시에 건드리지 않는다 — 버튼 처리 중이면 이번 사이클만 보류 (다음 사이클 재평가)
+                lock_token = await parking.acquire_pool_lock(redis_client, account_no, market)
+                if lock_token is None:
+                    logger.warning(f"[{label}] 풀 {market} 파킹 처리 중 → 매수 후보 {len(candidates)}건 보류")
+                    continue
+
+            snapshot = await fetch_account_snapshot(user_id, db, account_no, market)
+            if snapshot is None:
+                logger.warning(f"[{label}] 풀 {market} 계좌 상태를 읽지 못해 매수 후보 {len(candidates)}건 보류")
+                continue
+            positions = await load_positions(SwingRepository(db), redis_client, account_no, market)
+
+            # 파킹 ETF 평가금은 총자산에 이미 들어 있고, 매수 가능 금액만 현금 + 파킹 평가금으로 본다
+            # (모자란 현금은 buy 에서 파킹 ETF를 팔아 만든다). 파킹을 읽지 못하면 0 — 매수 가능 금액을 늘리지 않는다.
+            equity = snapshot.equity
+            if setting.parking_enabled():
+                park_value = await parking.fetch_park_value(user_id, db, account_no, setting)
+                snapshot = dc_replace(snapshot, cash=min(snapshot.cash + park_value, snapshot.equity))
+
+            async def buy(c, qty):
+                before_order = None
+                if setting.parking_enabled():
+                    async def before_order():
+                        # 긴 사이클에서 락이 만료돼 파킹 버튼이 끼어들지 않도록 후보마다 연장한다
+                        await parking.refresh_pool_lock(redis_client, account_no, market, lock_token)
+                        ensured = await parking.ensure_cash(
+                            user_id, db, setting, parking.buy_cash_needed(qty, c.price), redis_client)
+                        if ensured.ok:
+                            return None
+                        logger.warning(f"[{c.st_code}] 파킹 해제로 매수 현금을 만들지 못해 이번 매수 보류: {ensured.message}")
+                        # 모자란 것은 이 후보만 건너뛴다(실패 아님) / 해제 결과를 모르면 사이클 중단 / 그 외는 실패
+                        return BuyOutcome({parking.ENSURE_INSUFFICIENT: BUY_SKIPPED,
+                                           parking.ENSURE_HALT: BUY_HALT}.get(ensured.kind, BUY_FAILED))
+                return await _pool_buy(c, qty, redis_client, equity=equity, before_order=before_order)
+
+            result = await run_pool_entries(setting, candidates, snapshot, positions, buy)
+            logger.info(
+                f"[{label}] 풀 {market} 매수 완료 - 후보 {len(candidates)} · 시도 {result.attempted} · "
+                f"체결 {result.filled} · 보류 {dict(result.skipped)} · "
+                f"총자산 {snapshot.equity:,.0f} · 매수가능 {snapshot.cash:,.0f} · 보유 {len(positions)}종목"
+            )
+        except Exception as e:
+            logger.error(f"[{label}] 풀 {market} 매수 처리 실패: {e}", exc_info=True)
+        finally:
+            try:
+                if lock_token is not None:
+                    await parking.release_pool_lock(redis_client, account_no, market, lock_token)
+            except Exception as e:
+                # Redis 오류로 락 해제가 실패해도 배치를 멈추지 않는다 — 락은 TTL 로 풀린다
+                logger.error(f"[{label}] 풀 {market} 락 해제 실패(TTL 로 해제됨): {e}")
+            await db.close()
 
 
 # ==================== 기타 배치 작업 ====================
@@ -1304,8 +1521,11 @@ async def us_trade_job():
         await db.close()
 
 
-    tasks = [process_single_swing(swing_row, redis_client) for swing_row in swing_list]
+    pool_settings = await _load_pool_settings("US")
+    pool_candidates = defaultdict(list)
+    tasks = [process_single_swing(swing_row, redis_client, pool_settings, pool_candidates) for swing_row in swing_list]
     results = await asyncio.gather(*tasks, return_exceptions=True)
+    await _run_pool_entries("US BATCH", pool_settings, pool_candidates, redis_client)
 
     _log_batch_end("US BATCH", results, asyncio.get_running_loop().time() - started)
 

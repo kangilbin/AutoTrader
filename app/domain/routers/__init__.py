@@ -15,6 +15,7 @@ from app.domain.routers.backtest_router import router as backtest_router
 from app.domain.routers.health_router import router as health_router
 from app.domain.trade_history.router import router as trade_history_router
 from app.domain.notification.router import router as notification_router
+from app.domain.pool.router import router as pool_router
 
 __all__ = [
     "user_router",
@@ -30,4 +31,5 @@ __all__ = [
     "health_router",
     "trade_history_router",
     "notification_router",
+    "pool_router",
 ]

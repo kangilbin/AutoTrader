@@ -13,6 +13,10 @@ from decimal import Decimal, InvalidOperation
 from app.domain.swing.indicators import TechnicalIndicators
 from app.domain.swing.trading.strategies.base_single_ema import BaseSingleEMAStrategy
 from app.domain.swing.repository import SwingRepository
+from app.domain.account.repository import AccountRepository
+from app.domain.pool.entity import PARK_ETF, is_park_etf, pool_market_of
+from app.domain.pool.repository import PoolRepository
+from app.domain.trade_history.repository import TradeHistoryRepository
 from app.domain.swing.entity import SwingTrade, EmaOption
 from app.domain.swing.schemas import SwingCreateRequest, SwingResponse
 from app.domain.stock.service import StockService
@@ -115,6 +119,16 @@ class SwingService:
 
     async def create_swing(self, user_id: str, request: SwingCreateRequest) -> dict:
         """스윙 전략 등록"""
+        # 요청 본문의 ACCOUNT_NO 는 클라이언트가 정하는 값이라 이 사용자의 계좌인지 서버가 확인해야 한다
+        # (활성화·수정·삭제는 소유권을 검증하지만 등록만 비어 있어, 남의 계좌번호로 행을 만들 수 있었다).
+        # 남의 계좌는 '없음'으로 응답해 계좌 존재 여부를 드러내지 않는다.
+        if await AccountRepository(self.db).find_auth_id_by_account_no(user_id, request.ACCOUNT_NO) is None:
+            raise NotFoundError("계좌", request.ACCOUNT_NO)
+        # 파킹 ETF 는 스윙이 아니다 — 스윙으로 등록하면 신호 때 파킹 해제와 같은 보유를 서로 사고판다
+        if is_park_etf(pool_market_of(request.MRKT_CODE), request.ST_CODE):
+            raise BusinessRuleError(
+                f"{request.ST_CODE}는 현금 파킹 ETF라 스윙으로 등록할 수 없습니다", rule="PARK_ETF_NOT_SWING")
+
         try:
             # 도메인 엔티티 생성 (비즈니스 검증) — 등록 시 USE_YN='N'이므로 자본 검증 불필요 (활성화 시 검증)
             swing = SwingTrade.create(
@@ -127,6 +141,8 @@ class SwingService:
             )
 
             db_swing = await self.repo.save(swing)
+            # 배정금이 없어 풀이 유일한 매수 방식이다 — 스윙을 만들면 이 계좌·시장의 풀도 켜져 있게 한다
+            await PoolRepository(self.db).ensure_active(request.ACCOUNT_NO, pool_market_of(request.MRKT_CODE))
 
             # 이평선 전략인 경우 옵션 저장
             if request.SWING_TYPE == 'A':
@@ -342,6 +358,9 @@ class SwingService:
 
             data["MOD_DT"] = datetime.now()
             result = await self.repo.update(swing_id, data)
+            if is_activating:
+                # 활성화한 종목이 실제로 매수되려면 이 계좌·시장의 풀이 켜져 있어야 한다 (풀 스위치는 앱에서 없앴다)
+                await PoolRepository(self.db).ensure_active(swing.ACCOUNT_NO, pool_market_of(swing.MRKT_CODE))
             await self.db.commit()
 
             # 보유 수량이 남은 스윙(계좌 보유종목 자동등록분)은 신규 진입이 아니라 포지션 편입 대상
@@ -453,6 +472,9 @@ class SwingService:
             for st_code, buy_item in buy_dict.items():
                 if st_code in swing_codes:
                     continue
+                # 파킹 ETF 보유는 스윙이 아니다 — 자동 등록하면 목록에 섞이고 활성화 시 해제와 충돌한다
+                if is_park_etf("US" if overseas else "KR", st_code):
+                    continue
                 # 새 스윙 등록 — 매입금액을 초기 투자금으로 설정
                 # 해외: 요청값(mrkt_code='US' 그룹)이 아니라 종목의 실제 거래소(ovrs_excg_cd)를
                 #       정식코드(NYS/NAS/AMS)로 역매핑해 저장
@@ -486,6 +508,29 @@ class SwingService:
                 # 재조회로 신규 행도 기존 행과 같은 형태(ST_NM 조인 등)로 맞춘다
                 swing_list = await self.repo.find_all_by_account_no(account_no, mrkt_code)
 
+            # 풀 모드 — 풀이 켜진 계좌·시장의 INIT_AMOUNT=0 스윙은 배정금이 없다. 매도 후 행이 0 으로 표시되면
+            # 손절 손실이 요약에서 사라지므로, 확정 손익(TRADE_HISTORY)을 읽어 총자산 기준으로 보여준다.
+            # 풀 설정이 없거나 꺼져 있으면(또는 조회가 실패하면) 아래 기존 계산 그대로다.
+            total_eval_dec = _to_decimal(output2.get("tot_evlu_amt", 0))
+            pool_active = False
+            pool_setting = None
+            realized_by_swing = {}
+            try:
+                pool_setting = await PoolRepository(self.db).find(account_no, pool_market_of(mrkt_code))
+                # 현금을 산출하지 못한 경우(미국 모의 환율 미수신)는 총평가에 현금이 빠져 총자산 기준이 성립하지 않는다 —
+                # 행·요약 모두 기존 방식으로 둔다 (일부만 풀 방식이면 원금이 0 이 되는 어정쩡한 요약이 된다)
+                pool_active = bool(pool_setting and pool_setting.is_active() and cash_supported and total_eval_dec)
+                if pool_active:
+                    realized_by_swing = await TradeHistoryRepository(self.db).sum_realized_pnl(
+                        [s["SWING_ID"] for s in swing_list]
+                    )
+            except Exception as e:
+                logger.warning(f"풀 손익 조회 실패 → 기존 표시로 대체: {e}")
+                pool_active, realized_by_swing = False, {}
+
+            def _pct_of_total(value: Decimal) -> float:
+                return round(float(value / total_eval_dec * 100), 2) if total_eval_dec else 0.0
+
             # 2. 스윙 리스트 기준 머지 — 스윙 1행 = 결과 1건
             #    요약의 배정금·종합 수익은 행 값의 합이다 (목록 손익 합 = 상단 종합 수익)
             results = []
@@ -493,7 +538,21 @@ class SwingService:
             profit_sum = Decimal(0)
             for swing in swing_list:
                 buy_item = buy_dict.get(swing["ST_CODE"])
+                # 풀이 켜지면 배치가 그 계좌·시장의 모든 스윙을 풀 방식(총자산 기준)으로 매수하므로
+                # 배정금(INIT_AMOUNT)이 남아 있는 스윙도 같은 기준으로 보여준다 — 배정금은 더 쓰이지 않는다
+                pool_row = pool_active
+                realized = realized_by_swing.get(swing["SWING_ID"], Decimal(0)) if pool_row else Decimal(0)
                 if buy_item is None:
+                    if pool_row:
+                        # 풀 모드, 보유 없음 — 확정 손익이 행에 남는다 (수익률은 현재 총평가 대비)
+                        profit_sum += realized
+                        results.append({
+                            **swing,
+                            "EVLU_PFLS_RT": _pct_of_total(realized),
+                            "EVLU_PFLS_AMT": _to_amount(realized),
+                            "REALIZED_PFLS_AMT": _to_amount(realized),
+                        })
+                        continue
                     # 보유 주식 없음 (evlu_amt = 0)
                     if swing["INIT_AMOUNT"]:
                         init_amount = swing["INIT_AMOUNT"]
@@ -513,8 +572,8 @@ class SwingService:
 
                 # 보유 주식 있음 — 증권사 값 merge
                 evlu_amt_dec = _to_decimal(buy_item.get("evlu_amt", 0))
-                if swing["INIT_AMOUNT"]:
-                    # INIT_AMOUNT > 0: 자체 계산 (서비스에서 등록/매매한 종목)
+                if swing["INIT_AMOUNT"] and not pool_row:
+                    # INIT_AMOUNT > 0: 자체 계산 (서비스에서 등록/매매한 종목) — 풀이 켜진 계좌는 아래 풀 행 방식
                     init_amount = swing["INIT_AMOUNT"]
                     total_asset = swing["CUR_AMOUNT"] + evlu_amt_dec
                     rate = float((total_asset - init_amount) / init_amount * 100) if init_amount else 0.0
@@ -522,12 +581,17 @@ class SwingService:
                     principal_sum += init_amount
                     profit_sum += total_asset - init_amount
                 else:
-                    # INIT_AMOUNT = 0: KIS API 값 사용 (외부 매수 자동 등록 종목)
+                    # INIT_AMOUNT = 0: KIS API 값 사용 (외부 매수 자동 등록 종목, 풀 모드 종목)
                     rate = float(buy_item.get("evlu_pfls_rt", 0) or 0)
                     pfls_amt = _to_amount(buy_item.get("evlu_pfls_amt", 0))
-                    # 행 수익률이 KIS 값(평가손익 ÷ 매입금액)이라 원금도 매입금액으로 맞춘다
-                    principal_sum += _to_decimal(buy_item.get("pchs_amt", 0))
-                    profit_sum += _to_decimal(buy_item.get("evlu_pfls_amt", 0))
+                    if pool_row:
+                        # 풀 모드: 행은 이 포지션의 수익률 그대로, 지난 사이클의 확정 손익은 따로 내려준다.
+                        # 원금은 행의 매입금액을 더하지 않는다 — 요약이 총자산 기준으로 정한다.
+                        profit_sum += _to_decimal(buy_item.get("evlu_pfls_amt", 0)) + realized
+                    else:
+                        # 행 수익률이 KIS 값(평가손익 ÷ 매입금액)이라 원금도 매입금액으로 맞춘다
+                        principal_sum += _to_decimal(buy_item.get("pchs_amt", 0))
+                        profit_sum += _to_decimal(buy_item.get("evlu_pfls_amt", 0))
 
                 results.append({
                     **swing,
@@ -537,7 +601,17 @@ class SwingService:
                     "EVLU_PFLS_RT": rate,
                     "EVLU_PFLS_AMT": pfls_amt,
                     "PRPR": float(buy_item.get("prpr", 0) or 0),
+                    **({"REALIZED_PFLS_AMT": _to_amount(realized)} if pool_row else {}),
                 })
+
+            # 정렬 — 보유 중인 종목(활성·비활성 모두: 비활성이어도 돈이 들어가 있어 손익을 봐야 하고 청산선도 작동하지 않는다)
+            # → 활성 신호 대기 → 비활성(보유 없음). 보유 그룹은 평가금액이 큰 순, 나머지는 이름순.
+            def _sort_key(r):
+                name = (r.get("ST_NM") or "", r.get("ST_CODE") or "")
+                if _to_decimal(r.get("HLDG_QTY") or 0) > 0:
+                    return (0, -float(_to_decimal(r.get("EVLU_AMT") or 0)), *name)
+                return (1 if r.get("USE_YN") == "Y" else 2, 0.0, *name)
+            results.sort(key=_sort_key)
 
             await self.db.commit()
 
@@ -567,7 +641,24 @@ class SwingService:
                 "TOTAL_PROFIT": _to_amount(profit_sum),
                 "TOTAL_PROFIT_RATE": _rate(profit_sum, principal_sum),
                 "CASH_ASSET": _to_amount(output2.get("dnca_tot_amt", 0)) if cash_supported else None,
+                "POOL_MODE": False,  # 앱이 '배정금'/'원금(추정)' 표기를 고르는 기준
+                # 파킹 ETF — 스윙이 아니라 목록에 넣지 않고 요약에 '현금 + 파킹'으로 보여준다 (이미 읽은 보유에서 꺼내 KIS 호출 없음).
+                # 파킹을 쓰지 않거나 보유가 없으면 None
+                "PARKING": self._parking_summary(pool_setting, buy_dict, _to_amount, _to_decimal),
             }
+
+            if pool_active:
+                # 풀 모드: 원금 = 총평가 − 누적 손익(추정, 입출금 무시), 수익률 = 누적 손익 ÷ 그 원금
+                # (표시되는 원금과 같은 분모 — 총평가로 나누면 이익일 때 화면의 원금 대비 수익률보다 작게 보인다)
+                pool_principal = total_eval_dec - profit_sum
+                summary.update({
+                    "POOL_MODE": True,
+                    "TOTAL_PRINCIPAL": _to_amount(pool_principal),
+                    "TOTAL_VALUE": _to_amount(total_eval_dec),
+                    "TOTAL_PROFIT": _to_amount(profit_sum),
+                    # 입출금을 반영하지 않아 출금 뒤에는 누적 이익이 총자산보다 클 수 있다 → 원금이 0 이하면 수익률을 말하지 않는다
+                    "TOTAL_PROFIT_RATE": _rate(profit_sum, pool_principal) if pool_principal > 0 else 0.0,
+                })
 
             return {"list": results, "summary": summary}
 
@@ -575,6 +666,23 @@ class SwingService:
             await self.db.rollback()
             logger.error(f"스윙 매핑 실패: {e}", exc_info=True)
             raise DatabaseError("스윙 매핑에 실패했습니다")
+
+    @staticmethod
+    def _parking_summary(pool_setting, buy_dict: dict, to_amount, to_decimal):
+        """요약에 보여줄 파킹 ETF 보유 — 파킹을 켠 풀에서 보유 중일 때만, 아니면 None"""
+        if pool_setting is None or not pool_setting.parking_enabled():
+            return None
+        item = buy_dict.get(pool_setting.park_code)
+        qty = to_decimal(item.get("hldg_qty")) if item else Decimal(0)
+        if not item or qty <= 0:
+            return None
+        return {
+            "PARK_CODE": pool_setting.park_code,
+            "PARK_NM": item.get("prdt_name") or PARK_ETF[pool_setting.MARKET]["name"],
+            "QTY": int(qty),
+            "VALUE": to_amount(to_decimal(item.get("evlu_amt"))),
+            "PROFIT": to_amount(to_decimal(item.get("evlu_pfls_amt"))),
+        }
 
     async def get_active_swings(self) -> List:
         """활성화된 스윙 목록 조회 (배치용)"""

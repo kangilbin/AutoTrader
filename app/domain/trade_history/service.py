@@ -15,6 +15,7 @@ import talib as ta
 from dateutil.relativedelta import relativedelta
 
 from app.core.market_code import is_overseas
+from app.domain.trade_history.cycles import build_cycles, summarize_cycles
 from app.domain.trade_history.repository import TradeHistoryRepository
 from app.domain.trade_history.schemas import TradeHistoryResponse
 from app.exceptions import DatabaseError, NotFoundError, PermissionDeniedError
@@ -300,6 +301,57 @@ class TradeHistoryService:
         except SQLAlchemyError as e:
             logger.error(f"매매 통계 조회 실패: {e}", exc_info=True)
             raise DatabaseError("매매 통계 조회에 실패했습니다")
+
+    async def get_cycles(self, user_id: str, swing_id: int) -> dict:
+        """
+        사이클별 수익률 + 닫힌 사이클 누적 (풀 모드에서 재매수해도 이어서 보기 위한 조회)
+
+        진행 중 사이클은 매수금액·확정 손익까지만 내려준다 — 평가손익은 앱이 목록 응답의
+        EVLU_PFLS_AMT를 더한다 (현재가를 여기서 다시 조회하지 않아 목록 화면과 값이 어긋나지 않는다).
+        수익률은 % (소수 2자리), 금액은 국내 int / 미국 소수 2자리.
+        """
+        try:
+            swing = await self.repo.find_swing_with_ownership(swing_id, user_id)
+            if not swing:
+                raise NotFoundError("스윙 전략", swing_id)
+
+            overseas = is_overseas(swing.MRKT_CODE)
+
+            def amount(value: Decimal):
+                return round(float(value), 2) if overseas else int(value)
+
+            def pct(rate: Optional[Decimal]) -> Optional[float]:
+                return None if rate is None else round(float(rate * 100), 2)
+
+            trades = await self.repo.find_by_swing_id(swing_id)
+            hold_qty = getattr(swing, "HOLD_QTY", None)
+            cycles = build_cycles(trades, holding=None if hold_qty is None else hold_qty > 0)
+            summary = summarize_cycles(cycles)
+
+            return {
+                "cycles": [
+                    {
+                        "START_DT": c["start"].isoformat(),
+                        "END_DT": c["end"].isoformat() if c["end"] else None,
+                        "CLOSED": c["closed"],
+                        "COST": amount(c["cost"]),
+                        "REALIZED_PNL": amount(c["realized_pnl"]),
+                        "RATE": pct(c["rate"]),
+                        "COST_KNOWN": c["cost_known"],
+                    }
+                    for c in cycles
+                ],
+                "CLOSED_COUNT": summary["closed_count"],
+                "RATED_COUNT": summary["rated_count"],
+                "CLOSED_PNL": amount(summary["closed_pnl"]),
+                "CLOSED_RATE": pct(summary["closed_rate"]),
+            }
+
+        except (NotFoundError, PermissionDeniedError):
+            raise
+        except SQLAlchemyError as e:
+            logger.error(f"사이클 수익률 조회 실패: {e}", exc_info=True)
+            raise DatabaseError("사이클 수익률 조회에 실패했습니다")
 
     async def get_trade_history_list(
         self, user_id: str, swing_id: int, page: int = 1, size: int = 100

@@ -257,7 +257,19 @@ class ActivateAdoptionTest(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self._orig_stock = svc_mod.StockService
         self._orig_balance = svc_mod.get_stock_balance
+        self._orig_pool_repo = svc_mod.PoolRepository
         svc_mod.StockService = FakeStockService
+
+        self.pool_ensured = []
+        ensured = self.pool_ensured
+
+        class FakePoolRepo:
+            def __init__(self, db):
+                pass
+
+            async def ensure_active(self, account_no, market):
+                ensured.append((account_no, market))
+        svc_mod.PoolRepository = FakePoolRepo
 
         self.swing = _make_swing(USE_YN="N", HOLD_QTY=50, ENTRY_PRICE=Decimal(70_000))
         self.repo = FakeRepo(self.swing)
@@ -276,6 +288,7 @@ class ActivateAdoptionTest(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self):
         svc_mod.StockService = self._orig_stock
         svc_mod.get_stock_balance = self._orig_balance
+        svc_mod.PoolRepository = self._orig_pool_repo
 
     def _set_holdings(self, *items):
         async def _balance(user_id, db, account_no=None):
@@ -288,6 +301,17 @@ class ActivateAdoptionTest(unittest.IsolatedAsyncioTestCase):
         async def _balance(user_id, db, account_no=None):
             raise RuntimeError("KIS 조회 실패")
         svc_mod.get_stock_balance = _balance
+
+    async def test_activation_turns_the_pool_on_for_this_accounts_market(self):
+        """종목을 활성화하면 풀 스위치 없이도 매수가 일어난다 — 이 계좌·시장의 풀이 켜져 있도록 보장한다"""
+        self._set_holdings()
+        await self.service.update_swing(1, {"USE_YN": "Y"}, user_id="tester")
+        self.assertEqual(self.pool_ensured, [(self.swing.ACCOUNT_NO, "KR")])
+
+    async def test_non_activating_update_does_not_touch_the_pool(self):
+        self._set_holdings()
+        await self.service.update_swing(1, {"SWING_TYPE": "S"}, user_id="tester")
+        self.assertEqual(self.pool_ensured, [])
 
     async def test_adopts_broker_quantity_not_db_snapshot(self):
         """DB 50주(매핑 시점) vs 실보유 150주 → 증권사 값이 단일 진실"""
