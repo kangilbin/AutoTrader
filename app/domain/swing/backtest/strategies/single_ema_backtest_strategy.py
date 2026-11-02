@@ -1,10 +1,16 @@
 """
-단일 20EMA 백테스팅 전략 (Single EMA Backtest Strategy) — 2단계 분할 익절
+단일 20EMA 백테스팅 전략 (Single EMA Backtest Strategy) — 실전 SingleEMAStrategy 와 같은 정의
 
-**매수:** EMA20 돌파 (추세 추종), Conviction 기반 포지션 사이징
-**손절:** EMA - ATR×2.0 (SIGNAL 2에서는 본전 방어)
-**1차 익절:** 고점 - ATR×2.0 → 50% 매도
-**2차 익절:** 고점 - ATR×2.0 AND OBV z-score < -0.5 → 잔량 전량 매도
+**매수:** 20EMA 위 돌파 직후(+6% 이내) + 추세(+DI > -DI, ADX > 15) + 수급 축적(accum > ACCUM_HIGH, 전일 완성봉)
+          수량은 Conviction 기반 (BaseSingleEMAStrategy.entry_pct)
+**청산:** 단일 청산선 하나로 관리 — 시작 max(진입가 − ATR×2, 진입가 −7%),
+          고점 이익 +20% → 본전, +30% → 고점 − ATR×4 로 상향 (내려가지 않음). 이탈 시 전량 매도
+**부분 익절:** 이익 +50% 도달 시 절반 매도 (SIGNAL 1에서 1회)
+**매도 후:** OBV z < -0.5 → > 0.5 를 확인한 뒤에야 재진입 (SIGNAL 3 → 4 → 0)
+
+포트폴리오 검증용 옵션 (params, 기본값이면 동작·응답 불변):
+  unit_qty      진입 수량을 이 값으로 고정 (자본과 무관한 거래 기록을 뽑을 때)
+  research_log  True 면 BUY 기록에 initial_stop·conviction, 결과에 일별 exit_lines 를 남긴다
 """
 import pandas as pd
 from typing import Dict, List, Tuple
@@ -31,6 +37,9 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
         initial_capital = params["init_amount"]
         eval_start = pd.to_datetime(params["eval_start"])
         mrkt_code = params.get("mrkt_code", "")   # 호가 단위 (없으면 국내)
+        unit_qty = params.get("unit_qty")         # 포트폴리오 검증용: 진입 수량 고정 (없으면 자본 기준 사이징)
+        research_log = params.get("research_log", False)
+        exit_lines: List[Dict] = []               # research_log 일 때만 채운다 (보유 중 일별 청산선)
 
         df = self._prepare_data(prices_df)
         df = self._calculate_indicators(df)
@@ -62,6 +71,8 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
                 # 당일 봉 ATR엔 당일 고저가 섞여, 급락일에 ATR이 커지며 청산선이 내려가 손절을 피하는 선견이 된다
                 atr = prev_row["atr"] if pd.notna(prev_row["atr"]) else 0
                 exit_line = sell_tick(self.calculate_exit_line(entry_price, peak_price, atr), mrkt_code)
+                if research_log:
+                    exit_lines.append({"date": current_date, "exit_line": float(exit_line)})
 
                 if exit_line > 0 and row["STCK_LWPR"] <= exit_line:
                     sell_price = fill_sell(min(exit_line, row["STCK_OPRC"]), mrkt_code)
@@ -129,7 +140,7 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
                     full_entry = params.get("full_entry", False)
                     entry_pct = self.entry_pct(full_entry, adx_val, obv_z_val)
 
-                    buy_quantity = int(current_capital * entry_pct / buy_price)
+                    buy_quantity = int(unit_qty) if unit_qty else int(current_capital * entry_pct / buy_price)
 
                     if buy_quantity > 0:
                         sizing_reason = "전량 매수" if full_entry else f"conviction={entry_pct / self.MAX_ENTRY_PCT:.2f}"
@@ -143,10 +154,16 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
                         max_stop = sell_tick(buy_price * (1 - self.MAX_STOP_LOSS_PCT / 100), mrkt_code)
                         stop_loss = max(atr_stop, max_stop) if atr_stop > 0 else 0.0
                         hold_qty = buy_quantity
+                        if research_log:
+                            # 1R 기준(진입 시 청산선)과 우선순위 기준 — 포트폴리오 엔진이 사이징·정렬에 쓴다
+                            trades[-1]["initial_stop"] = float(stop_loss)
+                            trades[-1]["conviction"] = float(self.calc_conviction(adx_val, obv_z_val))
 
         # 최종 청산 및 결과 포맷팅
         final_capital = self._liquidate_final_position(trades, eval_df, current_capital, mrkt_code=mrkt_code)
         result = self._format_result(prices_df, params, trades, final_capital, eval_df)
+        if research_log:
+            result["exit_lines"] = exit_lines
         return result
 
     def _calculate_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
