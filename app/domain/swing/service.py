@@ -234,6 +234,10 @@ class SwingService:
         """포지션 보유 중인 스윙 목록 조회 (SIGNAL 1 or 2)"""
         return await self.repo.find_holding_swings()
 
+    async def get_eod_target_swings(self) -> List:
+        """EOD 체크 대상 스윙 조회 (SIGNAL 1, 2, 3)"""
+        return await self.repo.find_holding_and_partial_sold_swings()
+
     async def cache_single_indicators(self, mrkt_code: str, st_code: str) -> bool:
         """
         단일 종목 지표 캐싱 (스윙 등록 시 호출)
@@ -277,6 +281,7 @@ class SwingService:
                 return False
 
             yesterday = indicators.iloc[-1]
+            day_before = indicators.iloc[-2]  # 전전일
 
             required_cols = ['ema_20', 'ema_120', 'adx', 'plus_di', 'minus_di', 'atr', 'obv', 'obv_z']
             if not all(col in yesterday.index for col in required_cols):
@@ -314,6 +319,8 @@ class SwingService:
                 "low": yesterday['STCK_LWPR'],   # 어제 저가
                 "date": yesterday['STCK_BSOP_DATE'],
                 "avg_daily_amount": avg_daily_amount,  # 일평균 거래대금 (체결 분할용)
+                "prev_close": float(day_before['STCK_CLPR']),  # 전전일 종가
+                "prev_obv_z": float(day_before['obv_z']),      # 전전일 OBV z-score
             }
 
             now = datetime.now()
@@ -400,8 +407,9 @@ class SwingService:
                         fail_count += 1
                         continue
 
-                    # 어제 데이터 추출 (실전 거래에서 사용할 기준)
+                    # 어제/전전일 데이터 추출 (실전 거래에서 사용할 기준)
                     yesterday = indicators.iloc[-1]
+                    day_before = indicators.iloc[-2]  # 전전일
 
                     # 필수 지표 존재 여부 확인
                     required_cols = ['ema_20', 'ema_120', 'adx', 'plus_di', 'minus_di', 'atr', 'obv', 'obv_z']
@@ -443,6 +451,8 @@ class SwingService:
                         "low": float(yesterday['STCK_LWPR']),   # 어제 저가
                         "date": yesterday['STCK_BSOP_DATE'],
                         "avg_daily_amount": avg_daily_amount,   # 일평균 거래대금 (체결 분할용)
+                        "prev_close": float(day_before['STCK_CLPR']),  # 전전일 종가
+                        "prev_obv_z": float(day_before['obv_z']),      # 전전일 OBV z-score
                     }
 
                     now = datetime.now()

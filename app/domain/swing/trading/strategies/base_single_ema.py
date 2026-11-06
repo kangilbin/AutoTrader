@@ -3,12 +3,11 @@
 
 백테스팅과 실전 전략의 공통 로직을 포함합니다.
 - 공통 파라미터
-- EOD 신호 체크 메서드
 - 하락장 필터
 - 2차 매수 조건 파라미터
+- trailing stop 파라미터
 """
 import pandas as pd
-from typing import Optional
 
 
 class BaseSingleEMAStrategy:
@@ -27,6 +26,7 @@ class BaseSingleEMAStrategy:
     OBV_LOOKBACK = 7
     MAX_GAP_RATIO = 0.05
     MAX_SURGE_RATIO = 0.05
+    ADX_MIN_ENTRY = 20           # 1차 매수용 ADX 최소값
 
     # 2차 매수 조건
     # [시나리오 A] 추세 강화형 (EMA-ATR 가드레일)
@@ -47,70 +47,9 @@ class BaseSingleEMAStrategy:
     # [1차 방어선] 장중 손절
     ATR_MULTIPLIER = 1.0
 
-    # [2차 방어선] EOD 신호
-    EOD_SIGNAL_WINDOW_DAYS = 3       # EOD 신호 유효 기간 (3일)
-    EOD_TREND_WEAK_DAYS = 2          # 추세 약화 연속 일수
-    EOD_SUPPLY_WEAK_OBV_Z = -1.0     # OBV z-score 수급 약화 기준
-
-    # ========================================
-    # 공통 메서드: EOD 신호 체크
-    # ========================================
-
-    @staticmethod
-    def _check_ema_breach_eod(row: pd.Series) -> bool:
-        """
-        EOD 신호 1: 종가가 EMA 아래로 하회했는지 체크
-
-        Args:
-            row: 일일 데이터 (종가, ema_20 포함)
-
-        Returns:
-            True: 종가 < EMA20
-        """
-        if pd.isna(row.get('ema_20')):
-            return False
-        return row['STCK_CLPR'] < row['ema_20']
-
-    @staticmethod
-    def _check_trend_weakness_eod(row: pd.Series, prev_row: pd.Series) -> bool:
-        """
-        EOD 신호 2: ADX/DMI 추세가 2일 연속 약화되었는지 체크
-
-        Args:
-            row: 오늘 데이터
-            prev_row: 어제 데이터
-
-        Returns:
-            True: ADX < 20 AND -DI > +DI (2일 연속)
-        """
-        required_cols = ['adx', 'minus_di', 'plus_di']
-
-        # NaN 체크
-        if any(pd.isna(row.get(col)) for col in required_cols):
-            return False
-        if any(pd.isna(prev_row.get(col)) for col in required_cols):
-            return False
-
-        # 2일 연속 약세 체크
-        is_today_weak = row['adx'] < 20 and row['minus_di'] > row['plus_di']
-        is_yesterday_weak = prev_row['adx'] < 20 and prev_row['minus_di'] > prev_row['plus_di']
-
-        return is_today_weak and is_yesterday_weak
-
-    @classmethod
-    def _check_supply_weakness_eod(cls, row: pd.Series) -> bool:
-        """
-        EOD 신호 3: 일일 수급이 약화되었는지 체크 (OBV z-score 기준)
-
-        Args:
-            row: 일일 데이터 (obv_z 포함)
-
-        Returns:
-            True: OBV z-score < -1.0
-        """
-        if pd.isna(row.get('obv_z')):
-            return False
-        return row['obv_z'] < cls.EOD_SUPPLY_WEAK_OBV_Z
+    # [2차 방어선] 조건부 trailing stop
+    TRAILING_STOP_PARTIAL = 5.0  # 고점 대비 -5% → 1차 분할 매도
+    TRAILING_STOP_FULL = 8.0     # 고점 대비 -8% → 2차 전량 매도
 
     # ========================================
     # 공통 메서드: 하락장 필터
