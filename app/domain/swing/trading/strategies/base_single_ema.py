@@ -3,11 +3,9 @@
 
 백테스팅과 실전 전략의 공통 로직을 포함합니다.
 - 공통 파라미터
-- 하락장 필터
 - 2차 매수 조건 파라미터
 - trailing stop 파라미터
 """
-import pandas as pd
 
 
 class BaseSingleEMAStrategy:
@@ -19,14 +17,11 @@ class BaseSingleEMAStrategy:
 
     # EMA 기간
     EMA_PERIOD = 20
-    EMA_LONG_PERIOD = 120  # 장기 EMA (하락장 판단용)
 
     # 매수 조건
     OBV_Z_BUY_THRESHOLD = 1.0
     OBV_LOOKBACK = 7
-    MAX_GAP_RATIO = 0.05
-    MAX_SURGE_RATIO = 0.05
-    ADX_MIN_ENTRY = 20           # 1차 매수용 ADX 최소값
+    MAX_SURGE_RATIO = 0.05       # 전일 대비 최대 급등률 (5%)
 
     # 2차 매수 조건
     # [시나리오 A] 추세 강화형 (EMA-ATR 가드레일)
@@ -51,23 +46,3 @@ class BaseSingleEMAStrategy:
     TRAILING_STOP_PARTIAL = 5.0  # 고점 대비 -5% → 1차 분할 매도
     TRAILING_STOP_FULL = 8.0     # 고점 대비 -8% → 2차 전량 매도
 
-    # ========================================
-    # 공통 메서드: 하락장 필터
-    # ========================================
-
-    @staticmethod
-    def _is_bearish_market(row: pd.Series) -> bool:
-        """
-        하락장 판단: 20 EMA가 120 EMA 아래로 내려간 경우
-
-        Args:
-            row: 일일 데이터 (ema_20, ema_120 포함)
-
-        Returns:
-            True: 하락장 (매수 금지)
-            False: 상승장/횡보장 (매수 허용)
-        """
-        if pd.isna(row.get('ema_20')) or pd.isna(row.get('ema_120')):
-            return False  # 지표 부족 시 매수 허용 (초기 데이터)
-
-        return row['ema_20'] < row['ema_120']

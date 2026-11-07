@@ -555,13 +555,6 @@ class TechnicalIndicators:
                 period=ema_period
             )
 
-            # 1-1. 실시간 EMA120 증분 계산 (하락장 필터용)
-            realtime_ema120 = cls.calculate_realtime_ema_from_cache(
-                yesterday_ema=cached_indicators['ema120'],
-                current_price=current_price,
-                period=120
-            )
-
             # 2. 실시간 OBV z-score 증분 계산
             realtime_obv_z = cls.calculate_realtime_obv_zscore(
                 yesterday_obv=cached_indicators['obv'],
@@ -598,7 +591,6 @@ class TechnicalIndicators:
 
             # 6. cached_indicators에 실시간 지표 추가
             cached_indicators['realtime_ema20'] = realtime_ema20
-            cached_indicators['realtime_ema120'] = realtime_ema120
             cached_indicators['realtime_obv_z'] = realtime_obv_z
             cached_indicators['realtime_atr'] = realtime_atr
             cached_indicators['realtime_adx'] = realtime_adx
