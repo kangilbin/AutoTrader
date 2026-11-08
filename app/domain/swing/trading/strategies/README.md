@@ -61,16 +61,17 @@ SIGNAL 0 (대기)
   │ 1차 매수
   ▼
 SIGNAL 1 (1차 매수 완료) ← PEAK_PRICE = 매수가 초기화
-  │ 매일 15:35 EOD: PEAK_PRICE = max(PEAK_PRICE, 종가)
+  │ 장중 5분마다: PEAK_PRICE = max(PEAK_PRICE, 장중고가)
   ├─ [1차 방어선] 즉시 손절 ──────────────────────→ SIGNAL 0 (PEAK_PRICE = NULL)
   ├─ [2차 방어선] EOD 전량 매도 ──────────────────→ SIGNAL 0 (PEAK_PRICE = NULL)
   ├─ [2차 방어선] EOD 1차 분할 매도 ──→ SIGNAL 3 (PEAK_PRICE 유지)
-  │                                          │ 매일 15:35 EOD: PEAK_PRICE = max(PEAK_PRICE, 종가)
+  │                                          │ 장중 5분마다: PEAK_PRICE = max(PEAK_PRICE, 장중고가)
+  │                                          ├─ [1차 방어선] 즉시 손절 ──→ SIGNAL 0 (PEAK_PRICE = NULL)
   │                                          ├─ 재진입 매수 ──→ SIGNAL 1 (PEAK_PRICE = 현재가)
   │                                          └─ EOD 2차 전량 매도 ──→ SIGNAL 0 (PEAK_PRICE = NULL)
   │
   └─ 2차 매수 조건 충족 ──→ SIGNAL 2 (PEAK_PRICE 유지)
-                                │ 매일 15:35 EOD: PEAK_PRICE = max(PEAK_PRICE, 종가)
+                                │ 장중 5분마다: PEAK_PRICE = max(PEAK_PRICE, 장중고가)
                                 ├─ [1차 방어선] 즉시 손절 ──→ SIGNAL 0 (PEAK_PRICE = NULL)
                                 ├─ [2차 방어선] EOD 1차 분할 매도 ──→ SIGNAL 3
                                 └─ [2차 방어선] EOD 전량 매도 ──→ SIGNAL 0 (PEAK_PRICE = NULL)
@@ -88,7 +89,7 @@ SIGNAL 1 (1차 매수 완료) ← PEAK_PRICE = 매수가 초기화
 
 1. **EMA 근접**: 현재가 ≥ 실시간 EMA20 × 0.995 (EMA 0.5% 이내)
 2. **수급 강도**: OBV z-score > 0 AND 전전일 대비 상승
-3. **급등 필터**: 전일 대비 변동률 ≤ 5% (당일 급등 추격매수 방지)
+3. **급등 필터**: 전일 대비 변동률 ≤ 5% + 당일 장중 변동률(절대값) ≤ 5%
 4. **추세 강화**: +DI > -DI AND ADX 상승 중 (전일 대비)
 5. **EMA 상승**: EMA20 > 전전일 EMA20 (하락장 진입 방지)
 6. **전일 양봉**: 전일 종가 > 전전일 종가
@@ -120,8 +121,9 @@ SIGNAL 1 (1차 매수 완료) ← PEAK_PRICE = 매수가 초기화
 #### [1차 방어선] 장중 즉시 매도 (5분마다 체크)
 
 - **EMA-ATR 동적 손절**: 현재가 ≤ 실시간 EMA20 - ATR×1.0 시 즉시 전량 매도
-- SIGNAL 상태(1 또는 2) 무관하게 항상 최우선 적용
+- SIGNAL 상태(1, 2, 3) 무관하게 항상 최우선 적용
 - 즉시 SIGNAL 0으로 복귀
+- ATR=0인 경우 손절 체크 스킵 (HOLD)
 
 #### [2차 방어선] EOD 조건부 trailing stop (장 마감 후 종가 기준)
 
@@ -139,12 +141,18 @@ SIGNAL 1 (1차 매수 완료) ← PEAK_PRICE = 매수가 초기화
 > 추세 약화와 수급 약화는 각각 독립적인 위험 신호이므로, 하나만 발생해도 하락률 평가를 진행합니다.
 
 **1차 분할 매도 (SIGNAL 1/2 → SIGNAL 3)**
-- 전제 조건 충족 + 고점(PEAK_PRICE) 대비 **5% 이상** 하락 시
+- 전제 조건 충족 + 고점(PEAK_PRICE) 대비 **ATR×2.0 이상** 하락 시 (최소 3%)
 - `sell_ratio%` 분할 매도, 잔량 보유 후 SIGNAL 3으로 전환
 
 **2차 전량 매도 (SIGNAL 3 → SIGNAL 0)**
-- 전제 조건 충족 + 고점(PEAK_PRICE) 대비 **8% 이상** 하락 시
+- 전제 조건 충족 + 고점(PEAK_PRICE) 대비 **ATR×3.0 이상** 하락 시 (최소 5%)
 - 잔량 전량 매도 후 SIGNAL 0으로 복귀
+
+**ATR 기반 동적 임계값 계산:**
+- `atr_pct = (ATR / PEAK_PRICE) × 100`
+- 1차 기준 = `max(atr_pct × 2.0, 3.0%)`
+- 2차 기준 = `max(atr_pct × 3.0, 5.0%)`
+- ATR 무효 시 폴백: 1차 5.0%, 2차 8.0%
 
 ---
 
@@ -203,8 +211,12 @@ SIGNAL 1 (1차 매수 완료) ← PEAK_PRICE = 매수가 초기화
 | MAX_SURGE_RATIO | 0.05 | 전일 대비 최대 급등률 (5%) |
 | CONSECUTIVE_REQUIRED | 2 | 연속 확인 횟수 (10분) |
 | ATR_MULTIPLIER | 1.0 | 즉시 손절 ATR 배수 |
-| TRAILING_STOP_PARTIAL | 5.0 | 고점 대비 -5% → 1차 분할 매도 |
-| TRAILING_STOP_FULL | 8.0 | 고점 대비 -8% → 2차 전량 매도 |
+| TRAILING_STOP_ATR_PARTIAL_MULT | 2.0 | 1차 분할 매도 ATR 배수 |
+| TRAILING_STOP_ATR_FULL_MULT | 3.0 | 2차 전량 매도 ATR 배수 |
+| TRAILING_STOP_PARTIAL_MIN | 3.0 | 1차 분할 매도 최소 하한 (%) |
+| TRAILING_STOP_FULL_MIN | 5.0 | 2차 전량 매도 최소 하한 (%) |
+| TRAILING_STOP_PARTIAL | 5.0 | 1차 폴백 (ATR 무효 시) |
+| TRAILING_STOP_FULL | 8.0 | 2차 폴백 (ATR 무효 시) |
 | SECOND_BUY_TIME_MIN | 1200 | 2차 매수 최소 대기 시간 (초, 20분) |
 | TREND_BUY_ATR_LOWER | 0.3 | 시나리오 A 하한 배수 |
 | TREND_BUY_ATR_UPPER | 2.0 | 시나리오 A 상한 배수 |
@@ -228,14 +240,15 @@ SIGNAL 1 (1차 매수 완료) ← PEAK_PRICE = 매수가 초기화
 | **1차 매수 추세** | +DI > -DI AND ADX 상승 중 | 동일 |
 | **1차 매수 EMA 상승** | EMA20 > 전전일 EMA20 | 동일 |
 | **1차 매수 전일 양봉** | 전일 종가 > 전전일 종가 | 동일 |
-| **1차 매수 급등 필터** | 전일 대비 ≤ 5% | 동일 |
+| **1차 매수 급등 필터** | 전일 대비 ≤ 5% + 당일 abs ≤ 5% | 동일 |
 | **연속 확인** | 2회 (Redis, ~10분) | 1회 |
 | **2차 매수** | 동일 (시나리오 A/B, 20분 경과) | 동일 (시나리오 A/B) |
 | **즉시 손절** | 실시간 현재가 기준 | 일일 저가 기준 |
 | **EOD 매도 로직** | trailing stop (DI격차+OBV+고점하락률) | 동일 |
+| **PEAK_PRICE 갱신** | 장중 5분마다 고가(stck_hgpr) 기준 | 일일 고가(STCK_HGPR) 기준 |
 | **EOD 신호 저장** | DB (EOD_SIGNALS + PEAK_PRICE 컬럼) | 인메모리 (peak_price 변수) |
-| **1차 분할 매도** | 고점 대비 -5% (SIGNAL 1/2 → 3) | 동일 (BUY_COMPLETE → SELL_PRIMARY) |
-| **2차 전량 매도** | 고점 대비 -8% (SIGNAL 3 → 0) | 동일 (SELL_PRIMARY → None) |
+| **1차 분할 매도** | 고점 대비 ATR×2.0 (최소 3%) | 동일 (BUY_COMPLETE → SELL_PRIMARY) |
+| **2차 전량 매도** | 고점 대비 ATR×3.0 (최소 5%) | 동일 (SELL_PRIMARY → None) |
 | **1차 매도 후 재진입** | SIGNAL 3에서 재진입 매수 가능 | SELL_PRIMARY에서 재진입 매수 가능 |
 | **포지션 상태** | SIGNAL 0→1→2→3→0 | None→BUY_COMPLETE→SELL_PRIMARY→None |
 | **주요 목적** | 장중 실시간 매매 | 과거 데이터 성능 검증 |
