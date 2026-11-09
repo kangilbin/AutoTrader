@@ -89,7 +89,10 @@ class TradingStrategy(ABC):
         frgn_ntby_qty: int,
         acml_vol: int,
         cached_indicators: Dict,
-        signal: int = 1
+        signal: int = 1,
+        peak_price: float = 0,
+        mrkt_code: str = "",
+        final_batch: bool = False,
     ) -> Dict:
         """
         손절 신호 체크 (하위 클래스에서 구현 필수)
@@ -104,6 +107,9 @@ class TradingStrategy(ABC):
             acml_vol: 누적거래량
             cached_indicators: 실시간 증분 계산된 지표 (필수)
             signal: 현재 SIGNAL 상태 (1: 익절 전, 2: 익절 후 본전 방어)
+            peak_price: 보유 중 고점
+            mrkt_code: 시장 코드 — 넘기면 종가 확인 모드(close_confirm)로 판정한다 (없으면 터치 즉시 매도)
+            final_batch: 지금이 그 시장의 마지막 배치인가 (종가 확인 모드에서만 쓰임)
 
         Returns:
             매도 신호 정보 (action: "SELL" or "HOLD")

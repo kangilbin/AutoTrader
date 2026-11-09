@@ -24,6 +24,7 @@ from unittest.mock import patch
 
 from app.domain.swing.entity import SwingTrade
 from app.domain.swing.trading import auto_swing_batch as batch
+from app.domain.swing.trading import close_confirm
 from app.domain.swing.trading import order_executor as oe
 from app.domain.swing.trading.strategies.single_ema_strategy import SingleEMAStrategy
 
@@ -251,6 +252,12 @@ class SwingScenarioBase(unittest.IsolatedAsyncioTestCase):
         sleep_patch = patch.object(oe.asyncio, "sleep", new=_no_sleep)
         sleep_patch.start()
         self.addCleanup(sleep_patch.stop)
+
+        # 이 기반 클래스의 테스트는 매도·매수 주문 흐름(체결·취소·거부 대조 등)을 검증하고, 청산선 터치는 그 흐름의 방아쇠일 뿐이다.
+        # 종가 확인 모드(마지막 배치 확인·안전망·재진입 보류)는 tests/test_close_confirm.py 가 따로 검증한다.
+        cc_patch = patch.object(close_confirm, "enabled", return_value=False)
+        cc_patch.start()
+        self.addCleanup(cc_patch.stop)
 
     async def asyncTearDown(self):
         import app.domain.trade_history as th

@@ -9,7 +9,7 @@ from datetime import datetime
 from app.domain.swing.indicators import TechnicalIndicators
 from .base_trading_strategy import TradingStrategy
 from .base_single_ema import BaseSingleEMAStrategy
-from app.domain.swing.indicators import TechnicalIndicators
+from .. import close_confirm
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +38,9 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
             f"청산선 하나로 관리. 시작 = max(진입가 − ATR×{cls.ATR_MULTIPLIER:g}, 진입가 −{cls.MAX_STOP_LOSS_PCT:g}%)",
             f"고점 이익 +{cls.BREAKEVEN_ACTIVATE_PCT:g}% → 본전, +{cls.TRAILING_ACTIVATE_PCT:g}% → "
             f"고점 − ATR×{cls.TRAILING_STOP_ATR_MULT:g} 로 상향 (내려가지 않음)",
-            "청산선 이탈 시 전량 매도",
+            (f"청산선 이탈이 장 마감 직전 배치에서 확인되면 다음 거래일 배치에 전량 매도 "
+             f"(장중에는 청산선 − ATR×{close_confirm.SAFETY_NET_ATR:g} 이하의 큰 폭락만 즉시 매도)"
+             if close_confirm.enabled() else "청산선 이탈 시 전량 매도"),
         ]
         if cls.PARTIAL_TAKE_PROFIT_PCT > 0:  # 0 이하면 check_partial_take_profit 비활성
             exits.append(f"+{cls.PARTIAL_TAKE_PROFIT_PCT:g}% 도달 시 절반 부분익절 (1회)")
@@ -51,6 +53,8 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
                 f"OBV가 자기 {cls.ACCUM_EMA_PERIOD}일 EMA보다 20일 평균거래량의 {cls.ACCUM_HIGH:g}배 초과로 위 (수급 축적)",
                 f"위 조건이 {cls.TRADE_CYCLE_MINUTES}분 간격으로 {cls.CONSECUTIVE_REQUIRED}회 연속 충족 "
                 f"(약 {cls.TRADE_CYCLE_MINUTES * cls.CONSECUTIVE_REQUIRED}분)",
+                *([f"직전 청산 후 {close_confirm.REENTRY_WINDOW_DAYS}일 이내의 재매수는 장 마감 직전 배치에서만"]
+                  if close_confirm.enabled() else []),
             ],
             "매수차단": [
                 f"당일 등락률 ±{cls.MAX_SURGE_RATIO * 100:g}% 초과",
@@ -434,11 +438,17 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
         cached_indicators: Dict,
         signal: int = 1,
         peak_price: float = 0,
+        mrkt_code: str = "",
+        final_batch: bool = False,
     ) -> Dict:
         """청산 판정 — 단일 청산선(3단계)
 
         손절/1차 익절/2차 익절을 하나의 청산선으로 통합했다.
         청산선은 이익이 쌓일수록 올라가므로, 이탈 시점의 가격이 곧 확정 손익이다.
+
+        mrkt_code 를 넘기고 종가 확인 모드(close_confirm.enabled)가 켜져 있으면 청산선 터치만으로는 팔지 않는다:
+        마지막 배치(final_batch)에서 이탈이 확인되면 다음 거래일 배치에 팔고, 장중에는 안전망(큰 폭락)만 즉시 판다.
+        mrkt_code 가 없으면 예전 동작(터치 즉시 매도)이다.
 
         Returns:
             {"action": "SELL"|"HOLD", "reasons": [...]}
@@ -455,6 +465,12 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
             return {"action": "HOLD", "reasons": []}
 
         if atr <= 0:
+            # 이미 확정돼 예약된 매도는 지표가 비어도 실행한다 — 청산선을 못 구해도 어제 내린 결정은 유효하다
+            if mrkt_code and close_confirm.enabled():
+                pending_date = await close_confirm.get_pending(redis_client, position_id)
+                if pending_date is not None and pending_date < close_confirm.trading_date(mrkt_code):
+                    logger.warning(f"[{symbol}] ATR 없음이지만 예약된 매도를 실행한다 (예약일 {pending_date})")
+                    return {"action": "SELL", "reasons": ["손절", close_confirm.REASON_NEXT_DAY]}
             logger.warning(f"[{symbol}] ATR이 0 이하, 청산 체크 스킵")
             return {"action": "HOLD", "reasons": []}
 
@@ -462,15 +478,22 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
         peak = max(peak_price or 0, entry, curr_price)
         exit_line = cls.calculate_exit_line(entry, peak, atr)
 
+        gain_pct = (curr_price - entry) / entry * 100
+        peak_gain = (peak - entry) / entry * 100
+        if peak_gain >= cls.TRAILING_ACTIVATE_PCT:
+            stage = "이익확정"
+        elif peak_gain >= cls.BREAKEVEN_ACTIVATE_PCT:
+            stage = "본전방어"
+        else:
+            stage = "손절"
+
+        if mrkt_code and close_confirm.enabled():
+            return await cls._close_confirm_exit(
+                redis_client, position_id, symbol, curr_price, exit_line, atr,
+                stage, gain_pct, mrkt_code, final_batch,
+            )
+
         if curr_price <= exit_line:
-            gain_pct = (curr_price - entry) / entry * 100
-            peak_gain = (peak - entry) / entry * 100
-            if peak_gain >= cls.TRAILING_ACTIVATE_PCT:
-                stage = "이익확정"
-            elif peak_gain >= cls.BREAKEVEN_ACTIVATE_PCT:
-                stage = "본전방어"
-            else:
-                stage = "손절"
             logger.warning(
                 f"[{symbol}] 🚨 청산({stage}): 현재가 {curr_price:,.2f} ≤ 청산선 {exit_line:,.2f} "
                 f"(평단 {entry:,.2f}, 고점 {peak:,.2f}, 손익 {gain_pct:+.1f}%)"
@@ -480,6 +503,39 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
                 "reasons": [stage, f"청산선 {exit_line:,.2f}", f"손익 {gain_pct:+.1f}%"],
             }
 
+        return {"action": "HOLD", "reasons": []}
+
+    @classmethod
+    async def _close_confirm_exit(
+        cls, redis_client, position_id: int, symbol: str, curr_price: float, exit_line: float, atr: float,
+        stage: str, gain_pct: float, mrkt_code: str, final_batch: bool,
+    ) -> Dict:
+        """종가 확인 청산 — 매도 예약 상태(Redis, 확인한 날짜)를 읽고 판정 결과대로 갱신한다"""
+        today = close_confirm.trading_date(mrkt_code)
+        pending_date = await close_confirm.get_pending(redis_client, position_id)
+
+        decision = close_confirm.decide_exit(
+            curr_price, exit_line, atr, final_batch=final_batch, pending_date=pending_date, today=today,
+        )
+
+        if decision.pending is True:
+            await close_confirm.set_pending(redis_client, position_id, today)
+            logger.warning(
+                f"[{symbol}] 마지막 배치에서 청산선 이탈 확인 ({curr_price:,.2f} ≤ {exit_line:,.2f}) → 다음 거래일 배치에 매도 예약"
+            )
+        elif decision.pending is False and pending_date is not None:
+            await close_confirm.clear_pending(redis_client, position_id)
+            logger.info(f"[{symbol}] 마지막 배치에서 청산선 위로 회복 ({curr_price:,.2f} > {exit_line:,.2f}) → 매도 예약 해제")
+
+        if decision.action == close_confirm.SELL:
+            logger.warning(
+                f"[{symbol}] 🚨 청산({stage}, {decision.reason}): 현재가 {curr_price:,.2f} · 청산선 {exit_line:,.2f} "
+                f"(손익 {gain_pct:+.1f}%)"
+            )
+            return {
+                "action": "SELL",
+                "reasons": [stage, f"청산선 {exit_line:,.2f}", f"손익 {gain_pct:+.1f}%", decision.reason],
+            }
         return {"action": "HOLD", "reasons": []}
 
     @classmethod

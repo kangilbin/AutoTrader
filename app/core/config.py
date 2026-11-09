@@ -59,6 +59,12 @@ class Settings(BaseSettings):
     # 프리마켓/휴장 시세는 거래량이 없어 지표가 왜곡되므로 운영에서는 반드시 False
     ALLOW_OFFHOURS_TRADING: bool = False
 
+    # 종가 확인 매매 (2026-11-10) — 손절은 마지막 배치(종가 근처 마지막 두 번 실행)에서 확인해 다음 거래일 매도하고(장중엔 큰 폭락 안전망만),
+    # 재진입(직전 청산 후 30일 이내)은 마지막 배치 구간에서만 매수한다. 근거·한계는 trading/close_confirm.py 참고.
+    # 문제가 생기면 false 로 두면 예전 동작(청산선 터치 즉시 매도, 재진입도 실시간)으로 돌아간다.
+    # ALLOW_OFFHOURS_TRADING=true(정규장 밖 모의 테스트)에서는 마지막 배치가 없으므로 자동으로 꺼진다.
+    CLOSE_CONFIRM_ENABLED: bool = True
+
     # 해외 매매 배치 실행 주기 (ET 기준 cron). 기본값이 운영값이며,
     # 테스트로 더 자주/넓게 돌리려면 .env에서 덮어쓴다 (예: "*/1", "1-23")
     US_TRADE_CRON_MINUTE: str = "*/5"

@@ -47,7 +47,7 @@ from .pool_allocator import (
     BuyOutcome, EntryCandidate, run_pool_entries,
 )
 from .pool_state import fetch_account_snapshot, load_positions
-from . import parking
+from . import close_confirm, parking
 from .trading_strategy_factory import TradingStrategyFactory
 from .strategies.base_single_ema import BaseSingleEMAStrategy
 from app.common.redis import Redis
@@ -168,8 +168,9 @@ async def trade_job():
 
     pool_settings = await _load_pool_settings("KR")
     pool_candidates = defaultdict(list)
+    final_batch = close_confirm.is_final_batch("J")   # 잡 시작 시각으로 한 번만 판정 (처리가 길어져도 배치 안에서 바뀌지 않게)
     tasks = [
-        process_single_swing(swing_row, redis_client, pool_settings, pool_candidates)
+        process_single_swing(swing_row, redis_client, pool_settings, pool_candidates, final_batch=final_batch)
         for swing_row in swing_list
     ]
     results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -232,6 +233,7 @@ async def process_single_swing(
     redis_client,
     pool_settings=None,
     pool_candidates=None,
+    final_batch=False,
 ):
     """
     개별 스윙 매매 오케스트레이터 (세마포어로 동시 실행 제어)
@@ -244,6 +246,7 @@ async def process_single_swing(
         pool_settings: 풀 매수가 켜진 {(계좌, 시장): PoolSetting}. None/비면 모든 스윙이 기존 방식(배정금)이다
         pool_candidates: 풀별 매수 후보 목록 {(계좌, 시장): [EntryCandidate]}. 풀 대상 스윙은 매수 신호가
             확정돼도 여기에 후보만 넣고 주문하지 않는다 (사이클 끝에 풀 할당기가 한도를 보고 주문한다)
+        final_batch: 이번 배치가 그 시장의 마지막 배치(종가 확인 시각)인가 — close_confirm.is_final_batch 를 잡 시작에 한 번 판정한 값
     """
     async with _SEMAPHORE:
         db = await Database.get_session()
@@ -397,6 +400,7 @@ async def process_single_swing(
                     if new_signal == 0:
                         obv_z = cached_indicators.get('realtime_obv_z', 0) if cached_indicators else 0
                         swing.reset_cycle(obv_z=obv_z)
+                        await close_confirm.record_full_exit(redis_client, swing.SWING_ID, mrkt_code)
                     elif new_signal == 2 and swing.SIGNAL == 1:
                         # 부분 익절 지연 체결 확인 (PEAK 유지 — transition_to_partial 참고)
                         swing.transition_to_partial(hold_qty - pending_result.get("hold_qty", hold_qty))
@@ -511,6 +515,11 @@ async def process_single_swing(
             prev_signal = swing.SIGNAL
             prev_hold_qty = swing.HOLD_QTY or 0
 
+            # 포지션이 없는 상태(대기·쿨다운)에 매도 예약이 있을 이유는 없다 — 청산 경로가 기록에 실패했거나 한 번도 지우지 못한 낡은 예약이다.
+            # 새 포지션이 이것을 물려받아 첫 배치에 팔리지 않도록 보유 전에 정리한다 (포지션은 항상 대기 사이클을 거친다)
+            if not swing.has_position():
+                await close_confirm.discard_pending(redis_client, swing.SWING_ID)
+
             # === 4. SIGNAL별 오케스트레이션 ===
             outcome = None
             if swing.is_waiting():
@@ -524,14 +533,14 @@ async def process_single_swing(
                     current_price, frgn_ntby_qty, acml_vol,
                     prdy_vrss_vol_rate, prdy_ctrt,
                     cached_indicators, avg_daily_amount, mrkt_code,
-                    pool_bucket=pool_bucket,
+                    pool_bucket=pool_bucket, final_batch=final_batch,
                 )
 
             elif swing.has_position():
                 outcome = await _handle_position(
                     swing, strategy, redis_client, db, user_id, st_code,
                     current_price, frgn_ntby_qty, acml_vol,
-                    cached_indicators, mrkt_code
+                    cached_indicators, mrkt_code, final_batch=final_batch
                 )
 
             elif swing.is_cooling_down():
@@ -624,11 +633,29 @@ def _handle_cooling_down(swing, strategy, st_code: str, cached_indicators: dict)
             logger.debug(f"[{st_code}] 수급 재유입 대기 중 (OBV z={obv_z:.2f})")
 
 
+async def _defer_reentry(redis_client, swing, st_code: str, mrkt_code: str, final_batch: bool) -> bool:
+    """재진입 매수를 이번 배치에서는 미룰지 판정 — 직전 전량 청산 후 REENTRY_WINDOW_DAYS 일 이내이고 마지막 배치가 아니면 True
+
+    장중에 EMA20 위로 올라 재진입했다가 종가에서 깨지는 경우(SNOW 2026-10-28)를 줄이려고, 재진입만 종가 근처에서 확정한다.
+    첫 진입은 그대로 실시간이다. 마지막 청산일을 알 수 없으면(키 없음·만료) 첫 진입으로 본다.
+    """
+    if final_batch or not close_confirm.enabled():
+        return False
+    last_exit = await close_confirm.get_last_exit(redis_client, swing.SWING_ID)
+    if last_exit is None:
+        return False
+    days = (close_confirm.trading_date(mrkt_code) - last_exit).days
+    if days > close_confirm.REENTRY_WINDOW_DAYS:
+        return False
+    logger.info(f"[{st_code}] 재진입 신호 (직전 청산 {days}일 전) → 마지막 배치 구간에서 확정, 이번 배치는 보류")
+    return True
+
+
 async def _handle_waiting(
     swing, strategy, redis_client, db, user_id, st_code,
     current_price, frgn_ntby_qty, acml_vol,
     prdy_vrss_vol_rate, prdy_ctrt,
-    cached_indicators, avg_daily_amount, mrkt_code="", pool_bucket=None
+    cached_indicators, avg_daily_amount, mrkt_code="", pool_bucket=None, final_batch=False
 ):
     """대기 상태 → 매수 신호 확인 (리스크 기반 포지션 사이징)
 
@@ -648,6 +675,10 @@ async def _handle_waiting(
     )
 
     if not (entry_result and entry_result.get("action") == "BUY"):
+        return
+
+    # 재진입은 마지막 배치(종가 근처)에서만 산다 — 신호는 장중 내내 유지되면 그때 다시 충족된다
+    if await _defer_reentry(redis_client, swing, st_code, mrkt_code, final_batch):
         return
 
     if not user_id:
@@ -731,12 +762,13 @@ async def _handle_waiting(
     swing.deduct_amount(avg_price * qty)
     # 일부만 체결돼도 진입 완료 — 진입은 1회뿐이라 잔량을 다시 사지 않는다
     swing.transition_to_buy(avg_price, qty, float(current_price))
+    await close_confirm.discard_pending(redis_client, swing.SWING_ID)   # 새 포지션이 이전 사이클의 매도 예약을 물려받지 않게
 
 
 async def _handle_position(
     swing, strategy, redis_client, db, user_id, st_code,
     current_price, frgn_ntby_qty, acml_vol,
-    cached_indicators, mrkt_code=""
+    cached_indicators, mrkt_code="", final_batch=False
 ):
     """보유 상태 → 단일 청산선 판정 + (선택) 부분 익절
 
@@ -762,6 +794,8 @@ async def _handle_position(
         cached_indicators=cached_indicators,
         signal=swing.SIGNAL,
         peak_price=peak_price,
+        mrkt_code=mrkt_code,        # 종가 확인 모드: 청산선 터치는 마지막 배치에서 확인하고, 장중엔 안전망만 즉시 매도
+        final_batch=final_batch,
     )
 
     if exit_result and exit_result.get("action") == "SELL":
@@ -835,7 +869,7 @@ async def _execute_partial_sell(
     if not order_result.get("success"):
         logger.error(f"[{st_code}] 1차 익절 매도 실패: {order_result.get('reason')}")
         if order_result.get("reason") != "호가 조회 실패":  # 주문 자체가 안 나간 경우는 대조 불필요
-            return await _reconcile_after_sell_rejected(swing, db, user_id, st_code, mrkt_code)
+            return await _reconcile_after_sell_rejected(swing, redis_client, db, user_id, st_code, mrkt_code)
         return
 
     if order_result.get("unconfirmed"):
@@ -882,7 +916,7 @@ async def _execute_full_sell(
     if not order_result.get("success"):
         logger.error(f"[{st_code}] 매도 실패: {order_result.get('reason')}")
         if order_result.get("reason") != "호가 조회 실패":  # 주문 자체가 안 나간 경우는 대조 불필요
-            return await _reconcile_after_sell_rejected(swing, db, user_id, st_code, mrkt_code)
+            return await _reconcile_after_sell_rejected(swing, redis_client, db, user_id, st_code, mrkt_code)
         return
 
     if order_result.get("unconfirmed"):
@@ -897,6 +931,7 @@ async def _execute_full_sell(
     if order_result["completed"]:
         obv_z = cached_indicators.get('realtime_obv_z', 0) if cached_indicators else 0
         swing.reset_cycle(obv_z=obv_z)
+        await close_confirm.record_full_exit(redis_client, swing.SWING_ID, mrkt_code)
     else:
         # 잔량은 취소됐다 — 보유만 줄이고 SIGNAL 유지. 다음 사이클 청산 판정이 잔량을 다시 판다
         swing.update_hold_qty_partial(sold_qty)
@@ -942,7 +977,7 @@ async def _record_recovered_fills(swing, db, fills: list, side: str, max_qty: in
     return recovered_qty, recovered_amt
 
 
-async def _reconcile_after_sell_rejected(swing, db, user_id, st_code, mrkt_code) -> str | None:
+async def _reconcile_after_sell_rejected(swing, redis_client, db, user_id, st_code, mrkt_code) -> str | None:
     """매도 거부 시 실보유 대조 → 기록 누락 매도 복구
 
     DB 가 실보유보다 많은 수량을 들고 있으면 매도가 매 사이클 거부되고(자가 회복 불가)
@@ -974,6 +1009,7 @@ async def _reconcile_after_sell_rejected(swing, db, user_id, st_code, mrkt_code)
         swing.add_amount(recovered_amt)
     if fully_sold:
         swing.reset_cycle()
+        await close_confirm.record_full_exit(redis_client, swing.SWING_ID, mrkt_code)
     else:
         swing.update_hold_qty_partial(missing_qty)
 
@@ -1129,6 +1165,7 @@ async def _pool_buy(c: EntryCandidate, qty: int, redis_client, equity: float = N
         swing.deduct_amount(avg_price * filled_qty)
         # 일부만 체결돼도 진입 완료 — 진입은 1회뿐이라 잔량을 다시 사지 않는다
         swing.transition_to_buy(avg_price, filled_qty, c.price)
+        await close_confirm.discard_pending(redis_client, swing.SWING_ID)
         await db.flush()
         await db.commit()
         _fire_trade_notification(c.user_id, swing, prev_signal, c.st_code,
@@ -1523,7 +1560,11 @@ async def us_trade_job():
 
     pool_settings = await _load_pool_settings("US")
     pool_candidates = defaultdict(list)
-    tasks = [process_single_swing(swing_row, redis_client, pool_settings, pool_candidates) for swing_row in swing_list]
+    final_batch = close_confirm.is_final_batch("NAS")   # 잡 시작 시각으로 한 번만 판정
+    tasks = [
+        process_single_swing(swing_row, redis_client, pool_settings, pool_candidates, final_batch=final_batch)
+        for swing_row in swing_list
+    ]
     results = await asyncio.gather(*tasks, return_exceptions=True)
     await _run_pool_entries("US BATCH", pool_settings, pool_candidates, redis_client)
 
