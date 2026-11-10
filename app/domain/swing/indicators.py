@@ -159,9 +159,9 @@ class TechnicalIndicators:
         # 3. 최근 7일 diff (6일 + 오늘)
         recent_7_diffs = recent_6_diffs + [today_diff]
 
-        # 4. 롤링 평균 및 표준편차
+        # 4. 롤링 평균 및 표준편차 (ddof=1: 배치 calculate_obv_zscore와 동일한 표본 표준편차)
         mean = np.mean(recent_7_diffs)
-        std = np.std(recent_7_diffs)
+        std = np.std(recent_7_diffs, ddof=1)
 
         # 5. 0으로 나누는 것 방지
         epsilon = 1e-9

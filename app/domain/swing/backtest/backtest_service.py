@@ -106,7 +106,7 @@ async def run_backtest(db: AsyncSession, swing_data: SwingCreateRequest) -> dict
     one_year_df = prices_df.loc[one_year_mask].copy()
     one_year_df["STCK_BSOP_DATE"] = one_year_df["STCK_BSOP_DATE"].dt.strftime("%Y%m%d")
 
-    price_history = one_year_df[["STCK_BSOP_DATE", "STCK_OPRC", "STCK_HGPR", "STCK_LWPR", "STCK_CLPR"]].to_dict(orient="records")
+    price_history = one_year_df[["STCK_BSOP_DATE", "STCK_OPRC", "STCK_HGPR", "STCK_LWPR", "STCK_CLPR", "ACML_VOL"]].to_dict(orient="records")
     ema20_history = one_year_df[["STCK_BSOP_DATE", "ema20"]].assign(
         ema20=one_year_df["ema20"].round(2).where(one_year_df["ema20"].notna(), None)
     ).to_dict(orient="records")
