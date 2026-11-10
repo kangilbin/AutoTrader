@@ -44,13 +44,13 @@ class BaseSingleEMAStrategy:
     ACCUM_HIGH = 1.0                 # 매수 통과 기준 (백테스트 튜닝 대상)
 
     # 포지션 사이징 (Conviction Score 기반)
-    # Qty = int(CUR_AMOUNT × MAX_ENTRY_PCT × conviction / 현재가)
-    MAX_ENTRY_PCT = 0.8              # 최대 투입 비율 (배정금의 80%)
+    # 백테스트 사이징: Qty = int(자본 × MAX_ENTRY_PCT × conviction / 현재가) — 실전 매수는 풀 리스크 사이징(pool_allocator)
+    MAX_ENTRY_PCT = 0.8              # 최대 투입 비율 (백테스트 자본의 80%)
     MIN_CONVICTION = 0.4             # 최소 확신도 (0.4 = 32% 투입)
 
-    # 전량 매수 모드 (FULL_ENTRY_YN='Y') — conviction 무시, 배정금 거의 전부 투입
+    # 백테스트 전량 매수 모드 (요청 FULL_ENTRY_YN='Y') — conviction 무시, 자본 거의 전부 투입
     # 100%가 아닌 이유: 수량은 현재가로 산정하지만 주문은 호가(해외)·시장가(국내)로 나가
-    # 더 높은 가격에 체결될 수 있다. 버퍼가 없으면 CUR_AMOUNT가 음수가 되거나 같은 계좌 다른 스윙의 예수금을 침범한다.
+    # 더 높은 가격에 체결될 수 있다. 버퍼가 없으면 자본이 음수가 된다.
     FULL_ENTRY_PCT = 0.99
 
     # 유동성 필터 — 매수 금액이 20일 일평균 거래대금의 이 비율을 넘으면 진입하지 않는다.

@@ -113,7 +113,7 @@ class CreateSwingGuardTest(unittest.IsolatedAsyncioTestCase):
 class AutoRegistrationTest(unittest.IsolatedAsyncioTestCase):
     async def test_parked_etf_holding_is_not_auto_registered(self):
         """파킹 ETF 를 보유해도 목록 조회가 스윙으로 자동 등록하지 않는다 (가짜 저장소에는 save 가 없어 등록 시도 시 실패)"""
-        env = Env(swings=[row(1, "005930", 0, 0)],
+        env = Env(swings=[row(1, "005930")],
                   holdings=[holding("459580", 80, 86_000_000, 1_000, 0.1, 85_999_000)],
                   pool_setting=PoolSetting.create(ACCOUNT, "KR", use_yn="Y"))
         result = await env.run()

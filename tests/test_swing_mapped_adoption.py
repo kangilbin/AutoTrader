@@ -33,7 +33,6 @@ def _make_swing(**over) -> SwingTrade:
     defaults = dict(
         SWING_ID=1, ACCOUNT_NO="12345678-01", MRKT_CODE="J", ST_CODE="005930",
         SWING_TYPE="S", USE_YN="N", SIGNAL=0,
-        INIT_AMOUNT=Decimal(7_000_000), CUR_AMOUNT=Decimal(0),
         ENTRY_PRICE=Decimal(70_000), HOLD_QTY=100,
     )
     defaults.update(over)
@@ -94,12 +93,11 @@ class BatchOrphanPositionTest(SwingScenarioBase):
         self.notifications = []
         batch._fire_trade_notification = lambda *a, **k: self.notifications.append(a)
 
-    def _make_orphan(self, cur_amount=0, entry_price=90.0):
-        """매핑 등록분 재현: 보유 수량은 있으나 SIGNAL=0, 배정금 0"""
+    def _make_orphan(self, entry_price=90.0):
+        """매핑 등록분 재현: 보유 수량은 있으나 SIGNAL=0"""
         self.swing.SIGNAL = 0
         self.swing.HOLD_QTY = 100
         self.swing.ENTRY_PRICE = Decimal(str(entry_price)) if entry_price else None
-        self.swing.CUR_AMOUNT = Decimal(str(cur_amount))
 
     async def test_orphan_is_adopted_not_bought(self):
         self._make_orphan()
@@ -111,14 +109,6 @@ class BatchOrphanPositionTest(SwingScenarioBase):
         self.assertEqual(Market.buys(), [], "편입 대상에 신규 매수가 나갔습니다")
         self.assertEqual(FakeTradeService.of("B"), [], "체결 없이 매수 이력이 저장됨")
 
-    async def test_no_buy_even_when_capital_allocated(self):
-        """증상 B 재현 방지: INIT_AMOUNT 증액으로 CUR_AMOUNT>0이어도 신규 매수 금지"""
-        self._make_orphan(cur_amount=3_000_000)
-        await self.run_cycles(SingleEMAStrategy.CONSECUTIVE_REQUIRED)
-
-        self.assertEqual(Market.buys(), [], "기존 포지션을 덮어쓰는 매수가 실행됨")
-        self.assertEqual(self.swing.HOLD_QTY, 100, "보유 수량이 신규 체결 수량으로 덮어써짐")
-
     async def test_adoption_does_not_fire_buy_notification(self):
         """편입은 체결이 아니므로 '매수 완료' 푸시가 나가면 안 된다"""
         self._make_orphan()
@@ -129,7 +119,7 @@ class BatchOrphanPositionTest(SwingScenarioBase):
 
     async def test_skipped_when_entry_price_missing(self):
         """평단을 얻을 수 없으면 손절/익절 기준을 세울 수 없다 → 상태 변경 없이 스킵"""
-        self._make_orphan(cur_amount=3_000_000, entry_price=None)
+        self._make_orphan(entry_price=None)
         await self.run_cycles(1)
 
         self.assertEqual(self.swing.SIGNAL, 0)
@@ -374,12 +364,11 @@ class ActivateAdoptionTest(unittest.IsolatedAsyncioTestCase):
         self.swing.ENTRY_PRICE = None
 
         result = await self.service.update_swing(
-            1, {"USE_YN": "Y", "INIT_AMOUNT": 9_000_000}, user_id="tester"
+            1, {"USE_YN": "Y"}, user_id="tester"
         )
 
         self.assertTrue(self.db.refreshed, "응답 전 refresh가 호출되지 않았습니다")
         self.assertEqual(result["USE_YN"], "Y", "활성화 응답이 변경 전 값을 반환함")
-        self.assertEqual(int(result["INIT_AMOUNT"]), 9_000_000)
         self.assertEqual(result["DATA_STATUS"], "READY")
 
 

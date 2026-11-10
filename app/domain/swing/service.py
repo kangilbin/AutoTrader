@@ -73,50 +73,6 @@ class SwingService:
         self.db = db
         self.repo = SwingRepository(db)
 
-    async def get_available_capital(
-        self, user_id: str, account_no: str, mrkt_code: str, exclude_swing_id: int = None
-    ) -> dict:
-        """가용 자본 조회"""
-        overseas = is_overseas(mrkt_code)
-
-        def _to_amount(value: Decimal):
-            """출력용 금액 (KRW=int, USD=float 2자리 — mapping_swing과 동일 규칙)"""
-            return round(float(value), 2) if overseas else int(value)
-
-        def _to_decimal(value) -> Decimal:
-            try:
-                return Decimal(str(value or 0))
-            except (TypeError, ValueError, InvalidOperation):
-                return Decimal(0)
-
-        if overseas:
-            # 체결기준현재잔고 — 국내(dnca_tot_amt)와 같은 예수금 기준으로 외화예수금(dnca_amt) 사용
-            margin = await foreign_api.get_present_balance(user_id, self.db, account_no=account_no)
-            if margin is None:
-                # 모의 환율 미수신 등으로 예수금 산출 불가 → 한도 추적 불가
-                allocated = await self.repo.get_total_init_amount(account_no, overseas, exclude_swing_id)
-                return {
-                    "total_capital": None,
-                    "allocated": _to_amount(allocated),
-                    "available_capital": None,
-                    "capital_tracking": False,
-                }
-            cash = _to_decimal(margin.get("dnca_amt"))
-        else:
-            balance_data = await get_stock_balance(user_id, self.db, account_no=account_no)
-            output2 = balance_data["output2"]
-            cash = _to_decimal(output2.get("dnca_tot_amt"))
-
-        allocated = await self.repo.get_total_init_amount(account_no, overseas, exclude_swing_id)
-        available_capital = cash - allocated
-
-        return {
-            "total_capital": _to_amount(cash),
-            "allocated": _to_amount(allocated),
-            "available_capital": _to_amount(available_capital),
-            "capital_tracking": True,
-        }
-
     async def create_swing(self, user_id: str, request: SwingCreateRequest) -> dict:
         """스윙 전략 등록"""
         # 요청 본문의 ACCOUNT_NO 는 클라이언트가 정하는 값이라 이 사용자의 계좌인지 서버가 확인해야 한다
@@ -135,9 +91,7 @@ class SwingService:
                 account_no=request.ACCOUNT_NO,
                 mrkt_code=request.MRKT_CODE,
                 st_code=request.ST_CODE,
-                init_amount=Decimal(request.INIT_AMOUNT),
                 swing_type=request.SWING_TYPE,
-                full_entry_yn=request.FULL_ENTRY_YN,
             )
 
             db_swing = await self.repo.save(swing)
@@ -435,7 +389,7 @@ class SwingService:
                 # 파킹 ETF 보유는 스윙이 아니다 — 자동 등록하면 목록에 섞이고 활성화 시 해제와 충돌한다
                 if is_park_etf("US" if overseas else "KR", st_code):
                     continue
-                # 새 스윙 등록 — 매입금액을 초기 투자금으로 설정
+                # 새 스윙 등록 — 배정금은 없다 (매수는 총자산 기준 풀 방식). 이미 보유 중인 포지션이라 편입 대상이 된다
                 # 해외: 요청값(mrkt_code='US' 그룹)이 아니라 종목의 실제 거래소(ovrs_excg_cd)를
                 #       정식코드(NYS/NAS/AMS)로 역매핑해 저장
                 if overseas:
@@ -448,10 +402,8 @@ class SwingService:
                             account_no=account_no,
                             mrkt_code=item_mrkt_code,
                             st_code=st_code,
-                            init_amount=_to_decimal(buy_item.get("pchs_amt", 0)),
                             swing_type='S'
                         )
-                        swing.CUR_AMOUNT = Decimal(0)  # 이미 매수 완료 상태
                         swing.ENTRY_PRICE = _to_decimal(buy_item.get("pchs_avg_pric", 0))
                         swing.HOLD_QTY = int(float(buy_item.get("hldg_qty", 0) or 0))
                         swing.USE_YN = 'N'
@@ -468,9 +420,9 @@ class SwingService:
                 # 재조회로 신규 행도 기존 행과 같은 형태(ST_NM 조인 등)로 맞춘다
                 swing_list = await self.repo.find_all_by_account_no(account_no, mrkt_code)
 
-            # 풀 모드 — 풀이 켜진 계좌·시장의 INIT_AMOUNT=0 스윙은 배정금이 없다. 매도 후 행이 0 으로 표시되면
-            # 손절 손실이 요약에서 사라지므로, 확정 손익(TRADE_HISTORY)을 읽어 총자산 기준으로 보여준다.
-            # 풀 설정이 없거나 꺼져 있으면(또는 조회가 실패하면) 아래 기존 계산 그대로다.
+            # 풀 모드 — 매도 후 행이 0 으로 표시되면 손절 손실이 요약에서 사라지므로,
+            # 확정 손익(TRADE_HISTORY)을 읽어 총자산 기준으로 보여준다.
+            # 풀 설정이 없거나 꺼져 있으면(또는 현금 미산출·조회 실패) 보유 행만 증권사 값으로 보여준다.
             total_eval_dec = _to_decimal(output2.get("tot_evlu_amt", 0))
             pool_active = False
             pool_setting = None
@@ -492,14 +444,12 @@ class SwingService:
                 return round(float(value / total_eval_dec * 100), 2) if total_eval_dec else 0.0
 
             # 2. 스윙 리스트 기준 머지 — 스윙 1행 = 결과 1건
-            #    요약의 배정금·종합 수익은 행 값의 합이다 (목록 손익 합 = 상단 종합 수익)
+            #    요약의 원금·종합 수익은 행 값의 합이다 (목록 손익 합 = 상단 종합 수익)
             results = []
             principal_sum = Decimal(0)
             profit_sum = Decimal(0)
             for swing in swing_list:
                 buy_item = buy_dict.get(swing["ST_CODE"])
-                # 풀이 켜지면 배치가 그 계좌·시장의 모든 스윙을 풀 방식(총자산 기준)으로 매수하므로
-                # 배정금(INIT_AMOUNT)이 남아 있는 스윙도 같은 기준으로 보여준다 — 배정금은 더 쓰이지 않는다
                 pool_row = pool_active
                 realized = realized_by_swing.get(swing["SWING_ID"], Decimal(0)) if pool_row else Decimal(0)
                 if buy_item is None:
@@ -513,45 +463,27 @@ class SwingService:
                             "REALIZED_PFLS_AMT": _to_amount(realized),
                         })
                         continue
-                    # 보유 주식 없음 (evlu_amt = 0)
-                    if swing["INIT_AMOUNT"]:
-                        init_amount = swing["INIT_AMOUNT"]
-                        rate = float((swing["CUR_AMOUNT"] - init_amount) / init_amount * 100)
-                        pfls_amt = _to_amount(swing["CUR_AMOUNT"] - init_amount)
-                        principal_sum += init_amount
-                        profit_sum += swing["CUR_AMOUNT"] - init_amount  # 매도 완료분 — 손절이면 음수
-                    else:
-                        rate = 0.0
-                        pfls_amt = 0.0 if overseas else 0
+                    # 보유 주식 없음 (evlu_amt = 0) — 풀 방식 표시를 못 쓰는 경우(현금 미산출 등)라 손익을 말하지 않는다
                     results.append({
                         **swing,
-                        "EVLU_PFLS_RT": rate,
-                        "EVLU_PFLS_AMT": pfls_amt,
+                        "EVLU_PFLS_RT": 0.0,
+                        "EVLU_PFLS_AMT": 0.0 if overseas else 0,
                     })
                     continue
 
                 # 보유 주식 있음 — 증권사 값 merge
                 evlu_amt_dec = _to_decimal(buy_item.get("evlu_amt", 0))
-                if swing["INIT_AMOUNT"] and not pool_row:
-                    # INIT_AMOUNT > 0: 자체 계산 (서비스에서 등록/매매한 종목) — 풀이 켜진 계좌는 아래 풀 행 방식
-                    init_amount = swing["INIT_AMOUNT"]
-                    total_asset = swing["CUR_AMOUNT"] + evlu_amt_dec
-                    rate = float((total_asset - init_amount) / init_amount * 100) if init_amount else 0.0
-                    pfls_amt = _to_amount(total_asset - init_amount)
-                    principal_sum += init_amount
-                    profit_sum += total_asset - init_amount
+                # KIS API 값 사용 — 행 수익률은 이 포지션의 평가손익 ÷ 매입금액
+                rate = float(buy_item.get("evlu_pfls_rt", 0) or 0)
+                pfls_amt = _to_amount(buy_item.get("evlu_pfls_amt", 0))
+                if pool_row:
+                    # 풀 모드: 지난 사이클의 확정 손익은 따로 내려준다.
+                    # 원금은 행의 매입금액을 더하지 않는다 — 요약이 총자산 기준으로 정한다.
+                    profit_sum += _to_decimal(buy_item.get("evlu_pfls_amt", 0)) + realized
                 else:
-                    # INIT_AMOUNT = 0: KIS API 값 사용 (외부 매수 자동 등록 종목, 풀 모드 종목)
-                    rate = float(buy_item.get("evlu_pfls_rt", 0) or 0)
-                    pfls_amt = _to_amount(buy_item.get("evlu_pfls_amt", 0))
-                    if pool_row:
-                        # 풀 모드: 행은 이 포지션의 수익률 그대로, 지난 사이클의 확정 손익은 따로 내려준다.
-                        # 원금은 행의 매입금액을 더하지 않는다 — 요약이 총자산 기준으로 정한다.
-                        profit_sum += _to_decimal(buy_item.get("evlu_pfls_amt", 0)) + realized
-                    else:
-                        # 행 수익률이 KIS 값(평가손익 ÷ 매입금액)이라 원금도 매입금액으로 맞춘다
-                        principal_sum += _to_decimal(buy_item.get("pchs_amt", 0))
-                        profit_sum += _to_decimal(buy_item.get("evlu_pfls_amt", 0))
+                    # 풀 방식 표시를 못 쓰는 경우(현금 미산출 등): 행 수익률이 KIS 값이라 원금도 매입금액으로 맞춘다
+                    principal_sum += _to_decimal(buy_item.get("pchs_amt", 0))
+                    profit_sum += _to_decimal(buy_item.get("evlu_pfls_amt", 0))
 
                 results.append({
                     **swing,
@@ -585,12 +517,8 @@ class SwingService:
                 return round(float(profit / base * 100), 2) if base else 0.0
 
             # 보유 기준: 평가손익 ÷ 매입금액 (현금을 분모에 넣으면 예수금이 클수록 0에 수렴)
-            # 누적 기준: 행 손익 합 ÷ 배정금(INIT_AMOUNT) 합. CUR_AMOUNT가 매도대금을 반영하므로
-            #   손절 손실이 남고, 배정금은 손절해도 줄지 않는다.
-            #   (예수금 + 매입금액을 원금으로 쓰면 손절 시 원금도 같이 줄어 손실이 숨는다)
-            #   분모를 실제 매수금액으로 하지 않는 이유: 자금이 재투자될 때마다 누적 매수금액이
-            #   부풀어 회전율이 높을수록 수익률이 낮게 나온다. 배정금은 가용자본에서 묶이는 돈이다.
-            #   누적 평가금액 = 배정금 + 종합 수익 = Σ(잔여 현금 + 보유 평가금액)
+            # 누적 기준(풀 방식을 못 쓰는 폴백): 보유 행 평가손익 합 ÷ 보유 매입금액 합.
+            #   풀 방식이면 아래에서 원금 = 총평가 − 누적 손익, 수익률 = 누적 손익 ÷ 그 원금으로 덮어쓴다.
             summary = {
                 "TOTAL_INVESTMENT_AMOUNT": total_eval,
                 "TOTAL_PURCHASE_AMOUNT": _to_amount(purchase),

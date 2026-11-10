@@ -49,8 +49,6 @@ def candidate(**kw):
 
 
 class PoolBase(SwingScenarioBase):
-    INIT_AMOUNT = 0     # 풀 모드 스윙은 INIT_AMOUNT = 0 (배정금 없음)
-
     async def asyncSetUp(self):
         await super().asyncSetUp()
         self.notified = []
@@ -135,8 +133,6 @@ class PoolBuyTest(PoolBase):
         self.assertEqual((self.swing.SIGNAL, self.swing.HOLD_QTY), (1, 50))
         self.assertEqual([o["qty"] for o in Market.buys()], [50])
         self.assertEqual(len(FakeTradeService.of("B")), 1, "매수 이력이 1건이 아님")
-        # 풀 모드 CUR_AMOUNT 는 INIT=0 기준 누적 손익처럼 움직인다 — 매수 대금만큼 차감
-        self.assertAlmostEqual(float(self.swing.CUR_AMOUNT), -out.avg_price * 50, delta=0.01)
         self.assertEqual(len(self.notified), 1, "매수 완료 푸시가 1회가 아님")
         self.assertEqual(self.rollbacks, 0)
 

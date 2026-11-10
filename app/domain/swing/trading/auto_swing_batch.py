@@ -408,14 +408,9 @@ async def process_single_swing(
                         swing.SIGNAL = new_signal
                         swing.MOD_DT = datetime.now()
 
-                # CUR_AMOUNT 업데이트 (지연 체결 금액 반영)
-                chunk_amount = pending_result.get("chunk_amount", 0)
-                if chunk_amount > 0:
-                    exec_type = pending_result.get("exec_type")
-                    if exec_type == "buy":
-                        swing.deduct_amount(chunk_amount)
-                    elif exec_type == "sell":
-                        swing.add_amount(chunk_amount)
+                # 지연 체결이 반영됐으면 수정 시각을 갱신한다 (실보유 대조가 MOD_DT 이후 체결을 누락 후보로 본다)
+                if pending_result.get("chunk_amount", 0) > 0:
+                    swing.touch()
 
                 # Entity 상태 업데이트
                 if pending_result.get("entry_price"):
@@ -813,9 +808,7 @@ async def _execute_partial_sell(
         logger.warning(f"[{st_code}] 1차 익절 매도 체결 미확인 → 다음 사이클 재확인 대기")
         return
 
-    # CUR_AMOUNT 가산 (매도 금액만큼 가용 금액 증가)
     sold_qty = order_result["qty"]
-    swing.add_amount(order_result.get("avg_price", float(current_price)) * sold_qty)
 
     # 일부만 체결돼도 부분 익절 완료 — SIGNAL 1에서 1회뿐이라 잔량을 다시 팔지 않는다
     swing.transition_to_partial(sold_qty)
@@ -860,9 +853,7 @@ async def _execute_full_sell(
         logger.warning(f"[{st_code}] 전량 매도 체결 미확인 → 다음 사이클 재확인 대기")
         return
 
-    # CUR_AMOUNT 가산 (매도 금액만큼 가용 금액 증가)
     sold_qty = order_result["qty"]
-    swing.add_amount(order_result.get("avg_price", float(current_price)) * sold_qty)
 
     if order_result["completed"]:
         obv_z = cached_indicators.get('realtime_obv_z', 0) if cached_indicators else 0
@@ -917,7 +908,7 @@ async def _reconcile_after_sell_rejected(swing, redis_client, db, user_id, st_co
     """매도 거부 시 실보유 대조 → 기록 누락 매도 복구
 
     DB 가 실보유보다 많은 수량을 들고 있으면 매도가 매 사이클 거부되고(자가 회복 불가)
-    목록 손익은 '보유 없음 + CUR_AMOUNT 미가산'으로 원금 전액 손실처럼 보인다.
+    목록은 '보유 없음'인데 확정 손익(TRADE_HISTORY)이 비어 손실이 요약에서 빠진다.
     """
     position = await SwingService(db).fetch_broker_position(
         user_id, mrkt_code, st_code, account_no=swing.ACCOUNT_NO
@@ -942,7 +933,7 @@ async def _reconcile_after_sell_rejected(swing, redis_client, db, user_id, st_co
         swing, db, fills, "sell", missing_qty, "전량 매도" if fully_sold else "부분 매도", mrkt_code, user_id
     )
     if recovered_amt > 0:
-        swing.add_amount(recovered_amt)
+        swing.touch()
     if fully_sold:
         swing.reset_cycle()
         await close_confirm.record_full_exit(redis_client, swing.SWING_ID, mrkt_code)
@@ -958,7 +949,7 @@ async def _reconcile_after_sell_rejected(swing, redis_client, db, user_id, st_co
         # 결정: 가짜 체결을 만들지 않는다 — 이력 없이 수량만 실보유에 맞춘다
         logger.error(
             f"[{st_code}] 누락 매도 {missing_qty - recovered_qty}주의 체결내역을 찾지 못함 "
-            f"(since {since}) → 거래 내역 없이 수량만 정리, CUR_AMOUNT 미가산 (수동 확인 필요)"
+            f"(since {since}) → 거래 내역 없이 수량만 정리 (수동 확인 필요)"
         )
     return OUTCOME_STATE_SYNCED
 
@@ -1003,8 +994,8 @@ async def _adopt_before_buy(swing, db, user_id, st_code, mrkt_code, current_pric
         recovered_qty, recovered_amt = await _record_recovered_fills(
             swing, db, fills, "buy", position["qty"], "매수", mrkt_code, user_id
         )
-        swing.deduct_amount(recovered_amt)
-    # 체결내역에 없으면(또는 조회 실패) 외부(증권사 앱) 매수로 본다 — /list 자동등록과 같이 자금 차감 없이 편입
+        swing.touch()
+    # 체결내역에 없으면(또는 조회 실패) 외부(증권사 앱) 매수로 본다 — /list 자동등록과 같이 이력 없이 편입
 
     logger.warning(
         f"[{st_code}] 매수 전 실보유 {position['qty']}주 발견 → 신규 매수 대신 편입 (SIGNAL 1), "
@@ -1041,7 +1032,7 @@ async def _pool_buy(c: EntryCandidate, qty: int, redis_client, equity: float = N
                     before_order=None) -> BuyOutcome:
     """풀 할당기가 정한 수량으로 실제 매수 — 기존 매수 경로(_handle_waiting 꼬리)와 같은 순서
 
-    실보유 확인·편입 → (before_order) → 주문·체결 확인(이력 저장) → CUR_AMOUNT 차감·SIGNAL 0→1 → 커밋 → (미확인이면) Redis → 푸시.
+    실보유 확인·편입 → (before_order) → 주문·체결 확인(이력 저장) → SIGNAL 0→1 → 커밋 → (미확인이면) Redis → 푸시.
 
     before_order: 주문 직전에 부르는 게이트 — 파킹 ETF 해제처럼 '사기로 확정된 뒤에만 해야 하는 일'을 맡는다.
     None 을 돌려주면 주문을 낸다. BuyOutcome 을 돌려주면 그 결과로 끝낸다(주문 안 함).
@@ -1097,7 +1088,6 @@ async def _pool_buy(c: EntryCandidate, qty: int, redis_client, equity: float = N
 
         avg_price = order_result.get("avg_price", c.price)
         filled_qty = order_result.get("qty", 0)
-        swing.deduct_amount(avg_price * filled_qty)
         # 일부만 체결돼도 진입 완료 — 진입은 1회뿐이라 잔량을 다시 사지 않는다
         swing.transition_to_buy(avg_price, filled_qty, c.price)
         await close_confirm.discard_pending(redis_client, swing.SWING_ID)

@@ -12,9 +12,10 @@ class SwingCreateRequest(BaseModel):
     MRKT_CODE: str
     ST_CODE: str
     ACCOUNT_NO: str
-    INIT_AMOUNT: int
     SWING_TYPE: str  # 'A': 이평선, 'B': 일목균형표
-    FULL_ENTRY_YN: Literal['Y', 'N'] = 'N'  # 'Y': 배정금 전량 매수, 'N': 신호 강도 기반 사이징
+    # 백테스트 입력 전용 — 스윙 등록은 이 값을 저장하지 않는다 (매수는 총자산 기준 풀 방식)
+    INIT_AMOUNT: int
+    FULL_ENTRY_YN: Literal['Y', 'N'] = 'N'  # 백테스트 사이징 옵션: 'Y' 전량, 'N' 신호 강도 기반
     # EMA 옵션 (SWING_TYPE이 'A'인 경우)
     SHORT_TERM: Optional[int] = 5
     MEDIUM_TERM: Optional[int] = 20
@@ -24,9 +25,7 @@ class SwingCreateRequest(BaseModel):
 class SwingUpdateRequest(BaseModel):
     """스윙 전략 수정 요청"""
     USE_YN: Optional[str] = None
-    INIT_AMOUNT: Optional[int] = None
     SWING_TYPE: Optional[str] = None
-    FULL_ENTRY_YN: Optional[Literal['Y', 'N']] = None
 
 
 class SwingResponse(BaseModel):
@@ -37,12 +36,9 @@ class SwingResponse(BaseModel):
     ST_NM: Optional[str] = None
     ACCOUNT_NO: Optional[str] = None
     USE_YN: Optional[str] = None
-    INIT_AMOUNT: Optional[Decimal] = None
-    CUR_AMOUNT: Optional[Decimal] = None
     ENTRY_PRICE: Optional[Decimal] = None
     HOLD_QTY: Optional[int] = None
     SWING_TYPE: Optional[str] = None
-    FULL_ENTRY_YN: Optional[str] = None
     SIGNAL: Optional[int] = None
     REG_DT: Optional[datetime] = None
     MOD_DT: Optional[datetime] = None

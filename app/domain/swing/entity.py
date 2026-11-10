@@ -24,11 +24,7 @@ class SwingTrade(Base):
     MRKT_CODE = Column(String(50), nullable=False, comment='조건 시장 분류 코드(J:KRX, NX:NXT, UN:통합)')
     ST_CODE = Column(String(50), nullable=False, comment='종목 코드')
     USE_YN = Column(CHAR(1), nullable=False, default='N', comment='사용 여부')
-    INIT_AMOUNT = Column(DECIMAL(15, 2), nullable=False, comment='초기 투자금')
-    CUR_AMOUNT = Column(DECIMAL(15, 2), nullable=False, comment='현재 투자금')
     SWING_TYPE = Column(CHAR(1), nullable=False, comment='스윙 타입 (A: 이평선, B: 일목균형표)')
-    FULL_ENTRY_YN = Column(CHAR(1), nullable=False, default='N', server_default='N',
-                           comment='전량 매수 여부 (Y: 배정금 전량, N: 신호 강도 기반 사이징)')
     SIGNAL = Column(Integer, nullable=False, default=0, comment='매매 신호 상태 (0:대기, 1:보유-익절전, 2:보유-익절후, 3:수급이탈대기, 4:수급재유입대기)')
     ENTRY_PRICE = Column(DECIMAL(15, 2), nullable=True, comment='평균 매수 단가')
     HOLD_QTY = Column(Integer, nullable=True, default=0, comment='보유 수량')
@@ -51,14 +47,8 @@ class SwingTrade(Base):
             raise ValidationError("종목코드는 필수입니다")
         if self.SWING_TYPE not in ('S', 'A', 'B'):
             raise ValidationError("스윙 타입은 [S,A,B]여야 합니다")
-        if self.FULL_ENTRY_YN not in (None, 'Y', 'N'):
-            raise ValidationError("전량 매수 여부는 [Y,N]이어야 합니다")
 
     # ==================== 상태 조회 ====================
-
-    def is_full_entry(self) -> bool:
-        """전량 매수 모드 여부 (conviction 사이징 대신 배정금 전량 투입)"""
-        return self.FULL_ENTRY_YN == 'Y'
 
     def is_waiting(self) -> bool:
         """매수 대기 상태 여부 (SIGNAL 0)"""
@@ -96,7 +86,7 @@ class SwingTrade(Base):
         - 분할매수 중간 상태가 Redis 소실로 고아가 된 경우
 
         transition_to_buy와 달리 '신규 매수'가 아니라 '이미 보유 중인 수량의 인수'이므로
-        체결 이력을 남기지 않고 CUR_AMOUNT도 차감하지 않는다 (이미 매수에 쓰인 자금).
+        체결 이력을 남기지 않는다 (이미 매수가 끝난 포지션).
         """
         if self.SIGNAL != 0:
             raise ValidationError(f"포지션 편입은 대기 상태(0)에서만 가능합니다. 현재: {self.SIGNAL}")
@@ -179,31 +169,24 @@ class SwingTrade(Base):
         self.HOLD_QTY = (self.HOLD_QTY or 0) - sold_qty
         self.MOD_DT = datetime.now()
 
-    def deduct_amount(self, amount) -> None:
-        """매수 체결 시 투자 가능 금액 차감"""
-        self.CUR_AMOUNT = (self.CUR_AMOUNT or Decimal(0)) - Decimal(str(amount))
-        self.MOD_DT = datetime.now()
+    def touch(self) -> None:
+        """수정 시각 갱신 — 체결을 기록한 뒤 부른다
 
-    def add_amount(self, amount) -> None:
-        """매도 체결 시 투자 가능 금액 가산"""
-        self.CUR_AMOUNT = (self.CUR_AMOUNT or Decimal(0)) + Decimal(str(amount))
+        실보유 대조(auto_swing_batch)는 MOD_DT 이후 체결을 '기록 누락 후보'로 본다. 상태 전이 메서드는 스스로
+        MOD_DT 를 갱신하지만, 수량·신호가 바뀌지 않는 체결 반영(지연 부분 체결 등)은 이 메서드로 갱신해야 한다.
+        """
         self.MOD_DT = datetime.now()
 
     # ==================== 팩토리 메서드 ====================
 
     @classmethod
-    def create(cls, account_no: str, mrkt_code: str, st_code: str,
-               init_amount: Decimal, swing_type: str,
-               full_entry_yn: str = 'N') -> "SwingTrade":
+    def create(cls, account_no: str, mrkt_code: str, st_code: str, swing_type: str) -> "SwingTrade":
         """새 스윙 매매 생성"""
         swing = cls(
             ACCOUNT_NO=account_no,
             MRKT_CODE=mrkt_code,
             ST_CODE=st_code,
-            INIT_AMOUNT=init_amount,
-            CUR_AMOUNT=init_amount,
             SWING_TYPE=swing_type,
-            FULL_ENTRY_YN=full_entry_yn,
         )
         swing.validate()
         return swing

@@ -218,25 +218,6 @@ class SwingRepository:
         await self.db.flush()
         return result.rowcount
 
-    async def get_total_init_amount(
-        self, account_no: str, overseas: bool = False, exclude_swing_id: int = None
-    ) -> Decimal:
-        """계좌별 INIT_AMOUNT 합계 조회"""
-        query = select(func.coalesce(func.sum(SwingTrade.INIT_AMOUNT), 0)).filter(
-            SwingTrade.ACCOUNT_NO == account_no,
-            SwingTrade.USE_YN == 'Y'
-        )
-        if overseas:
-            query = query.filter(SwingTrade.MRKT_CODE.in_(US_MARKETS))
-        else:
-            query = query.filter(SwingTrade.MRKT_CODE.notin_(US_MARKETS))
-
-        if exclude_swing_id is not None:
-            query = query.filter(SwingTrade.SWING_ID != exclude_swing_id)
-
-        result = await self.db.execute(query)
-        return Decimal(result.scalar_one())
-
     async def find_active_stock_codes(self) -> List[tuple]:
         """
         활성화된 종목 코드 목록 조회 (EMA 캐시 워밍업용)

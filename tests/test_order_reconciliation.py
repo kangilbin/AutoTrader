@@ -11,7 +11,7 @@ TRADE_HISTORY 에 매도가 없고, 목록 손익은 원금 전액 손실로 표
      OrderOutcomeUnknownError 로 올린다. 조회/정정취소는 기존 재시도 유지.
   2. 결과 미상 주문 → 체결 미확인(pending_order, order_no=None)으로 추적 →
      다음 사이클 체결내역(종목·구분·수량·시각)으로 찾아 기록 / 못 찾으면 미접수로 종료.
-  3. 매도 거부 시 실보유 대조 → 누락 매도 기록 + CUR_AMOUNT 가산 + 사이클 종료.
+  3. 매도 거부 시 실보유 대조 → 누락 매도 기록 + 사이클 종료.
      체결을 못 찾으면 이력 없이 정리, 조회 실패면 상태 유지.
   4. 매수 직전 실보유 확인 → 이미 보유면 신규 매수 대신 편입 (중복 매수 방지).
 
@@ -172,7 +172,6 @@ class ReconcileScenarioBase(SwingScenarioBase):
         s = self.swing
         s.SIGNAL, s.HOLD_QTY = 1, qty
         s.ENTRY_PRICE = s.PEAK_PRICE = Decimal(str(entry))
-        s.CUR_AMOUNT = Decimal(str(self.INIT_AMOUNT - qty * entry))
         s.MOD_DT = _kst_now() - mod_dt_ago
 
 
@@ -190,9 +189,9 @@ class OutcomeUnknownOrderTest(ReconcileScenarioBase):
         oe.foreign_api.place_order_api = place
 
     async def test_lost_sell_response_is_recovered_next_cycle(self):
-        """손절 매도 응답 유실 → 다음 사이클 체결내역에서 찾아 이력·CUR_AMOUNT·SIGNAL 반영"""
+        """손절 매도 응답 유실 → 다음 사이클 체결내역에서 찾아 이력·SIGNAL 반영"""
         await self.enter_position()
-        hold, remain = self.swing.HOLD_QTY, self.cur_amount()
+        hold = self.swing.HOLD_QTY
         self._place_then_lose_response(reach_broker=True)
 
         Market.move(self.entry_price() - 5.0)
@@ -212,7 +211,6 @@ class OutcomeUnknownOrderTest(ReconcileScenarioBase):
         self.assertEqual(len(sells), 1, f"매도 이력 {len(sells)}건: {sells}")
         self.assertEqual(sells[0]["qty"], hold)
         self.assertEqual(self.swing.SIGNAL, 3, "사이클 종료(3)로 가야 함")
-        self.assertAlmostEqual(self.cur_amount(), remain + sells[0]["amount"], delta=0.01)
         self.assertNotIn("pending_order:1", self.redis.store)
         self.assertEqual(len(Market.sells()), 1, "확인 중 매도가 재전송됨 (중복 주문)")
         self.assertEqual(Market.cancels, [], "주문번호 없이 취소를 시도함")
@@ -258,7 +256,6 @@ class SellRejectedReconcileTest(ReconcileScenarioBase):
 
     async def test_missing_sell_is_recorded_and_cycle_closed(self):
         self.hold_position(qty=50, entry=100.0)
-        remain = self.cur_amount()
         sold_at = _kst_now() - dt.timedelta(minutes=30)
         Broker.add("sell", 50, 96.5, at=sold_at, order_no="0000077777")
         self.broker_position = lambda: {"qty": 0, "avg_price": 0.0, "prpr": 0.0}
@@ -272,7 +269,6 @@ class SellRejectedReconcileTest(ReconcileScenarioBase):
         self.assertEqual((sells[0]["qty"], sells[0]["price"]), (50, 96.5), "체결내역 값이 아님")
         self.assertIn("체결 복구", sells[0]["reasons"])
         self.assertEqual(sells[0]["trade_date"], sold_at.replace(microsecond=0), "실제 체결 시각이 아님")
-        self.assertAlmostEqual(self.cur_amount(), remain + 50 * 96.5, delta=0.01)
         self.assertEqual(self.swing.SIGNAL, 3)
         self.assertEqual(self.swing.HOLD_QTY, 0)
 
@@ -289,16 +285,14 @@ class SellRejectedReconcileTest(ReconcileScenarioBase):
         self.assertEqual(self.swing.SIGNAL, 3, "실보유 0인데 사이클이 안 끝남")
 
     async def test_fill_not_found_closes_without_history(self):
-        """체결내역에 없으면 가짜 체결을 만들지 않고 수량만 정리한다 (CUR_AMOUNT 미가산)"""
+        """체결내역에 없으면 가짜 체결을 만들지 않고 수량만 정리한다"""
         self.hold_position(qty=50)
-        remain = self.cur_amount()
         self.broker_position = lambda: {"qty": 0, "avg_price": 0.0, "prpr": 0.0}
         self.reject_sells()
 
         Market.move(95.0)
         await self.run_cycles()
         self.assertEqual(len(FakeTradeService.calls), 0)
-        self.assertEqual(self.cur_amount(), remain)
         self.assertEqual(self.swing.SIGNAL, 3)
 
     async def test_lookup_failure_keeps_state(self):
@@ -338,17 +332,15 @@ class BuyGuardTest(ReconcileScenarioBase):
         buys = FakeTradeService.of("B")
         self.assertEqual(len(buys), 1)
         self.assertIn("체결 복구", buys[0]["reasons"])
-        self.assertAlmostEqual(self.cur_amount(), self.INIT_AMOUNT - 1000.0, delta=0.01)
 
     async def test_external_holding_is_adopted_without_deduction(self):
-        """체결내역에 없는 보유(증권사 앱 매수)는 /list 자동등록처럼 자금 차감 없이 편입"""
+        """체결내역에 없는 보유(증권사 앱 매수)는 /list 자동등록처럼 이력 없이 편입"""
         self.swing.MOD_DT = _kst_now() - dt.timedelta(hours=1)  # 조회는 되지만 체결이 없는 경로
         self.broker_position = lambda: {"qty": 10, "avg_price": 100.0, "prpr": 101.0}
         await self.run_cycles(SingleEMAStrategy.CONSECUTIVE_REQUIRED)
 
         self.assertEqual(Market.buys(), [])
         self.assertEqual(self.swing.SIGNAL, 1)
-        self.assertEqual(self.cur_amount(), self.INIT_AMOUNT)
         self.assertEqual(FakeTradeService.calls, [])
 
     async def test_broker_check_failure_defers_buy(self):

@@ -250,16 +250,12 @@ class SwingOrderExecutor:
         cls, swing_id: int, amount: float, db, label: str,
         equity: float | None = None, user_id: str | None = None,
     ) -> str | None:
-        """금액 비율 사유 → "투입 33.5%" / "회수 35.2%"
+        """금액 비율 사유 → "투입 2.5% (총자산 대비)" / "회수 3.1% (총자산 대비)"
 
-        기준(분모)은 세 가지다:
-        - equity 가 주어지면(풀 매수: 할당기가 이미 읽은 총자산) 총자산 — "투입 2.5% (총자산 대비)"
-        - 풀이 켜진 계좌·시장이면(user_id 가 있을 때) INIT_AMOUNT 가 남아 있어도 지금 시점의 총자산 —
-          풀이 켜지면 배치가 모든 스윙을 총자산 기준으로 매수하므로 매수·매도 사유의 기준을 같게 한다.
-        - 설정 금액(INIT_AMOUNT)이 있으면 그 금액 (풀을 쓰지 않는 기존 스윙, 문구 그대로).
-          분모를 CUR_AMOUNT가 아니라 INIT_AMOUNT로 두는 이유: CUR_AMOUNT는 매수 시 차감·매도 시
-          가산되므로(entity.deduct_amount/add_amount) 기준이 매번 달라져 누적 투입·회수 규모를 읽을 수 없다.
-          분모가 같으므로 "투입 33.5% → 회수 35.2%"를 그대로 비교할 수 있다.
+        기준(분모)은 총자산이다:
+        - equity 가 주어지면(풀 매수: 할당기가 이미 읽은 총자산) 그 값
+        - 없으면(매도) 지금 시점의 총자산 — 풀이 켜진 계좌·시장이면 _pool_equity 가 읽는다
+        분모가 시점의 총자산이라 투입끼리·회수끼리는 비교되지만 투입↔회수의 분모는 다를 수 있다.
         총자산은 계좌·시장별로 짧게(30초) 캐시한다 — 시장 급락으로 풀 스윙이 동시에 매도될 때
         매도마다 KIS 잔고를 읽으면 다른 주문의 유량 한도를 잡아먹는다.
 
@@ -272,10 +268,6 @@ class SwingOrderExecutor:
                 from app.domain.swing.repository import SwingRepository
                 swing = await SwingRepository(db).find_by_id(swing_id)
                 equity = await cls._pool_equity(swing, user_id, db) if swing and user_id else None
-                if not equity:
-                    init_amount = float(swing.INIT_AMOUNT) if swing and swing.INIT_AMOUNT else 0.0
-                    if init_amount > 0:
-                        return f"{label} {amount / init_amount * 100:.1f}%"
         except Exception as e:
             logger.warning(f"[SWING {swing_id}] {label} 비율 계산 실패({e}) → 사유 생략")
             return None
@@ -533,7 +525,7 @@ class SwingOrderExecutor:
                                     since: datetime, db, account_no: str = None) -> list | None:
         """since(스윙 MOD_DT) 이후 체결된 주문 — DB 에 반영되지 않은 체결 후보 (시간순)
 
-        정상 기록된 체결은 add_amount/deduct_amount/상태 전이가 MOD_DT 를 체결 뒤로 갱신하므로
+        정상 기록된 체결은 상태 전이·touch() 가 MOD_DT 를 체결 뒤로 갱신하므로
         since 이후에는 롤백으로 누락된 체결(또는 증권사 앱 직접 주문)만 남는다.
 
         Returns:
