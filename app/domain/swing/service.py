@@ -305,7 +305,7 @@ class SwingService:
     async def update_swing(self, swing_id: int, data: dict, user_id: str) -> dict:
         """스윙 수정 - 소유권 검증 포함
 
-        user_id는 자본 한도 검증뿐 아니라 소유권 확인에도 쓰이므로 필수다.
+        user_id는 소유권 확인에 쓰이므로 필수다.
         (기본값 None이던 시절엔 호출자가 빠뜨리면 검증이 통째로 꺼졌다)
         """
         try:
@@ -313,48 +313,8 @@ class SwingService:
             if not swing:
                 raise NotFoundError("스윙 전략", swing_id)
 
-            # 비활성 → 활성 전환 여부 (자본 검증 + 데이터 적재 트리거 기준)
+            # 비활성 → 활성 전환 여부 (풀 켜기 + 데이터 적재 트리거 기준)
             is_activating = data.get("USE_YN") == "Y" and swing.USE_YN == "N"
-
-            # 자본 한도 검증 (활성 스윙만 합산)
-            # - INIT_AMOUNT 변경 시: 변경 후 금액이 가용 자본 초과 여부
-            # - USE_YN 활성화 시: 해당 스윙 INIT_AMOUNT가 가용 자본 초과 여부
-            need_capital_check = user_id and (
-                "INIT_AMOUNT" in data
-                or is_activating
-            )
-            if need_capital_check:
-                # 활성 스윙이면 자기 자신 제외, 비활성→활성 전환이면 제외 불필요(이미 합산에서 빠져있음)
-                exclude_id = swing_id if swing.USE_YN == "Y" else None
-                capital_info = await self.get_available_capital(
-                    user_id, swing.ACCOUNT_NO, swing.MRKT_CODE,
-                    exclude_swing_id=exclude_id
-                )
-                check_amount = data.get("INIT_AMOUNT", int(swing.INIT_AMOUNT))
-                # 모의투자 등 가용자본 추적 불가(available_capital=None) 시 한도 검증 생략
-                if capital_info.get("available_capital") is not None and check_amount > capital_info["available_capital"]:
-                    # 통화 표기: 미국=달러(센트 2자리), 국내=원
-                    if is_overseas(swing.MRKT_CODE):
-                        fmt = lambda amount: f"${amount:,.2f}"
-                    else:
-                        fmt = lambda amount: f"{amount:,}원"
-                    raise BusinessRuleError(
-                        f"투자 가능 금액을 초과했습니다. "
-                        f"가용 자본: {fmt(capital_info['available_capital'])}, "
-                        f"요청 금액: {fmt(check_amount)}",
-                        rule="CAPITAL_LIMIT_EXCEEDED",
-                        detail={
-                            "available_capital": capital_info["available_capital"],
-                            "requested_amount": check_amount,
-                            "total_capital": capital_info["total_capital"],
-                            "allocated": capital_info["allocated"],
-                        }
-                    )
-
-            # INIT_AMOUNT 변경 시 차액을 CUR_AMOUNT에도 반영
-            if "INIT_AMOUNT" in data:
-                diff = Decimal(data["INIT_AMOUNT"]) - swing.INIT_AMOUNT
-                data["CUR_AMOUNT"] = swing.CUR_AMOUNT + diff
 
             data["MOD_DT"] = datetime.now()
             result = await self.repo.update(swing_id, data)

@@ -279,12 +279,6 @@ class ActivateAdoptionTest(unittest.IsolatedAsyncioTestCase):
         self.service.db = self.db
         self.service.repo = self.repo
 
-        # 자본 한도 검증 우회 (모의투자와 동일: 추적 불가)
-        async def _no_capital_limit(*a, **kw):
-            return {"total_capital": None, "allocated": 0,
-                    "available_capital": None, "capital_tracking": False}
-        self.service.get_available_capital = _no_capital_limit
-
     async def asyncTearDown(self):
         svc_mod.StockService = self._orig_stock
         svc_mod.get_stock_balance = self._orig_balance
