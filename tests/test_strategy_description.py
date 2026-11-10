@@ -15,6 +15,7 @@ from unittest.mock import patch
 
 from pydantic import ValidationError
 
+from app.domain.pool.entity import DEFAULT_RISK_PCT
 from app.domain.stock_review.prompt import build_analysis_instruction, build_strategy_instruction
 from app.domain.stock_review.schemas import strategy_pick_schema
 from app.domain.swing.trading.strategies.single_ema_strategy import SingleEMAStrategy
@@ -53,9 +54,12 @@ class SingleEMADescriptionTest(unittest.TestCase):
         """급등 필터는 당일 등락률 기준 (check_entry_signal 의 prdy_ctrt)"""
         self.assertIn("당일 등락률 ±5%", SingleEMAStrategy.describe()["매수차단"][0])
 
-    def test_sizing_range(self):
-        """신호 강도 사이징 = MAX_ENTRY_PCT × [MIN_CONVICTION, 1]"""
-        self.assertIn("32~80%", SingleEMAStrategy.describe()["매수수량"])
+    def test_sizing_is_pool_risk_based(self):
+        """매수 수량 설명은 총자산 기준 리스크 사이징 — 배정금 비율이 아니다 (풀 방식 고정)"""
+        sizing = SingleEMAStrategy.describe()["매수수량"]
+        self.assertIn("총자산", sizing)
+        self.assertIn(f"{float(DEFAULT_RISK_PCT) * 100:g}%", sizing)
+        self.assertNotIn("배정금", sizing)
 
 
 class StrategyPickTest(unittest.TestCase):

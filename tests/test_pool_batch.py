@@ -104,18 +104,18 @@ class PoolCollectTest(PoolBase):
         again = await self.cycle(settings)
         self.assertEqual(len(again[(ACCOUNT, "US")]), 1)
 
-    async def test_pool_off_keeps_legacy_sizing(self):
-        """풀 설정이 없으면 기존 방식(배정금) 그대로 — 배정금이 있으면 그 자리에서 산다"""
-        self.swing.INIT_AMOUNT = self.swing.CUR_AMOUNT = Decimal("100000")
-        await self.cycle(None, n=2)
-        self.assertEqual(len(Market.buys()), 1)
-        self.assertEqual(self.swing.SIGNAL, 1)
+    async def test_pool_off_never_buys_even_with_legacy_allocation(self):
+        """풀이 꺼져 있으면(설정 없음) 사지 않는다 — 매수는 총자산 기준 풀 방식 하나뿐"""
+        await self.cycle(None, n=3)
+        self.assertIn(ACCOUNT, Market.seen_accounts, "사이클이 시세 조회까지 가지 못함 (주문 없음이 우연일 수 있다)")
+        self.assertEqual(Market.orders, [])
+        self.assertEqual(self.swing.SIGNAL, 0)
 
     async def test_other_account_or_market_settings_do_not_apply(self):
-        self.swing.INIT_AMOUNT = self.swing.CUR_AMOUNT = Decimal("100000")
         other = {("99999999-01", "US"): pool_setting(), (ACCOUNT, "KR"): PoolSetting.create(ACCOUNT, "KR", use_yn="Y")}
-        await self.cycle(other, n=2)
-        self.assertEqual(len(Market.buys()), 1, "다른 계좌·시장의 풀 설정이 이 스윙에 적용됨")
+        candidates = await self.cycle(other, n=3)
+        self.assertEqual(Market.orders, [])
+        self.assertEqual([c for v in candidates.values() for c in v], [], "다른 계좌·시장의 풀 설정이 이 스윙에 적용됨")
 
     async def test_pool_swing_with_zero_allocation_never_buys_without_pool(self):
         """풀 설정을 못 읽어 빈 값으로 폴백하면(INIT=0) 수량 0 → 매수 없음 — 엉뚱한 크기로 사지 않는다"""

@@ -10,6 +10,7 @@ from app.domain.swing.indicators import TechnicalIndicators
 from .base_trading_strategy import TradingStrategy
 from .base_single_ema import BaseSingleEMAStrategy
 from .. import close_confirm
+from app.domain.pool.entity import DEFAULT_RISK_PCT
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +34,6 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
     @classmethod
     def describe(cls) -> dict:
         """AI 종목 분석에 전달하는 전략 설명 (수치는 아래 판정 로직과 같은 상수)"""
-        min_pct = cls.MAX_ENTRY_PCT * cls.MIN_CONVICTION * 100
         exits = [
             f"청산선 하나로 관리. 시작 = max(진입가 − ATR×{cls.ATR_MULTIPLIER:g}, 진입가 −{cls.MAX_STOP_LOSS_PCT:g}%)",
             f"고점 이익 +{cls.BREAKEVEN_ACTIVATE_PCT:g}% → 본전, +{cls.TRAILING_ACTIVATE_PCT:g}% → "
@@ -62,8 +62,9 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
                 f"(캔들 범위가 종가의 {cls.MIN_CANDLE_RANGE_PCT * 100:g}% 초과일 때)",
                 "현재가가 전일 저가 아래 (갭 하락)",
             ],
-            "매수수량": f"신호 강도(OBV·ADX)에 따라 배정금의 {min_pct:g}~{cls.MAX_ENTRY_PCT * 100:g}%, "
-                        f"전량 매수 설정 시 {cls.FULL_ENTRY_PCT * 100:g}%. 진입은 사이클당 1회 (추가 매수 없음)",
+            "매수수량": f"계좌 총자산 기준 리스크 사이징 — 손절까지 갔을 때 손실이 총자산의 약 {float(DEFAULT_RISK_PCT) * 100:g}%가 되는 수량 "
+                        f"(종목당 비중 상한 있음). 신호 강도(OBV·ADX)는 여러 종목이 동시에 신호일 때 매수 우선순위에만 쓰인다. "
+                        f"진입은 사이클당 1회 (추가 매수 없음)",
             "청산": exits,
             "매도후": f"OBV z < {cls.COOLDOWN_OBV_EXIT:g} (수급 이탈) → OBV z > {cls.COOLDOWN_OBV_REENTRY:g} "
                       f"(재유입) 확인 후에야 다시 매수 대기",

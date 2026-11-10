@@ -657,10 +657,10 @@ async def _handle_waiting(
     prdy_vrss_vol_rate, prdy_ctrt,
     cached_indicators, avg_daily_amount, mrkt_code="", pool_bucket=None, final_batch=False
 ):
-    """대기 상태 → 매수 신호 확인 (리스크 기반 포지션 사이징)
+    """대기 상태 → 매수 신호 확인
 
-    pool_bucket 이 있으면(풀 모드) 주문하지 않고 후보만 모은 뒤 돌아간다 — 수량·한도는 풀 할당기가 정한다.
-    없으면 종목별 배정금(CUR_AMOUNT) 기준의 기존 방식 그대로다.
+    매수는 총자산 기준 풀 방식 하나뿐이다. 주문하지 않고 pool_bucket 에 후보만 모은 뒤 돌아가며,
+    수량·한도는 풀 할당기가 정한다. pool_bucket 이 없으면(이 계좌·시장의 풀이 꺼짐·미설정) 사지 않는다.
     """
     entry_result = await strategy.check_entry_signal(
         redis_client=redis_client,
@@ -685,84 +685,20 @@ async def _handle_waiting(
         logger.warning(f"[{st_code}] USER_ID 없음, 주문 실행 불가")
         return
 
-    # 포지션 사이징 — 전량 모드면 배정금 전량(버퍼 제외), 아니면 conviction 기반
+    if pool_bucket is None:
+        logger.info(f"[{st_code}] 매수 신호가 있으나 이 계좌·시장의 풀이 꺼져 있어 매수하지 않음")
+        return
+
     realtime_adx = cached_indicators.get('realtime_adx', 0)
     realtime_obv_z = cached_indicators.get('realtime_obv_z', 0)
-
-    if pool_bucket is not None:
-        pool_bucket.append(EntryCandidate(
-            swing_id=swing.SWING_ID, user_id=user_id, account_no=swing.ACCOUNT_NO, st_code=st_code,
-            mrkt_code=mrkt_code or swing.MRKT_CODE, price=float(current_price),
-            conviction=strategy.calc_conviction(realtime_adx, realtime_obv_z),
-            atr=float(cached_indicators.get('atr', 0) or 0),
-            avg_daily_amount=float(avg_daily_amount or 0),
-            reasons=tuple(entry_result.get("reasons", ["매수"])),
-        ))
-        return
-
-    equity = float(swing.CUR_AMOUNT)
-    curr_price = float(current_price)
-
-    full_entry = swing.is_full_entry()
-    entry_pct = strategy.entry_pct(full_entry, realtime_adx, realtime_obv_z)
-    target_qty = int(equity * entry_pct / curr_price) if curr_price > 0 else 0
-
-    logger.info(f"[{st_code}] 포지션 사이징: 모드={'전량' if full_entry else 'conviction'}, "
-                f"투입비={entry_pct:.1%}, 수량={target_qty}")
-
-    if target_qty <= 0:
-        logger.info(f"[{st_code}] 매수 수량 부족 (CUR_AMOUNT={equity:,.0f}원)")
-        return
-
-    # 유동성 필터 — 주문은 분할 없이 한 번에 나간다. 청산 때 한 번에 던져도 되는 종목만 산다.
-    # (실보유 조회보다 앞에 둔다: 어차피 사지 않을 종목에 잔고 조회를 쓰지 않도록)
-    order_amount = target_qty * curr_price
-    adv_limit = avg_daily_amount * strategy.MAX_ADV_RATIO
-    if order_amount > adv_limit:
-        logger.info(
-            f"[{st_code}] 유동성 부족 → 매수 보류: 매수금액 {order_amount:,.0f} > "
-            f"일평균 거래대금 {avg_daily_amount:,.0f} × {strategy.MAX_ADV_RATIO:.0%}"
-        )
-        return
-
-    # 이미 보유 중이면(기록 누락 매수·외부 매수) 신규 매수 대신 편입 — 중복 매수 방지
-    proceed = await _adopt_before_buy(swing, db, user_id, st_code, mrkt_code, current_price)
-    if proceed is not True:
-        return proceed or None
-
-    # 체결 이력 저장은 executor가 전담한다 (체결 수량/단가를 아는 지점) — 사유만 넘긴다
-    order_result = await SwingOrderExecutor.execute_buy(
-        swing_id=swing.SWING_ID,
-        user_id=user_id,
-        st_code=st_code,
-        current_price=current_price,
-        qty=target_qty,
-        signal_on_complete=1,
-        db=db,
-        mrkt_code=mrkt_code,
-        reasons=entry_result.get("reasons", ["매수"]).copy(),
-        account_no=swing.ACCOUNT_NO,
-    )
-
-    if not order_result.get("success"):
-        logger.error(f"[{st_code}] 매수 실패: {order_result.get('reason')}")
-        return
-
-    # 주문은 나갔으나 체결 확인 실패 → 상태/이력 반영 없이 다음 사이클에 재확인
-    # (0주·0원 이력 저장과 SIGNAL 미변경으로 인한 중복 주문 방지)
-    if order_result.get("unconfirmed"):
-        swing._pending_order_state = order_result.get("pending_order")
-        logger.warning(f"[{st_code}] 매수 주문 체결 미확인 → 다음 사이클 재확인 대기")
-        return
-
-    avg_price = order_result.get("avg_price", float(current_price))
-    qty = order_result.get("qty", 0)
-
-    # CUR_AMOUNT 차감 (매수 금액만큼 가용 금액 감소)
-    swing.deduct_amount(avg_price * qty)
-    # 일부만 체결돼도 진입 완료 — 진입은 1회뿐이라 잔량을 다시 사지 않는다
-    swing.transition_to_buy(avg_price, qty, float(current_price))
-    await close_confirm.discard_pending(redis_client, swing.SWING_ID)   # 새 포지션이 이전 사이클의 매도 예약을 물려받지 않게
+    pool_bucket.append(EntryCandidate(
+        swing_id=swing.SWING_ID, user_id=user_id, account_no=swing.ACCOUNT_NO, st_code=st_code,
+        mrkt_code=mrkt_code or swing.MRKT_CODE, price=float(current_price),
+        conviction=strategy.calc_conviction(realtime_adx, realtime_obv_z),
+        atr=float(cached_indicators.get('atr', 0) or 0),
+        avg_daily_amount=float(avg_daily_amount or 0),
+        reasons=tuple(entry_result.get("reasons", ["매수"])),
+    ))
 
 
 async def _handle_position(
@@ -1086,17 +1022,16 @@ def _pool_key(account_no: str, mrkt_code: str) -> tuple:
 
 
 async def _load_pool_settings(market: str) -> dict:
-    """풀 매수가 켜진 {(계좌, 시장): PoolSetting} — 읽지 못하면 빈 값(모든 스윙 기존 방식)
+    """풀 매수가 켜진 {(계좌, 시장): PoolSetting} — 읽지 못하면 빈 값
 
-    빈 값으로 폴백하는 이유: 풀 모드 스윙은 INIT_AMOUNT=0 이라 기존 방식으로는 수량이 0 이 되어 매수가
-    일어나지 않는다. 설정을 못 읽은 사이클에 엉뚱한 크기로 사는 일은 없다.
+    빈 값이면 이번 사이클은 어느 스윙도 사지 않는다 (청산은 풀과 무관하게 계속된다).
     """
     db = await Database.get_session()
     try:
         active = await PoolRepository(db).find_all_active()
         return {(s.ACCOUNT_NO, s.MARKET): s for s in active if s.MARKET == market}
     except Exception as e:
-        logger.error(f"풀 설정 조회 실패 → 이번 사이클 풀 매수 없음 (기존 방식만): {e}", exc_info=True)
+        logger.error(f"풀 설정 조회 실패 → 이번 사이클 매수 없음: {e}", exc_info=True)
         return {}
     finally:
         await db.close()

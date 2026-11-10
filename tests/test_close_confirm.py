@@ -150,7 +150,7 @@ class CloseConfirmScenarioTest(SwingScenarioBase):
 
     async def cycle(self, final=False, n=1):
         for _ in range(n):
-            await batch.process_single_swing(Row(), self.redis, None, None, final_batch=final)
+            await self.run_cycle(final_batch=final)
 
     async def hold_and_line(self):
         """진입 후 (진입가, 청산선, 안전망)"""
@@ -376,7 +376,7 @@ class ReconcileExitStateTest(rec.ReconcileScenarioBase):
         rec.oe.foreign_api.place_order_api = reject
 
         Market.move(80.0)                              # 예약 만기 + 안전망 이하 → 매도 시도 → 거부 → 대조 복구
-        await batch.process_single_swing(Row(), self.redis, None, None)
+        await self.run_cycle()
 
         self.assertEqual(self.swing.SIGNAL, 3)
         self.assertNotIn("pending_exit:1", self.redis.store, "대조 복구 경로에서 예약이 남았다")

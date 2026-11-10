@@ -274,11 +274,35 @@ class SwingScenarioBase(unittest.IsolatedAsyncioTestCase):
         oe.foreign_api.place_order_api = self._orig["place"]
         oe.foreign_api.check_order_execution = self._orig["exec"]
         oe.foreign_api.modify_or_cancel_order_api = self._orig["cancel"]
+    async def run_cycle(self, final_batch=False):
+        """배치 한 사이클 — 운영과 같게 후보를 모은 뒤 풀 할당기 대신 고정 사이징으로 매수한다
+
+        매수는 풀 방식 하나뿐이라 process_single_swing 은 후보만 모으고 주문하지 않는다.
+        할당기(리스크 사이징·한도)는 test_pool_allocator 가 검증하므로 여기서는 수량만 단순하게 정해
+        주문·체결·상태 반영(_pool_buy) 흐름을 검증한다. 수량 = CUR_AMOUNT × MAX_ENTRY_PCT × 확신도 ÷ 현재가.
+        """
+        key = batch._pool_key(self.swing.ACCOUNT_NO, self.swing.MRKT_CODE)
+        candidates = {key: []}
+        await batch.process_single_swing(Row(), self.redis, {key: object()}, candidates, final_batch=final_batch)
+        for c in candidates[key]:
+            qty = int(float(self.swing.CUR_AMOUNT) * SingleEMAStrategy.MAX_ENTRY_PCT * c.conviction / c.price)
+            if qty > 0:
+                # 풀 매수는 실패·보류 때 자기 세션을 롤백하는 것이 정상이다 (가짜 DB 의 '롤백=오류' 가정은 사이클 처리용)
+                strict_rollback = self.db.rollback
+
+                async def _allowed_rollback():
+                    pass
+                self.db.rollback = _allowed_rollback
+                try:
+                    await batch._pool_buy(c, qty, self.redis)
+                finally:
+                    self.db.rollback = strict_rollback
+
 
     # --- 헬퍼 ---
     async def run_cycles(self, n=1):
         for _ in range(n):
-            await batch.process_single_swing(Row(), self.redis)
+            await self.run_cycle()
 
     async def enter_position(self):
         """매수 신호 연속 확인 → 진입"""
@@ -419,23 +443,8 @@ class SwingTradeScenarioTest(SwingScenarioBase):
         self.assertNotIn("partial_exec:1", self.redis.store)
         self.assertEqual(self.swing.HOLD_QTY, Market.buys()[0]["qty"])
 
-    async def test_illiquid_stock_is_not_bought(self):
-        """매수금액이 일평균 거래대금 × MAX_ADV_RATIO 초과 → 매수하지 않는다"""
-        self.redis.store["indicators:AAPL"] = json.dumps(
-            make_indicator_cache(avg_daily_amount=100_000.0))   # 한도 5,000 < 매수금액
-        await self.run_cycles(SingleEMAStrategy.CONSECUTIVE_REQUIRED)
-
-        self.assertEqual(Market.orders, [], "유동성 부족 종목에 주문이 나감")
-        self.assertEqual(self.swing.SIGNAL, 0)
-
-    async def test_unknown_liquidity_is_not_bought(self):
-        """일평균 거래대금을 모르면(0) 유동성을 확인할 수 없으므로 매수하지 않는다"""
-        self.redis.store["indicators:AAPL"] = json.dumps(
-            make_indicator_cache(avg_daily_amount=0.0))
-        await self.run_cycles(SingleEMAStrategy.CONSECUTIVE_REQUIRED)
-
-        self.assertEqual(Market.orders, [])
-        self.assertEqual(self.swing.SIGNAL, 0)
+    # 유동성 필터(일평균 거래대금 × MAX_ADV_RATIO, 거래대금 모름 포함)는 풀 할당기 책임이다 →
+    # tests/test_pool_allocator.py::test_liquidity_blocks_including_unknown_adv
 
     async def test_full_sell_partial_fill_sells_remainder_next_cycle(self):
         """전량 매도 일부 체결 → 보유만 줄고 SIGNAL 유지 → 다음 사이클 청산 판정이 잔량을 판다"""
@@ -672,12 +681,8 @@ class SwingTradeEdgeCaseTest(SwingScenarioBase):
         self.assertEqual(len(Market.buys()), 0,
                          "필터 후 1회 만에 매수 (연속성 리셋이 동작하지 않음)")
 
-    async def test_no_order_when_capital_insufficient(self):
-        """가용금액이 1주 값도 안 되면 주문하지 않는다"""
-        self.swing.CUR_AMOUNT = Decimal("50")       # 현재가 101 → 1주도 불가
-        await self.run_cycles(SingleEMAStrategy.CONSECUTIVE_REQUIRED)
-        self.assertEqual(len(Market.orders), 0, "자금 부족인데 주문이 나감")
-        self.assertEqual(self.swing.SIGNAL, 0)
+    # 1주도 못 사는 경우(총자산이 작거나 손절폭이 없음)는 풀 할당기 책임이다 →
+    # tests/test_pool_allocator.py (SKIP_ZERO_QTY)
 
     async def test_order_rejected_keeps_state_for_retry(self):
         """주문이 거부되면 상태를 바꾸지 않고 다음 사이클에 재시도한다"""
