@@ -239,14 +239,16 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
             return False, ""
 
         current_price = row["STCK_CLPR"]
-
+        row_date = row["STCK_BSOP_DATE"]
+        if hasattr(row_date, "month") and row_date.month == 5 and row_date.day == 29:
+            print("hellow TEST")
         # === 공통 필터 ===
         surge_filtered = prev_row["daily_return"] <= self.MAX_SURGE_RATIO
         intraday_surge_filtered = abs(row["daily_return"]) <= self.MAX_SURGE_RATIO
         if not (surge_filtered and intraday_surge_filtered):
             return False, ""
 
-        prev_day_bullish = prev_row["STCK_CLPR"] > prev_prev_row["STCK_CLPR"]
+        prev_day_bullish = prev_row["STCK_CLPR"] >= prev_row["STCK_OPRC"]
         if not prev_day_bullish:
             return False, ""
 
@@ -254,14 +256,14 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
         accum_lower = row["ema_20"] + (row["atr"] * self.ACCUM_ENTRY_ATR_LOWER)
         accum_upper = row["ema_20"] + (row["atr"] * self.ACCUM_ENTRY_ATR_UPPER)
 
-        if accum_lower <= current_price <= accum_upper:
-            obv_accumulating = (row["obv_z"] > self.ACCUM_ENTRY_OBV_MIN) and (row["obv_z"] > prev_prev_row["obv_z"])
-            adx_mid_range = self.ACCUM_ENTRY_ADX_MIN <= row["adx"] <= self.ACCUM_ENTRY_ADX_MAX
-            ema_rising = row["ema_20"] > prev_prev_row["ema_20"]  # 2일 연속 상승
-            trend_direction = row["plus_di"] > row["minus_di"]  # 상승 추세 방향
 
-            if obv_accumulating and adx_mid_range and ema_rising and trend_direction:
-                return True, "눌림목매집(EMA근접+OBV상승+중간추세)"
+        if accum_lower <= current_price <= accum_upper:
+            obv_accumulating = row["obv_z"] > self.ACCUM_ENTRY_OBV_MIN
+            adx_sufficient = row["adx"] >= self.ACCUM_ENTRY_ADX_MIN
+            ema_rising = row["ema_20"] > prev_prev_row["ema_20"]
+
+            if obv_accumulating and adx_sufficient and ema_rising:
+                return True, "눌림목매집(EMA근접+OBV양호+추세상승)"
 
         # === 시나리오 B: 추세 추종 EMA 돌파 진입 ===
         ema_crossover = (prev_row["STCK_CLPR"] < prev_row["ema_20"]) and (current_price > row["ema_20"])
@@ -286,7 +288,7 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
             return False, ""
 
         # 전일 양봉 필터
-        if not (prev_row["STCK_CLPR"] > prev_prev_row["STCK_CLPR"]):
+        if not (prev_row["STCK_CLPR"] > prev_row["STCK_OPRC"]):
             return False, ""
 
         current_price = row["STCK_CLPR"]
