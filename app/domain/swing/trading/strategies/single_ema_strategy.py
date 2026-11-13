@@ -71,14 +71,11 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
                 'obv_z': data['obv_z'],
                 'obv_recent_diffs': data['obv_recent_diffs'],
                 'close': data['close'],
+                'open': data['open'],
                 'high': data['high'],
                 'low': data['low'],
                 'date': data['date'],
                 'avg_daily_amount': data['avg_daily_amount'],
-                'prev_close': data['prev_close'],
-                'prev_obv_z': data['prev_obv_z'],
-                'prev_adx': data['prev_adx'],
-                'prev_ema20': data['prev_ema20'],
             }
         except Exception as e:
             logger.warning(f"[{symbol}] 캐시 조회 실패: {e}")
@@ -256,37 +253,29 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
 
         # 지표 사용 (모두 실시간 증분 계산 완료 상태)
         try:
-            # 실시간 DI, ADX 사용
+            # 실시간 증분 데이터
             realtime_plus_di = cached_indicators['realtime_plus_di']
             realtime_minus_di = cached_indicators['realtime_minus_di']
             realtime_adx = cached_indicators['realtime_adx']
-
-            # 실시간 EMA 사용
             realtime_ema20 = cached_indicators['realtime_ema20']
-
-            # 실시간 OBV z-score 사용
             realtime_obv_z = cached_indicators['realtime_obv_z']
+            realtime_atr = cached_indicators['realtime_atr']
 
         except Exception as e:
             logger.error(f"[{symbol}] 매수 신호 지표 계산 실패: {e}", exc_info=True)
             return None
 
-        # 캐시에서 전일/전전일 데이터 추출
-        prev_close = cached_indicators.get('prev_close')       # 전전일 종가
-        prev_obv_z = cached_indicators.get('prev_obv_z')       # 전전일 OBV z-score
-        prev_adx = cached_indicators.get('prev_adx')           # 전일 ADX
-        prev_ema20 = cached_indicators.get('prev_ema20')       # 전일 EMA20
+        # 캐시에서 전일 데이터 추출
+        yesterday_open = cached_indicators.get('open')         # 전일 시가
         yesterday_close = cached_indicators.get('close')       # 전일 종가
         yesterday_ema20 = cached_indicators.get('ema20')       # 전일 EMA20 (종가 기준)
-        atr = cached_indicators.get('realtime_atr', 0)
+        yesterday_obv_z = cached_indicators.get('obv_z')       # 전일 OBV z-score
 
         # === 공통 필터 ===
-        surge_filtered = (prev_close is not None and prev_close > 0 and
-                         (yesterday_close - prev_close) / prev_close <= cls.MAX_SURGE_RATIO)
-        intraday_surge_filtered = abs(prdy_ctrt) / 100 <= cls.MAX_SURGE_RATIO
-        prev_day_bullish = (prev_close is not None and yesterday_close > prev_close)
+        surge_filtered = abs(prdy_ctrt) / 100 <= cls.MAX_SURGE_RATIO
+        prev_day_bullish = (yesterday_open is not None and yesterday_close >= yesterday_open)
 
-        if not (surge_filtered and intraday_surge_filtered and prev_day_bullish):
+        if not (surge_filtered and prev_day_bullish):
             # 공통 필터 미충족 → 연속성 리셋
             new_state = {'curr_signal': False, 'consecutive_count': 0, 'last_update': datetime.now().isoformat()}
             await redis_client.setex(f"entry:{swing_id}", 900, json.dumps(new_state))
@@ -294,25 +283,26 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
 
         # === 시나리오 A: 눌림목 매집 진입 ===
         scenario_a = False
-        if atr > 0:
-            accum_lower = realtime_ema20 + (atr * cls.ACCUM_ENTRY_ATR_LOWER)
-            accum_upper = realtime_ema20 + (atr * cls.ACCUM_ENTRY_ATR_UPPER)
+        if realtime_atr > 0:
+            accum_lower = realtime_ema20 + (realtime_atr * cls.ACCUM_ENTRY_ATR_LOWER)
+            accum_upper = realtime_ema20 + (realtime_atr * cls.ACCUM_ENTRY_ATR_UPPER)
 
             if accum_lower <= curr_price <= accum_upper:
-                obv_accumulating = (realtime_obv_z > cls.ACCUM_ENTRY_OBV_MIN) and (prev_obv_z is not None and realtime_obv_z > prev_obv_z)
+                obv_accumulating = (realtime_obv_z > cls.ACCUM_ENTRY_OBV_MIN) and (yesterday_obv_z is not None and realtime_obv_z > yesterday_obv_z)
                 adx_mid_range = cls.ACCUM_ENTRY_ADX_MIN <= realtime_adx <= cls.ACCUM_ENTRY_ADX_MAX
-                ema_rising = (prev_ema20 is not None and realtime_ema20 > prev_ema20)
+                ema_rising = (yesterday_ema20 is not None and realtime_ema20 > yesterday_ema20)
                 trend_direction = realtime_plus_di > realtime_minus_di  # 상승 추세 방향
 
                 scenario_a = obv_accumulating and adx_mid_range and ema_rising and trend_direction
 
         # === 시나리오 B: 추세 추종 EMA 돌파 진입 ===
         scenario_b = False
-        if yesterday_ema20 is not None and yesterday_close is not None:
-            ema_crossover = (yesterday_close < yesterday_ema20) and (curr_price > realtime_ema20)
+        if yesterday_ema20 is not None:
+            ema_rising = realtime_ema20 > yesterday_ema20
+            price_above_ema = curr_price > realtime_ema20
             within_gap_limit = curr_price <= realtime_ema20 * cls.BREAKOUT_ENTRY_GAP_MAX
 
-            if ema_crossover and within_gap_limit:
+            if ema_rising and price_above_ema and within_gap_limit:
                 trend_direction = realtime_plus_di > realtime_minus_di
                 adx_sufficient = realtime_adx > cls.BREAKOUT_ENTRY_ADX_MIN  # 최소 추세 강도
                 obv_positive = realtime_obv_z > cls.BREAKOUT_ENTRY_OBV_MIN
@@ -390,24 +380,30 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
             if await redis_client.exists(time_key):
                 return None
 
+            # 전일 양봉 필터
+            yesterday_open = cached_indicators.get('open')
+            yesterday_close = cached_indicators.get('close')
+            if not (yesterday_open is not None and yesterday_close >= yesterday_open):
+                return None
+
             # 지표 사용 (모두 실시간 증분 계산 완료 상태)
             realtime_adx = cached_indicators['realtime_adx']
             realtime_plus_di = cached_indicators['realtime_plus_di']
             realtime_minus_di = cached_indicators['realtime_minus_di']
-            atr = cached_indicators['realtime_atr']
+            realtime_atr = cached_indicators['realtime_atr']
             realtime_ema20 = cached_indicators['realtime_ema20']
             realtime_obv_z = cached_indicators['realtime_obv_z']
 
             # 가격 위치: EMA 이상 ~ EMA + ATR × 2.0 (추세 확인 + 과열 방지)
-            lower = realtime_ema20 + (atr * cls.SECOND_BUY_ATR_LOWER)
-            upper = realtime_ema20 + (atr * cls.SECOND_BUY_ATR_UPPER)
+            lower = realtime_ema20 + (realtime_atr * cls.SECOND_BUY_ATR_LOWER)
+            upper = realtime_ema20 + (realtime_atr * cls.SECOND_BUY_ATR_UPPER)
 
             if lower <= curr_price <= upper:
                 # 추세 안정: ADX >= 20 + 상승 방향
                 if realtime_adx >= cls.SECOND_BUY_ADX_MIN and realtime_plus_di > realtime_minus_di:
                     # 수급 확인: OBV z-score
                     if realtime_obv_z >= cls.SECOND_BUY_OBV_MIN:
-                        atr_ratio = f"{(curr_price-realtime_ema20)/atr:.2f}" if atr > 0 else "N/A"
+                        atr_ratio = f"{(curr_price-realtime_ema20)/realtime_atr:.2f}" if realtime_atr > 0 else "N/A"
                         logger.info(f"[{symbol}] ✅ 2차 매수 신호 (추세안정): EMA+ATR×{atr_ratio}, ADX={realtime_adx:.1f}")
                         return {
                             'action': 'BUY',
@@ -442,15 +438,15 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
 
         # 실시간 EMA, ATR 사용
         realtime_ema20 = cached_indicators['realtime_ema20']
-        atr = cached_indicators['realtime_atr']
+        realtime_atr = cached_indicators['realtime_atr']
 
         # ATR=0 가드: ATR이 유효하지 않으면 손절 체크 스킵
-        if atr <= 0:
+        if realtime_atr <= 0:
             logger.warning(f"[{symbol}] ATR이 0 이하, 손절 체크 스킵")
             return {"action": "HOLD", "reasons": []}
 
         # EMA-ATR 동적 손절
-        ema_atr_stop = realtime_ema20 - (atr * cls.ATR_MULTIPLIER)
+        ema_atr_stop = realtime_ema20 - (realtime_atr * cls.ATR_MULTIPLIER)
         if curr_price <= ema_atr_stop:
             logger.warning(f"[{symbol}] 🚨 즉시 매도 신호: EMA-ATR손절(현재가≤{ema_atr_stop:,.0f})")
             return {
@@ -494,9 +490,9 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
         required_cols = ["minus_di", "plus_di", "obv_z"]
         if any(pd.isna(row.get(col)) for col in required_cols):
             return None, updated_peak
-        if any(pd.isna(prev_row.get(col)) for col in ["minus_di", "plus_di"]):
+        if any(pd.isna(prev_row.get(col)) for col in ["minus_di", "plus_di", "obv_z"]):
             return None, updated_peak
-        if any(pd.isna(prev_prev_row.get(col)) for col in ["minus_di", "plus_di", "obv_z"]):
+        if any(pd.isna(prev_prev_row.get(col)) for col in ["minus_di", "plus_di"]):
             return None, updated_peak
 
         # 조건 1: 추세 약화 — (+DI - -DI) 격차 2일 연속 감소
@@ -505,8 +501,8 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
         di_spread_prev2 = prev_prev_row["plus_di"] - prev_prev_row["minus_di"]
         trend_weakening = di_spread_today < di_spread_prev < di_spread_prev2
 
-        # 조건 2: 수급 약화 — OBV z-score 감소 (2일전 대비)
-        supply_weakening = row["obv_z"] < prev_prev_row["obv_z"]
+        # 조건 2: 수급 약화 — OBV z-score 감소 (전일 대비)
+        supply_weakening = row["obv_z"] < prev_row["obv_z"]
 
         if not (trend_weakening and supply_weakening):
             return None, updated_peak
