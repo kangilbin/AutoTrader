@@ -70,6 +70,9 @@ class Settings(BaseSettings):
     # 3년 한 사이클의 백테스트에서만 확인된 규칙이라 문제가 생기면 false 로 두면 예전 동작(항상 허용)으로 돌아간다.
     # 데이터가 없거나 낡았거나 Redis 가 실패하면 켜져 있어도 허용한다(fail-open).
     HY_OAS_GATE_ENABLED: bool = True
+    # 연속 손실 가드 (2026-11-14) — 같은 종목에서 전량 청산이 연속 2번 손실이면 60일간 신규 진입(첫 진입·재진입 모두)을 막는다.
+    # 근거·한계는 trading/loss_guard.py 참고. 문제가 생기면 false 로 두면 차단하지 않는다(상태 기록은 계속된다).
+    REENTRY_GUARD_ENABLED: bool = True
     # FRED 공식 API 키(선택). 있으면 JSON API 로, 없으면 키 없는 CSV 엔드포인트로 받는다. 무료 발급: fred.stlouisfed.org → My Account → API Keys
     FRED_API_KEY: Optional[str] = None
 

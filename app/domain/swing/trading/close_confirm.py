@@ -37,6 +37,7 @@ from zoneinfo import ZoneInfo
 
 from app.core.config import get_settings
 from app.core.market_code import is_overseas
+from . import loss_guard
 
 logger = logging.getLogger(__name__)
 
@@ -169,16 +170,28 @@ async def get_last_exit(redis_client, swing_id: int) -> Optional[date]:
     return _parse_date(await redis_client.get(last_exit_key(swing_id)))
 
 
-async def record_full_exit(redis_client, swing_id: int, mrkt_code: str) -> None:
+async def record_full_exit(redis_client, swing_id: int, mrkt_code: str,
+                           entry_price=None, exit_price=None) -> None:
     """전량 청산 후 상태 정리 — 매도 예약을 지우고 마지막 청산일을 남긴다
 
     전량 청산이 일어나는 모든 경로(즉시 체결·지연 체결·실보유 대조 복구)가 같이 불러야 한다.
     빠지면 예약이 남아 다음 포지션을 첫 배치에 잘못 팔고, 재진입 판정은 빠진다.
     모드가 꺼져 있어도 남긴다 (켰을 때 곧바로 판정되도록). Redis 오류는 매도 처리를 막지 않는다 —
     키가 없으면 첫 진입으로 보는 쪽이 안전한 방향이다.
+
+    entry_price(보유 평단)·exit_price(청산 평균 체결가)를 주면 연속 손실 가드(loss_guard)에 결과를 반영한다.
+    모르면 생략한다 — 연속 횟수는 그대로 남는다.
     """
-    try:
+    today = trading_date(mrkt_code)
+
+    async def _write_exit():
         await clear_pending(redis_client, swing_id)
-        await redis_client.setex(last_exit_key(swing_id), LAST_EXIT_TTL, trading_date(mrkt_code).isoformat())
-    except Exception as e:
-        logger.warning(f"[SWING_ID={swing_id}] 청산 상태(Redis) 기록 실패: {e}")
+        await redis_client.setex(last_exit_key(swing_id), LAST_EXIT_TTL, today.isoformat())
+
+    # 서로 독립으로 시도한다 — 하나가 실패해도 나머지(특히 연속 손실 기록)가 건너뛰어지지 않게
+    for label, write in (("청산일", _write_exit),
+                         ("연속 손실", lambda: loss_guard.record_exit(redis_client, swing_id, entry_price, exit_price, today))):
+        try:
+            await write()
+        except Exception as e:
+            logger.warning(f"[SWING_ID={swing_id}] 청산 상태({label}, Redis) 기록 실패: {e}")

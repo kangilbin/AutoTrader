@@ -47,7 +47,7 @@ from .pool_allocator import (
     BuyOutcome, EntryCandidate, run_pool_entries,
 )
 from .pool_state import fetch_account_snapshot, load_positions
-from . import close_confirm, credit_gate, parking
+from . import close_confirm, credit_gate, loss_guard, parking
 from .trading_strategy_factory import TradingStrategyFactory
 from .strategies.base_single_ema import BaseSingleEMAStrategy
 from app.common.redis import Redis
@@ -400,7 +400,9 @@ async def process_single_swing(
                     if new_signal == 0:
                         obv_z = cached_indicators.get('realtime_obv_z', 0) if cached_indicators else 0
                         swing.reset_cycle(obv_z=obv_z)
-                        await close_confirm.record_full_exit(redis_client, swing.SWING_ID, mrkt_code)
+                        await close_confirm.record_full_exit(
+                            redis_client, swing.SWING_ID, mrkt_code,
+                            entry_price=entry_price, exit_price=pending_result.get("avg_price"))
                     elif new_signal == 2 and swing.SIGNAL == 1:
                         # 부분 익절 지연 체결 확인 (PEAK 유지 — transition_to_partial 참고)
                         swing.transition_to_partial(hold_qty - pending_result.get("hold_qty", hold_qty))
@@ -676,6 +678,18 @@ async def _handle_waiting(
     if await _defer_reentry(redis_client, swing, st_code, mrkt_code, final_batch):
         return
 
+    # 연속 손실 가드 — 같은 종목 연속 2번 손실 청산 뒤 60일은 신규 진입 금지 (Q3·재진입 예외보다 우선).
+    # 신호 상태는 건드리지 않고 돌아간다. Redis 오류는 차단하지 않는다(fail-open).
+    if loss_guard.enabled():
+        try:
+            banned = await loss_guard.banned_until(redis_client, swing.SWING_ID, close_confirm.trading_date(mrkt_code))
+        except Exception as e:
+            logger.warning(f"[{st_code}] 연속 손실 가드 상태 조회 실패 → 차단하지 않음: {e}")
+            banned = None
+        if banned:
+            logger.info(f"[{st_code}] 매수 신호가 있으나 연속 손실 가드로 차단: {banned} 까지")
+            return
+
     # 신용 스프레드 게이트(Q3) — 하이일드 스프레드가 내려오는 중일 때만 신규 매수. 막혀도 신호 상태(연속 확인 카운터)는
     # 건드리지 않아서, 다음 사이클에 허용으로 바뀌면 같은 신호로 바로 진입한다. 데이터·Redis 문제는 허용(fail-open).
     # 청산·실보유 편입 경로는 이 함수를 지나지 않으므로 영향이 없다.
@@ -865,8 +879,11 @@ async def _execute_full_sell(
 
     if order_result["completed"]:
         obv_z = cached_indicators.get('realtime_obv_z', 0) if cached_indicators else 0
+        entry_price = swing.ENTRY_PRICE   # reset_cycle 이 지우기 전에 — 연속 손실 판정용
         swing.reset_cycle(obv_z=obv_z)
-        await close_confirm.record_full_exit(redis_client, swing.SWING_ID, mrkt_code)
+        await close_confirm.record_full_exit(
+            redis_client, swing.SWING_ID, mrkt_code,
+            entry_price=entry_price, exit_price=order_result.get("avg_price"))
     else:
         # 잔량은 취소됐다 — 보유만 줄이고 SIGNAL 유지. 다음 사이클 청산 판정이 잔량을 다시 판다
         swing.update_hold_qty_partial(sold_qty)
@@ -943,8 +960,12 @@ async def _reconcile_after_sell_rejected(swing, redis_client, db, user_id, st_co
     if recovered_amt > 0:
         swing.touch()
     if fully_sold:
+        entry_price = swing.ENTRY_PRICE   # reset_cycle 이 지우기 전에 — 연속 손실 판정용
         swing.reset_cycle()
-        await close_confirm.record_full_exit(redis_client, swing.SWING_ID, mrkt_code)
+        # 체결내역을 일부만 찾았거나 없으면 청산가를 신뢰할 수 없다 → 연속 손실 횟수는 그대로 둔다
+        exit_price = recovered_amt / recovered_qty if recovered_qty >= missing_qty > 0 else None
+        await close_confirm.record_full_exit(
+            redis_client, swing.SWING_ID, mrkt_code, entry_price=entry_price, exit_price=exit_price)
     else:
         swing.update_hold_qty_partial(missing_qty)
 

@@ -755,7 +755,7 @@ class SwingOrderExecutor:
         completed = phase != 0 or executed_qty >= target_qty
         return {"completed": completed, "signal_on_complete": phase,
                 "entry_price": current_entry_price if new_hold_qty > 0 else 0,
-                "hold_qty": new_hold_qty,
+                "hold_qty": new_hold_qty, "avg_price": avg_price,
                 "chunk_amount": chunk_amount, "exec_type": "sell"}
 
 
