@@ -45,7 +45,7 @@ SAFETY_NET_ATR = 1.0          # 장중 즉시 매도 안전망: 현재가 ≤ �
 REENTRY_WINDOW_DAYS = 30      # 직전 전량 청산 후 이 기간 안의 재매수는 마지막 배치에서만
 
 PENDING_EXIT_TTL = 10 * 86400  # 매도 예약(다음 거래일 배치에 실행) 보관 — 긴 연휴(추석·설 등)를 넘겨도 남게
-LAST_EXIT_TTL = 40 * 86400    # 재진입 판정용 마지막 청산일 보관 (30일 + 여유)
+LAST_EXIT_TTL = 70 * 86400    # 마지막 청산일·청산가 보관 (재진입 30일, 회복 재진입 60일 + 여유)
 
 # 마지막 배치 — 스케줄러(scheduler.py)의 마지막 실행 시각과 같아야 한다.
 #   미국: 10~15시 5분마다 → 15:50·15:55 ET 가 마지막 두 번
@@ -134,6 +134,10 @@ def last_exit_key(swing_id: int) -> str:
     return f"last_exit:{swing_id}"
 
 
+def last_exit_price_key(swing_id: int) -> str:
+    return f"last_exit_price:{swing_id}"
+
+
 def _parse_date(raw) -> Optional[date]:
     """Redis 값(bytes/str) → 날짜. 없거나 깨진 값은 None (예약 없음·첫 진입으로 본다)"""
     if not raw:
@@ -170,6 +174,18 @@ async def get_last_exit(redis_client, swing_id: int) -> Optional[date]:
     return _parse_date(await redis_client.get(last_exit_key(swing_id)))
 
 
+async def get_last_exit_price(redis_client, swing_id: int) -> Optional[float]:
+    """직전 전량 청산 평균 체결가 — 회복 재진입 판정용. 없거나 깨진 값은 None"""
+    raw = await redis_client.get(last_exit_price_key(swing_id))
+    if not raw:
+        return None
+    try:
+        value = float(raw.decode() if isinstance(raw, (bytes, bytearray)) else raw)
+    except ValueError:
+        return None
+    return value if value > 0 else None
+
+
 async def record_full_exit(redis_client, swing_id: int, mrkt_code: str,
                            entry_price=None, exit_price=None) -> None:
     """전량 청산 후 상태 정리 — 매도 예약을 지우고 마지막 청산일을 남긴다
@@ -188,8 +204,15 @@ async def record_full_exit(redis_client, swing_id: int, mrkt_code: str,
         await clear_pending(redis_client, swing_id)
         await redis_client.setex(last_exit_key(swing_id), LAST_EXIT_TTL, today.isoformat())
 
+    async def _write_exit_price():
+        # 청산가를 모르면 이전 값이 남지 않게 지운다 — 낡은 청산가로 회복을 판정하지 않도록
+        if loss_guard.valid_price(exit_price):
+            await redis_client.setex(last_exit_price_key(swing_id), LAST_EXIT_TTL, str(float(exit_price)))
+        else:
+            await redis_client.delete(last_exit_price_key(swing_id))
+
     # 서로 독립으로 시도한다 — 하나가 실패해도 나머지(특히 연속 손실 기록)가 건너뛰어지지 않게
-    for label, write in (("청산일", _write_exit),
+    for label, write in (("청산일", _write_exit), ("청산가", _write_exit_price),
                          ("연속 손실", lambda: loss_guard.record_exit(redis_client, swing_id, entry_price, exit_price, today))):
         try:
             await write()

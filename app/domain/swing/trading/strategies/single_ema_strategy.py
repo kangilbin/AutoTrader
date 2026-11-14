@@ -147,6 +147,11 @@ class SingleEMAStrategy(TradingStrategy, BaseSingleEMAStrategy):
             value = data.get(key)
             indicators[key] = default if value is None else value
 
+        # 장기 추세(SMA200) — 회복 재진입 판정 전용 통과 값. 구버전 캐시·200일 미만 종목은 None 이고,
+        # 그 경우 회복 재진입만 꺼진다(경고 없이 — 매 사이클 모든 구캐시 종목이 로그를 채우지 않도록)
+        indicators['sma200'] = data.get('sma200')
+        indicators['sma200_prev20'] = data.get('sma200_prev20')
+
         # 완성봉 기준 수급 축적도 (백테스트 _check_entry_conditions와 동일 정의)
         # 매수 게이트는 실시간 accum을 쓰고, 이 값은 두 정의의 차이를 관측하기 위한 비교용이다
         indicators['accum'] = TechnicalIndicators.calculate_accum(

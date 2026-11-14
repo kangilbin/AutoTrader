@@ -622,6 +622,11 @@ class SwingService:
             logger.warning(f"[{st_code}] 지표 데이터 부족 (15일 미만, OBV z-score 14일 계산 불가)")
             return None
 
+        # 장기 추세(SMA200) — 회복 재진입 판정용. 200일 미만이면 None (그 종목은 회복 재진입 대상이 아니다)
+        sma200 = indicators['STCK_CLPR'].astype(float).rolling(200).mean()
+        sma200_now = sma200.iloc[-1]
+        sma200_prev20 = sma200.iloc[-21] if len(sma200) >= 21 else float('nan')
+
         yesterday = indicators.iloc[-1]
         required_cols = ['ema20', 'adx', 'plus_di', 'minus_di', 'atr', 'obv', 'obv_z']
         if not all(col in yesterday.index for col in required_cols):
@@ -663,6 +668,8 @@ class SwingService:
             "low": float(yesterday['STCK_LWPR']),
             "date": yesterday['STCK_BSOP_DATE'],
             "avg_daily_amount": avg_daily_amount,
+            "sma200": None if pd.isna(sma200_now) else float(sma200_now),
+            "sma200_prev20": None if pd.isna(sma200_prev20) else float(sma200_prev20),
         }
 
         return indicators_data

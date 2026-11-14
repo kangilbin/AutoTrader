@@ -73,6 +73,9 @@ class Settings(BaseSettings):
     # 연속 손실 가드 (2026-11-14) — 같은 종목에서 전량 청산이 연속 2번 손실이면 60일간 신규 진입(첫 진입·재진입 모두)을 막는다.
     # 근거·한계는 trading/loss_guard.py 참고. 문제가 생기면 false 로 두면 차단하지 않는다(상태 기록은 계속된다).
     REENTRY_GUARD_ENABLED: bool = True
+    # 회복 재진입 (2026-11-14) — 청산 뒤 60일 이내에 종목이 장기 상승 추세(SMA200 위·상승)로 돌아오고 EMA20·직전 청산가를 회복하면
+    # 신호·OBV 쿨다운 없이 마지막 배치에서 재매수한다. 연속 손실 가드·Q3 게이트는 그대로 적용된다. 근거·한계는 trading/recovery_reentry.py 참고.
+    RECOVERY_REENTRY_ENABLED: bool = True
     # FRED 공식 API 키(선택). 있으면 JSON API 로, 없으면 키 없는 CSV 엔드포인트로 받는다. 무료 발급: fred.stlouisfed.org → My Account → API Keys
     FRED_API_KEY: Optional[str] = None
 

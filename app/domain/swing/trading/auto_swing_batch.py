@@ -47,7 +47,7 @@ from .pool_allocator import (
     BuyOutcome, EntryCandidate, run_pool_entries,
 )
 from .pool_state import fetch_account_snapshot, load_positions
-from . import close_confirm, credit_gate, loss_guard, parking
+from . import close_confirm, credit_gate, loss_guard, parking, recovery_reentry
 from .trading_strategy_factory import TradingStrategyFactory
 from .strategies.base_single_ema import BaseSingleEMAStrategy
 from app.common.redis import Redis
@@ -520,11 +520,7 @@ async def process_single_swing(
             # === 4. SIGNAL별 오케스트레이션 ===
             outcome = None
             if swing.is_waiting():
-                pool_bucket = None
-                if pool_settings and pool_candidates is not None:
-                    key = _pool_key(swing.ACCOUNT_NO, mrkt_code)
-                    if key in pool_settings:
-                        pool_bucket = pool_candidates[key]
+                pool_bucket = _pool_bucket_for(swing, mrkt_code, pool_settings, pool_candidates)
                 outcome = await _handle_waiting(
                     swing, strategy, redis_client, db, user_id, st_code,
                     current_price, frgn_ntby_qty, acml_vol,
@@ -542,6 +538,11 @@ async def process_single_swing(
 
             elif swing.is_cooling_down():
                 _handle_cooling_down(swing, strategy, st_code, cached_indicators)
+                pool_bucket = _pool_bucket_for(swing, mrkt_code, pool_settings, pool_candidates)
+                await _handle_recovery(
+                    swing, strategy, redis_client, user_id, st_code, current_price,
+                    cached_indicators, avg_daily_amount, mrkt_code,
+                    pool_bucket=pool_bucket, final_batch=final_batch)
 
             # === 5. 변경사항 저장 ===
             await db.flush()
@@ -648,6 +649,89 @@ async def _defer_reentry(redis_client, swing, st_code: str, mrkt_code: str, fina
     return True
 
 
+def _pool_bucket_for(swing, mrkt_code, pool_settings, pool_candidates):
+    """이 스윙의 (계좌, 시장) 풀 후보 목록 — 풀이 꺼져 있거나 설정이 없으면 None (사지 않는다)"""
+    if pool_settings and pool_candidates is not None:
+        key = _pool_key(swing.ACCOUNT_NO, mrkt_code)
+        if key in pool_settings:
+            return pool_candidates[key]
+    return None
+
+
+def _build_candidate(swing, strategy, user_id, st_code, mrkt_code, current_price,
+                     cached_indicators, avg_daily_amount, reasons, recovery=False) -> EntryCandidate:
+    """풀 매수 후보 — 신호 매수와 회복 재진입이 같은 필드·같은 확신도 계산을 쓴다"""
+    realtime_adx = cached_indicators.get('realtime_adx', 0)
+    realtime_obv_z = cached_indicators.get('realtime_obv_z', 0)
+    return EntryCandidate(
+        swing_id=swing.SWING_ID, user_id=user_id, account_no=swing.ACCOUNT_NO, st_code=st_code,
+        mrkt_code=mrkt_code or swing.MRKT_CODE, price=float(current_price),
+        conviction=strategy.calc_conviction(realtime_adx, realtime_obv_z),
+        atr=float(cached_indicators.get('atr', 0) or 0),
+        avg_daily_amount=float(avg_daily_amount or 0),
+        reasons=reasons, recovery=recovery,
+    )
+
+
+async def _entry_blocked(redis_client, swing, st_code: str, mrkt_code: str) -> bool:
+    """신규 매수 차단 여부 — 연속 손실 가드 > 신용 스프레드 게이트(Q3) 순으로 확인 (신호 매수·회복 재진입 공통)
+
+    막혀도 신호 상태(연속 확인 카운터)는 건드리지 않아서, 풀리면 같은 신호로 바로 진입한다.
+    Redis·데이터 문제는 차단하지 않는다(fail-open). 청산·실보유 편입 경로는 이 함수를 지나지 않아 영향이 없다.
+    """
+    if loss_guard.enabled():
+        try:
+            banned = await loss_guard.banned_until(redis_client, swing.SWING_ID, close_confirm.trading_date(mrkt_code))
+        except Exception as e:
+            logger.warning(f"[{st_code}] 연속 손실 가드 상태 조회 실패 → 차단하지 않음: {e}")
+            banned = None
+        if banned:
+            logger.info(f"[{st_code}] 매수 신호가 있으나 연속 손실 가드로 차단: {banned} 까지")
+            return True
+
+    gate = await credit_gate.check(redis_client, close_confirm.trading_date(mrkt_code))
+    if not gate.allowed:
+        logger.info(f"[{st_code}] 매수 신호가 있으나 신용 스프레드 게이트로 차단: {gate.reason}")
+        return True
+    return False
+
+
+async def _handle_recovery(
+    swing, strategy, redis_client, user_id, st_code, current_price,
+    cached_indicators, avg_daily_amount, mrkt_code="", pool_bucket=None, final_batch=False
+):
+    """회복 재진입 — 청산 뒤 장기 상승 추세로 돌아오면 신호·OBV 쿨다운 없이 풀 후보로 올린다 (SIGNAL 0·3·4 에서 호출)
+
+    판정은 recovery_reentry.decide, 가드·Q3 는 신호 매수와 같은 _entry_blocked 를 쓴다.
+    쿨다운(3/4) 상태는 여기서 바꾸지 않는다 — 실제로 체결될 때 _pool_buy 가 0 을 거쳐 보유로 전환하므로,
+    풀 한도·실패로 못 사면 상태가 그대로 남는다. 종가 확인 모드에서는 마지막 배치에서만 산다.
+    """
+    if not recovery_reentry.enabled() or not user_id or pool_bucket is None or not cached_indicators:
+        return
+    if close_confirm.enabled() and not final_batch:
+        return
+    try:
+        last_exit = await close_confirm.get_last_exit(redis_client, swing.SWING_ID)
+        today = close_confirm.trading_date(mrkt_code)
+        if last_exit is None or not 0 <= (today - last_exit).days <= recovery_reentry.RECOVERY_WINDOW_DAYS:
+            return   # 대부분의 대기 종목 — 청산 이력이 없거나 윈도우 밖이면 청산가는 읽지 않는다
+        last_px = await close_confirm.get_last_exit_price(redis_client, swing.SWING_ID)
+    except Exception as e:
+        logger.warning(f"[{st_code}] 회복 재진입 상태 조회 실패 → 건너뜀: {e}")
+        return
+    decision = recovery_reentry.decide(cached_indicators, last_exit, last_px, today, current_price)
+    if not decision.ok:
+        logger.debug(f"[{st_code}] 회복 재진입 아님: {decision.reason}")
+        return
+    if await _entry_blocked(redis_client, swing, st_code, mrkt_code):
+        return
+
+    logger.info(f"[{st_code}] 회복 재진입 후보: {decision.reason}")
+    pool_bucket.append(_build_candidate(
+        swing, strategy, user_id, st_code, mrkt_code, current_price, cached_indicators, avg_daily_amount,
+        reasons=("회복 재진입", decision.reason), recovery=True))
+
+
 async def _handle_waiting(
     swing, strategy, redis_client, db, user_id, st_code,
     current_price, frgn_ntby_qty, acml_vol,
@@ -672,30 +756,16 @@ async def _handle_waiting(
     )
 
     if not (entry_result and entry_result.get("action") == "BUY"):
-        return
+        # 신호가 없어도 청산 뒤 장기 추세로 복귀했으면 회복 재진입을 본다
+        return await _handle_recovery(
+            swing, strategy, redis_client, user_id, st_code, current_price,
+            cached_indicators, avg_daily_amount, mrkt_code, pool_bucket, final_batch)
 
     # 재진입은 마지막 배치(종가 근처)에서만 산다 — 신호는 장중 내내 유지되면 그때 다시 충족된다
     if await _defer_reentry(redis_client, swing, st_code, mrkt_code, final_batch):
         return
 
-    # 연속 손실 가드 — 같은 종목 연속 2번 손실 청산 뒤 60일은 신규 진입 금지 (Q3·재진입 예외보다 우선).
-    # 신호 상태는 건드리지 않고 돌아간다. Redis 오류는 차단하지 않는다(fail-open).
-    if loss_guard.enabled():
-        try:
-            banned = await loss_guard.banned_until(redis_client, swing.SWING_ID, close_confirm.trading_date(mrkt_code))
-        except Exception as e:
-            logger.warning(f"[{st_code}] 연속 손실 가드 상태 조회 실패 → 차단하지 않음: {e}")
-            banned = None
-        if banned:
-            logger.info(f"[{st_code}] 매수 신호가 있으나 연속 손실 가드로 차단: {banned} 까지")
-            return
-
-    # 신용 스프레드 게이트(Q3) — 하이일드 스프레드가 내려오는 중일 때만 신규 매수. 막혀도 신호 상태(연속 확인 카운터)는
-    # 건드리지 않아서, 다음 사이클에 허용으로 바뀌면 같은 신호로 바로 진입한다. 데이터·Redis 문제는 허용(fail-open).
-    # 청산·실보유 편입 경로는 이 함수를 지나지 않으므로 영향이 없다.
-    gate = await credit_gate.check(redis_client, close_confirm.trading_date(mrkt_code))
-    if not gate.allowed:
-        logger.info(f"[{st_code}] 매수 신호가 있으나 신용 스프레드 게이트로 차단: {gate.reason}")
+    if await _entry_blocked(redis_client, swing, st_code, mrkt_code):
         return
 
     if not user_id:
@@ -706,16 +776,9 @@ async def _handle_waiting(
         logger.info(f"[{st_code}] 매수 신호가 있으나 이 계좌·시장의 풀이 꺼져 있어 매수하지 않음")
         return
 
-    realtime_adx = cached_indicators.get('realtime_adx', 0)
-    realtime_obv_z = cached_indicators.get('realtime_obv_z', 0)
-    pool_bucket.append(EntryCandidate(
-        swing_id=swing.SWING_ID, user_id=user_id, account_no=swing.ACCOUNT_NO, st_code=st_code,
-        mrkt_code=mrkt_code or swing.MRKT_CODE, price=float(current_price),
-        conviction=strategy.calc_conviction(realtime_adx, realtime_obv_z),
-        atr=float(cached_indicators.get('atr', 0) or 0),
-        avg_daily_amount=float(avg_daily_amount or 0),
-        reasons=tuple(entry_result.get("reasons", ["매수"])),
-    ))
+    pool_bucket.append(_build_candidate(
+        swing, strategy, user_id, st_code, mrkt_code, current_price, cached_indicators, avg_daily_amount,
+        reasons=tuple(entry_result.get("reasons", ["매수"]))))
 
 
 async def _handle_position(
@@ -1069,12 +1132,20 @@ async def _pool_buy(c: EntryCandidate, qty: int, redis_client, equity: float = N
     """
     db = await Database.get_session()
     order_placed = False
+    swing = None
+    origin_signal = None
     try:
         swing = await SwingService(db).repo.find_by_id(c.swing_id)
         # 후보를 모은 뒤 상태가 바뀌었을 수 있다 (사용 중지·다른 처리의 체결) — 이미 달라졌으면 사지 않는다
-        if swing is None or swing.USE_YN != 'Y' or not swing.is_waiting() or (swing.HOLD_QTY or 0) > 0:
+        # 회복 재진입은 쿨다운(3/4) 중에도 산다 — 아래에서 메모리상 0 으로 돌린 뒤 체결 시 보유(1)로 전환하고,
+        # 실패하면 rollback 으로 쿨다운 상태가 그대로 남는다
+        buyable = swing is not None and (swing.is_waiting() or (c.recovery and swing.is_cooling_down()))
+        if swing is None or swing.USE_YN != 'Y' or not buyable or (swing.HOLD_QTY or 0) > 0:
             logger.warning(f"[{c.st_code}] 풀 매수 직전 스윙 상태가 바뀜 → 매수 안 함")
             return BuyOutcome(BUY_SKIPPED)
+        origin_signal = swing.SIGNAL
+        if c.recovery and swing.is_cooling_down():
+            swing.SIGNAL = 0
 
         current_price = Decimal(str(c.price))
         proceed = await _adopt_before_buy(swing, db, c.user_id, c.st_code, c.mrkt_code, current_price)
@@ -1109,6 +1180,7 @@ async def _pool_buy(c: EntryCandidate, qty: int, redis_client, equity: float = N
 
         if order_result.get("unconfirmed"):
             # 주문은 나갔으나 체결 미확인 — 상태·이력 반영 없이 다음 사이클에 재확인 (중복 주문 방지)
+            swing.SIGNAL = origin_signal   # 회복 재진입이 메모리에서 푼 쿨다운을 되돌린다 — 체결되면 지연 체결 확인이 1로 전환한다
             await db.commit()
             await redis_client.setex(f"pending_order:{swing.SWING_ID}", 86400,
                                      json.dumps(order_result.get("pending_order")))
@@ -1132,6 +1204,16 @@ async def _pool_buy(c: EntryCandidate, qty: int, redis_client, equity: float = N
             # 주문이 나갔을 수 있는데 체결 확인·상태 반영이 실패 — 체결됐을 수 있으니 '돈을 안 썼다'고 알리지 않는다.
             # 다음 사이클의 _adopt_before_buy 가 실보유를 보고 편입한다.
             logger.error(f"[{c.st_code}] 풀 매수 주문 중/후 오류 → 체결 미확인으로 처리: {e}", exc_info=True)
+            if c.recovery and origin_signal in (3, 4) and swing is not None:
+                # 쿨다운 상태로 남으면 실보유가 있어도 편입(SIGNAL 0 + HOLD_QTY>0 대조·매수 직전 편입)이 돌지 않아 포지션이 방치된다.
+                # 대기(0)로 저장해 일반 경로의 실보유 편입이 받게 한다 (일반 매수 실패와 같은 상태)
+                try:
+                    swing.SIGNAL = 0
+                    swing.touch()
+                    await db.commit()
+                except Exception as e2:
+                    await db.rollback()
+                    logger.error(f"[{c.st_code}] 회복 재진입 실패 후 대기 상태 저장 실패: {e2}")
             return BuyOutcome(BUY_UNCONFIRMED)
         logger.error(f"[{c.st_code}] 풀 매수 처리 실패: {e}", exc_info=True)
         return BuyOutcome(BUY_FAILED)
@@ -1525,6 +1607,23 @@ async def us_trade_job():
     _log_batch_end("US BATCH", results, asyncio.get_running_loop().time() - started)
 
 
+async def hy_oas_refresh_job():
+    """신용 스프레드(FRED 하이일드 OAS) 갱신 — 진입 게이트(credit_gate)가 읽는 최근 관측치를 Redis 에 저장
+
+    앱 시작 직후 1회와 평일 미국 장 시작 전(09:00 ET)에 돈다(국내 장도 그 값을 다음 날 그대로 쓴다). 실패해도 기존 값은 그대로 남고
+    게이트는 데이터가 낡으면 허용(fail-open)으로 동작하므로 매매에는 영향이 없다 — 경고만 남긴다.
+    """
+    if not credit_gate.enabled():
+        return
+    try:
+        redis_client = await Redis.get_connection()
+        count = await credit_gate.refresh(redis_client)
+        decision = await credit_gate.check(redis_client)
+        logger.info(f"신용 스프레드 갱신: 관측치 {count}개 · 현재 판정 {decision.reason}")
+    except Exception as e:
+        logger.warning(f"신용 스프레드 갱신 실패 (기존 값 유지, 게이트는 낡으면 허용): {e}")
+
+
 async def us_ema_cache_warmup_job():
     """해외 종목 지표 캐시 워밍업 (미국 장 시작 전)"""
     db = await Database.get_session()
@@ -1561,20 +1660,3 @@ async def ema_cache_warmup_job():
         logger.error(f"지표 캐시 워밍업 실패: {e}", exc_info=True)
     finally:
         await db.close()
-
-
-async def hy_oas_refresh_job():
-    """신용 스프레드(FRED 하이일드 OAS) 갱신 — 진입 게이트(credit_gate)가 읽는 최근 관측치를 Redis 에 저장
-
-    앱 시작 직후 1회와 평일 미국 장 시작 전(09:00 ET)에 돈다(국내 장도 그 값을 다음 날 그대로 쓴다). 실패해도 기존 값은 그대로 남고
-    게이트는 데이터가 낡으면 허용(fail-open)으로 동작하므로 매매에는 영향이 없다 — 경고만 남긴다.
-    """
-    if not credit_gate.enabled():
-        return
-    try:
-        redis_client = await Redis.get_connection()
-        count = await credit_gate.refresh(redis_client)
-        decision = await credit_gate.check(redis_client)
-        logger.info(f"신용 스프레드 갱신: 관측치 {count}개 · 현재 판정 {decision.reason}")
-    except Exception as e:
-        logger.warning(f"신용 스프레드 갱신 실패 (기존 값 유지, 게이트는 낡으면 허용): {e}")

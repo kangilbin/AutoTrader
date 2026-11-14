@@ -52,6 +52,7 @@ class EntryCandidate:
     atr: float                  # 전일 완성봉 ATR — 청산 판정과 같은 값
     avg_daily_amount: float     # 20일 평균 거래대금 (유동성 필터)
     reasons: Tuple[str, ...] = ("EMA돌파",)
+    recovery: bool = False      # 회복 재진입 — 쿨다운(SIGNAL 3/4) 중에도 산다 (recovery_reentry)
 
 
 @dataclass(frozen=True)
