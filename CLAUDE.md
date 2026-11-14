@@ -34,6 +34,7 @@ docker run -p 8000:auto-trader
   지정한 사용자는 `AUTH_KEY` 행을 최소 1개 가지고 있어야 한다 (로그인 상태는 불필요).
 - `GEMINI_API_KEY`: AI 종목 분석용 서버 키 (무료 등급 — 모델별 하루 20회, 실패 요청도 셈)
 - `FINNHUB_API_KEY`: 미국 종목 재무 지표 (무료 등급 분당 60회). 없으면 미국 분석은 재무 없이 진행된다
+- `FRED_API_KEY`: 하이일드 스프레드(신용 게이트) 조회용 공식 API 키 (선택). 없으면 키 없는 CSV 엔드포인트로 받는다
 
 ## 아키텍처
 
@@ -85,6 +86,7 @@ app/
 │   ├── headers.py           # KIS API 헤더 생성
 │   ├── gemini_api.py        # Gemini 호출 (서버 키, 무료 모델 대체·한도 소진 처리, JSON 스키마 응답)
 │   ├── finnhub_api.py       # 미국 종목 재무 지표 (KIS 해외 TR 엔 재무제표가 없다)
+│   ├── fred_api.py          # FRED 하이일드 스프레드(BAMLH0A0HYM2) — 신용 게이트용, 로그의 api_key 마스킹
 │   └── expo_push.py         # Expo 푸시 알림 발송
 ├── domain/                  # 도메인별 모듈
 │   ├── routers/             # 라우터 통합 + 비도메인 라우터
@@ -102,6 +104,9 @@ app/
 │   │   ├── trading/         # 실시간 매매 실행
 │   │   │   ├── auto_swing_batch.py       # 정기 매매 배치 (오케스트레이터)
 │   │   │   ├── order_executor.py         # 주문 실행(단일 주문)·체결 확인
+│   │   │   ├── credit_gate.py            # Q3 신용 스프레드 진입 게이트
+│   │   │   ├── loss_guard.py             # 연속 손실 가드 (2연속 손실 → 60일 진입 금지)
+│   │   │   ├── recovery_reentry.py       # 회복 재진입 (장기 추세 복귀 시 쿨다운 생략)
 │   │   │   ├── trading_strategy_factory.py
 │   │   │   └── strategies/
 │   │   │       ├── base_trading_strategy.py  # TradingStrategy 추상 클래스
@@ -348,6 +353,18 @@ async def create_swing(
   `CLOSE_CONFIRM_ENABLED=false` 면 예전 동작(터치 즉시 매도)이고, `ALLOW_OFFHOURS_TRADING=true` 에서는 자동으로 꺼진다.
   스케줄러의 마지막 실행 시각을 바꾸면 `close_confirm._FINAL_BATCH` 도 함께 바꿀 것.
   근거(일봉 백테스트 189종목)와 한계(손실 꼬리 증가, 이득이 강한 추세 해에 집중, 홀드아웃 미검증)는 모듈 docstring 참고.
+
+- **신규 진입 필터 3종** (2026-11-14, 백테스트 근거·한계는 각 모듈 docstring). 우선순위 **연속 손실 가드 > Q3 > 회복 재진입**이며
+  공통 판정은 `auto_swing_batch._entry_blocked`. 청산·실보유 편입 경로에는 영향이 없다.
+  - **Q3 신용 게이트** (`credit_gate.py`, `HY_OAS_GATE_ENABLED`): FRED 하이일드 스프레드가 5관측치 전보다 낮고 2.9% 이상일 때만 신규 매수(국내·미국 공통).
+    값은 하루 한 번(09:00 ET)+앱 시작 시 `hy_oas_refresh_job` 이 Redis `credit_gate:hy_oas` 에 저장하고, 매수 판단은 캐시만 읽는다.
+    데이터 없음·낡음(7일 초과)·Redis 오류는 **허용(fail-open)**. 3년 한 사이클 결과라 과신 금지.
+  - **연속 손실 가드** (`loss_guard.py`, `REENTRY_GUARD_ENABLED`): 같은 종목 전량 청산이 연속 2번 손실(청산가 < 평단)이면 60일간 신규 진입 금지.
+    상태는 Redis `exit_streak:{swing_id}`, **기록은 `close_confirm.record_full_exit(entry_price, exit_price)` 한 곳**이므로
+    전량 청산 경로는 평단·청산가를 함께 넘겨야 한다(모르면 생략 — 연속 횟수 유지). 첫 손실은 막지 못한다.
+  - **회복 재진입** (`recovery_reentry.py`, `RECOVERY_REENTRY_ENABLED`): 청산 60일 이내, 전일 종가 > SMA200(상승 중) · > EMA20 · ≥ 마지막 청산가이면
+    신호·OBV 쿨다운(SIGNAL 3/4) 없이 마지막 배치에서 재매수. 마지막 청산가는 Redis `last_exit_price:{id}`, SMA200 은 지표 캐시
+    `sma200`·`sma200_prev20`(**전략 캐시 로더 `get_cached_indicators` 의 통과 키**). 쿨다운은 체결 때만 풀린다(`_pool_buy`, `EntryCandidate.recovery`).
 
 ### 외부 의존성
 - **KIS Open API**: 실시간 시세 및 주문 체결
