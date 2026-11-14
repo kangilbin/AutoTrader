@@ -8,6 +8,7 @@ from app.domain.swing.trading.auto_swing_batch import (
     us_day_collect_job,
     ema_cache_warmup_job,
     us_ema_cache_warmup_job,
+    hy_oas_refresh_job,
 )
 from app.domain.stock.price_adjustment_batch import price_adjustment_reload_job
 from app.domain.stock.stock_data_batch import collect_job_cron
@@ -22,6 +23,16 @@ scheduler = AsyncIOScheduler(timezone='Asia/Seoul')
 
 
 async def schedule_start():
+    # === 신용 스프레드 진입 게이트용 데이터 (국내·미국 공통) ===
+    # 앱 시작 직후 1회(아래 start() 뒤에 추가) — 재시작 직후에도 Redis 가 비어 있지 않게 한다.
+    # 이후 하루 한 번, 미국 장 시작 전(09:00 ET)에 갱신한다. FRED 는 전 영업일 값을 하루 한 번 아침에 올리고,
+    # 이 시각에 저장한 값을 다음 날 국내 장도 그대로 쓴다(그래서 국내 장 시작 전 갱신은 따로 두지 않는다).
+    # 게이트는 Redis 에 저장된 값만 읽는다 — 매수 판단 중에는 FRED 를 부르지 않는다.
+    scheduler.add_job(
+        hy_oas_refresh_job,
+        CronTrigger(minute='0', hour='9', day_of_week='mon-fri', timezone='America/New_York')
+    )
+
     # === 국내 장 스케줄 ===
 
     # 지표 캐시 워밍업 (EMA20, ADX, DI): 평일 08:29 (장 시작 전)
@@ -100,3 +111,5 @@ async def schedule_start():
     )
 
     scheduler.start()
+    # 트리거 없는 잡은 추가한 시각이 실행 시각이라, start() 전에 넣으면 그 사이 지연(misfire_grace_time=1)에 건너뛰어질 수 있다 — 시작 뒤에 넣는다
+    scheduler.add_job(hy_oas_refresh_job)

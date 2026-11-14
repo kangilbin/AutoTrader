@@ -47,7 +47,7 @@ from .pool_allocator import (
     BuyOutcome, EntryCandidate, run_pool_entries,
 )
 from .pool_state import fetch_account_snapshot, load_positions
-from . import close_confirm, parking
+from . import close_confirm, credit_gate, parking
 from .trading_strategy_factory import TradingStrategyFactory
 from .strategies.base_single_ema import BaseSingleEMAStrategy
 from app.common.redis import Redis
@@ -674,6 +674,14 @@ async def _handle_waiting(
 
     # 재진입은 마지막 배치(종가 근처)에서만 산다 — 신호는 장중 내내 유지되면 그때 다시 충족된다
     if await _defer_reentry(redis_client, swing, st_code, mrkt_code, final_batch):
+        return
+
+    # 신용 스프레드 게이트(Q3) — 하이일드 스프레드가 내려오는 중일 때만 신규 매수. 막혀도 신호 상태(연속 확인 카운터)는
+    # 건드리지 않아서, 다음 사이클에 허용으로 바뀌면 같은 신호로 바로 진입한다. 데이터·Redis 문제는 허용(fail-open).
+    # 청산·실보유 편입 경로는 이 함수를 지나지 않으므로 영향이 없다.
+    gate = await credit_gate.check(redis_client, close_confirm.trading_date(mrkt_code))
+    if not gate.allowed:
+        logger.info(f"[{st_code}] 매수 신호가 있으나 신용 스프레드 게이트로 차단: {gate.reason}")
         return
 
     if not user_id:
@@ -1532,3 +1540,20 @@ async def ema_cache_warmup_job():
         logger.error(f"지표 캐시 워밍업 실패: {e}", exc_info=True)
     finally:
         await db.close()
+
+
+async def hy_oas_refresh_job():
+    """신용 스프레드(FRED 하이일드 OAS) 갱신 — 진입 게이트(credit_gate)가 읽는 최근 관측치를 Redis 에 저장
+
+    앱 시작 직후 1회와 평일 미국 장 시작 전(09:00 ET)에 돈다(국내 장도 그 값을 다음 날 그대로 쓴다). 실패해도 기존 값은 그대로 남고
+    게이트는 데이터가 낡으면 허용(fail-open)으로 동작하므로 매매에는 영향이 없다 — 경고만 남긴다.
+    """
+    if not credit_gate.enabled():
+        return
+    try:
+        redis_client = await Redis.get_connection()
+        count = await credit_gate.refresh(redis_client)
+        decision = await credit_gate.check(redis_client)
+        logger.info(f"신용 스프레드 갱신: 관측치 {count}개 · 현재 판정 {decision.reason}")
+    except Exception as e:
+        logger.warning(f"신용 스프레드 갱신 실패 (기존 값 유지, 게이트는 낡으면 허용): {e}")

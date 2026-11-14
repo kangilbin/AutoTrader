@@ -65,6 +65,14 @@ class Settings(BaseSettings):
     # ALLOW_OFFHOURS_TRADING=true(정규장 밖 모의 테스트)에서는 마지막 배치가 없으므로 자동으로 꺼진다.
     CLOSE_CONFIRM_ENABLED: bool = True
 
+    # 신용 스프레드 진입 게이트 (2026-11-14, Q3) — 미국 하이일드 스프레드(FRED BAMLH0A0HYM2)가 5개 관측치 전보다 낮고
+    # 2.9% 이상일 때만 신규 매수를 허용한다(미국·국내 공통). 청산에는 영향이 없다. 근거·한계는 trading/credit_gate.py 참고.
+    # 3년 한 사이클의 백테스트에서만 확인된 규칙이라 문제가 생기면 false 로 두면 예전 동작(항상 허용)으로 돌아간다.
+    # 데이터가 없거나 낡았거나 Redis 가 실패하면 켜져 있어도 허용한다(fail-open).
+    HY_OAS_GATE_ENABLED: bool = True
+    # FRED 공식 API 키(선택). 있으면 JSON API 로, 없으면 키 없는 CSV 엔드포인트로 받는다. 무료 발급: fred.stlouisfed.org → My Account → API Keys
+    FRED_API_KEY: Optional[str] = None
+
     # 해외 매매 배치 실행 주기 (ET 기준 cron). 기본값이 운영값이며,
     # 테스트로 더 자주/넓게 돌리려면 .env에서 덮어쓴다 (예: "*/1", "1-23")
     US_TRADE_CRON_MINUTE: str = "*/5"
