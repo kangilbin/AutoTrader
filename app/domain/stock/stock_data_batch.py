@@ -59,7 +59,8 @@ async def fetch_and_store_3_years_data(user_id: str, mrkt_code: str, st_code: st
                     response = await get_stock_data(
                         user_id, st_code,
                         range_start.strftime('%Y%m%d'),
-                        range_end.strftime('%Y%m%d')
+                        range_end.strftime('%Y%m%d'),
+                        db
                     )
                     if response and "output2" in response:
                         api_data_count = len(response["output2"])

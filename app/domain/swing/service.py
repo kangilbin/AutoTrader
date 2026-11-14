@@ -144,7 +144,7 @@ class SwingService:
         """스윙 목록과 보유 주식 매핑"""
         try:
             swing_list = await self.repo.find_all_by_account_no(account_no)
-            buy_list = await get_stock_balance(user_id)
+            buy_list = await get_stock_balance(user_id, self.db)
 
             swing_dict = {swing["ST_CODE"]: swing for swing in swing_list}
             buy_dict = {item.get("pdno"): item for item in buy_list if item.get("pdno")}

@@ -39,7 +39,8 @@ class SwingOrderExecutor:
         st_code: str,
         current_price: Decimal,
         init_amount: Decimal,
-        buy_ratio: int
+        buy_ratio: int,
+        db=None
     ) -> Dict[str, Any]:
         """
         1차 매수 실행
@@ -77,14 +78,14 @@ class SwingOrderExecutor:
         # 주문 실행
         try:
             order = Order.create(ord_dv="buy", itm_no=st_code, qty=qty)
-            result = await place_order_api(user_id, order)
+            result = await place_order_api(user_id, order, db)
 
             if result and result.get("rt_cd") == "0":
                 order_no = result.get("output", {}).get("ODNO")
                 logger.info(f"[{st_code}] 1차 매수 주문 성공: 주문번호={order_no}")
 
                 # 체결 확인 (폴링)
-                execution = await check_order_execution(user_id, order_no)
+                execution = await check_order_execution(user_id, order_no, db)
 
                 if execution:
                     avg_price = execution.get("avg_price", 0)
@@ -126,7 +127,8 @@ class SwingOrderExecutor:
         st_code: str,
         current_price: Decimal,
         init_amount: Decimal,
-        buy_ratio: int
+        buy_ratio: int,
+        db=None
     ) -> Dict[str, Any]:
         """
         2차 매수 실행 (나머지 전부)
@@ -162,14 +164,14 @@ class SwingOrderExecutor:
 
         try:
             order = Order.create(ord_dv="buy", itm_no=st_code, qty=qty)
-            result = await place_order_api(user_id, order)
+            result = await place_order_api(user_id, order, db)
 
             if result and result.get("rt_cd") == "0":
                 order_no = result.get("output", {}).get("ODNO")
                 logger.info(f"[{st_code}] 2차 매수 주문 성공: 주문번호={order_no}")
 
                 # 체결 확인 (폴링)
-                execution = await check_order_execution(user_id, order_no)
+                execution = await check_order_execution(user_id, order_no, db)
 
                 if execution:
                     avg_price = execution.get("avg_price", 0)
@@ -235,7 +237,8 @@ class SwingOrderExecutor:
         cls,
         user_id: str,
         st_code: str,
-        sell_ratio: int
+        sell_ratio: int,
+        db=None
     ) -> Dict[str, Any]:
         """
         1차 매도 실행
@@ -249,7 +252,7 @@ class SwingOrderExecutor:
             주문 결과
         """
         # 보유 수량 조회
-        holdings = await cls._get_holding_qty(user_id, st_code)
+        holdings = await cls._get_holding_qty(user_id, st_code, db)
 
         if holdings <= 0:
             logger.warning(f"[{st_code}] 보유 수량 없음")
@@ -269,7 +272,7 @@ class SwingOrderExecutor:
 
         try:
             order = Order.create(ord_dv="sell", itm_no=st_code, qty=sell_qty)
-            result = await place_order_api(user_id, order)
+            result = await place_order_api(user_id, order, db)
 
             if result and result.get("rt_cd") == "0":
                 logger.info(f"[{st_code}] 1차 매도 주문 성공: {result}")
@@ -293,7 +296,8 @@ class SwingOrderExecutor:
     async def execute_second_sell(
         cls,
         user_id: str,
-        st_code: str
+        st_code: str,
+        db=None
     ) -> Dict[str, Any]:
         """
         2차 매도 실행 (나머지 전부)
@@ -306,7 +310,7 @@ class SwingOrderExecutor:
             주문 결과
         """
         # 보유 수량 조회
-        holdings = await cls._get_holding_qty(user_id, st_code)
+        holdings = await cls._get_holding_qty(user_id, st_code, db)
 
         if holdings <= 0:
             logger.warning(f"[{st_code}] 보유 수량 없음 (이미 전량 매도)")
@@ -316,7 +320,7 @@ class SwingOrderExecutor:
 
         try:
             order = Order.create(ord_dv="sell", itm_no=st_code, qty=holdings)
-            result = await place_order_api(user_id, order)
+            result = await place_order_api(user_id, order, db)
 
             if result and result.get("rt_cd") == "0":
                 logger.info(f"[{st_code}] 2차 매도 주문 성공: {result}")
@@ -337,10 +341,10 @@ class SwingOrderExecutor:
             return {"success": False, "reason": str(e)}
 
     @classmethod
-    async def _get_holding_qty(cls, user_id: str, st_code: str) -> int:
+    async def _get_holding_qty(cls, user_id: str, st_code: str, db=None) -> int:
         """보유 수량 조회"""
         try:
-            balance = await get_stock_balance(user_id)
+            balance = await get_stock_balance(user_id, db)
 
             for item in balance:
                 if item.get("pdno") == st_code:
@@ -366,7 +370,8 @@ class SwingOrderExecutor:
         current_price: Decimal,
         target_amount: Decimal,
         avg_daily_amount: float,
-        signal_on_complete: int
+        signal_on_complete: int,
+        db=None
     ) -> Dict[str, Any]:
         """
         분할 매수 시작 (첫 사이클)
@@ -388,7 +393,7 @@ class SwingOrderExecutor:
             return {"success": False, "reason": "매수 수량 부족"}
 
         order = Order.create(ord_dv="buy", itm_no=st_code, qty=qty)
-        result = await place_order_api(user_id, order)
+        result = await place_order_api(user_id, order, db)
 
         if not (result and result.get("rt_cd") == "0"):
             error_msg = result.get("msg1", "주문 실패") if result else "응답 없음"
@@ -396,7 +401,7 @@ class SwingOrderExecutor:
             return {"success": False, "reason": error_msg}
 
         order_no = result.get("output", {}).get("ODNO")
-        execution = await check_order_execution(user_id, order_no)
+        execution = await check_order_execution(user_id, order_no, db)
         executed_qty = execution.get("executed_qty", qty) if execution else qty
         avg_price = execution.get("avg_price", int(curr_price)) if execution else int(curr_price)
         executed_amount = float(executed_qty * avg_price)
@@ -435,7 +440,8 @@ class SwingOrderExecutor:
         current_price: Decimal,
         target_qty: int,
         avg_daily_amount: float,
-        signal_on_complete: int
+        signal_on_complete: int,
+        db=None
     ) -> Dict[str, Any]:
         """
         분할 매도 시작 (첫 사이클)
@@ -454,7 +460,7 @@ class SwingOrderExecutor:
         order_qty = target_qty if target_qty <= per_cycle_qty else per_cycle_qty
 
         order = Order.create(ord_dv="sell", itm_no=st_code, qty=order_qty)
-        result = await place_order_api(user_id, order)
+        result = await place_order_api(user_id, order, db)
 
         if not (result and result.get("rt_cd") == "0"):
             error_msg = result.get("msg1", "주문 실패") if result else "응답 없음"
@@ -462,7 +468,7 @@ class SwingOrderExecutor:
             return {"success": False, "reason": error_msg}
 
         order_no = result.get("output", {}).get("ODNO")
-        execution = await check_order_execution(user_id, order_no)
+        execution = await check_order_execution(user_id, order_no, db)
         actual_qty = execution.get("executed_qty", order_qty) if execution else order_qty
 
         # 단일 주문으로 완료
@@ -554,7 +560,7 @@ class SwingOrderExecutor:
                         "entry_price": current_entry_price, "hold_qty": current_hold_qty}
 
             order = Order.create(ord_dv="buy", itm_no=st_code, qty=order_qty)
-            result = await place_order_api(user_id, order)
+            result = await place_order_api(user_id, order, db)
 
             if not (result and result.get("rt_cd") == "0"):
                 logger.error(f"[{st_code}] 분할 매수 chunk 주문 실패")
@@ -562,7 +568,7 @@ class SwingOrderExecutor:
                         "entry_price": current_entry_price, "hold_qty": current_hold_qty}
 
             order_no = result.get("output", {}).get("ODNO")
-            execution = await check_order_execution(user_id, order_no)
+            execution = await check_order_execution(user_id, order_no, db)
             executed_qty = execution.get("executed_qty", order_qty) if execution else order_qty
             avg_price = execution.get("avg_price", int(curr_price)) if execution else int(curr_price)
 
@@ -617,7 +623,7 @@ class SwingOrderExecutor:
             order_qty = min(remaining_qty, per_cycle_qty)
 
             order = Order.create(ord_dv="sell", itm_no=st_code, qty=order_qty)
-            result = await place_order_api(user_id, order)
+            result = await place_order_api(user_id, order, db)
 
             if not (result and result.get("rt_cd") == "0"):
                 logger.error(f"[{st_code}] 분할 매도 chunk 주문 실패")
@@ -625,7 +631,7 @@ class SwingOrderExecutor:
                         "entry_price": current_entry_price, "hold_qty": current_hold_qty}
 
             order_no = result.get("output", {}).get("ODNO")
-            execution = await check_order_execution(user_id, order_no)
+            execution = await check_order_execution(user_id, order_no, db)
             actual_qty = execution.get("executed_qty", order_qty) if execution else order_qty
             avg_sell_price = execution.get("avg_price", int(curr_price)) if execution else int(curr_price)
 

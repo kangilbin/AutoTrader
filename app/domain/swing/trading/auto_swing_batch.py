@@ -107,7 +107,7 @@ async def process_single_swing(
                 return
 
             # 1.2 현재가 조회
-            current_price_data = await get_inquire_price("mgnt", st_code)
+            current_price_data = await get_inquire_price("mgnt", st_code, swing_service.db)
 
             if not current_price_data:
                 logger.warning(f"[{st_code}] 현재가 조회 실패")

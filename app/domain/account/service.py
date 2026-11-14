@@ -42,19 +42,6 @@ class AccountService:
             logger.error(f"계좌 등록 실패: {e}", exc_info=True)
             raise DatabaseError("계좌 등록에 실패했습니다", operation="insert", original_error=e)
 
-    async def get_account(self, account_id: str, user_id: str) -> dict:
-        """계좌 조회 및 Redis 캐싱"""
-        account_info = await self.repo.find_by_id(account_id)
-
-        if not account_info:
-            raise NotFoundError("계좌", account_id)
-
-        # Redis에 캐싱
-        redis = await get_redis()
-        await redis.hset(user_id, mapping=account_info)
-
-        return account_info
-
     async def get_accounts(self, user_id: str) -> List[dict]:
         """계좌 목록 조회"""
         return await self.repo.find_all_by_user(user_id)

@@ -4,12 +4,16 @@ KIS (한국투자증권) API 통합 모듈
 from datetime import datetime
 import logging
 
-from app.exceptions import ExternalServiceError
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.exceptions import ExternalServiceError, NotFoundError
 from app.core.config import get_settings
+from app.core.security import decrypt
 from app.external.headers import kis_headers, kis_error_message
 from app.external.http_client import fetch
 from app.common.redis import get_redis
 from app.domain.order.entity import Order, ModifyOrder
+from app.domain.auth.repository import AuthRepository
 from typing import List, Optional
 
 logger = logging.getLogger(__name__)
@@ -106,18 +110,27 @@ async def get_approval(user_id: str):
     return data
 
 
-async def _get_user_auth(user_id: str):
-    """사용자 인증 정보 조회"""
+async def _get_user_auth(user_id: str, db: AsyncSession):
+    """사용자 인증 정보 조회 (토큰 만료 시 DB에서 인증키 조회 후 재발급)"""
     redis = await get_redis()
     access_data = await redis.hgetall(f"{user_id}_access_token")
     user_data = await redis.hgetall(user_id)
 
     if not access_data:
+        auth_id = user_data.get("AUTH_ID")
+        if not auth_id:
+            raise ExternalServiceError("KIS", "인증키가 선택되지 않았습니다. 인증키를 먼저 선택해주세요.")
+
+        repo = AuthRepository(db)
+        auth_data = await repo.find_by_id(user_id, int(auth_id))
+        if not auth_data:
+            raise NotFoundError("인증키", auth_id)
+
         access_data = await oauth_token(
             user_id,
-            user_data.get("SIMULATION_YN"),
-            user_data.get("API_KEY"),
-            user_data.get("SECRET_KEY")
+            auth_data["SIMULATION_YN"],
+            decrypt(auth_data["API_KEY"]),
+            decrypt(auth_data["SECRET_KEY"])
         )
 
     return user_data, access_data
@@ -127,11 +140,16 @@ async def _get_user_auth(user_id: str):
 # 잔고 조회 관련
 # ============================================================
 
-async def get_balance(user_id: str) -> int:
+async def get_balance(user_id: str, db: AsyncSession) -> int:
     """현금 잔고 조회"""
-    user_data, access_data = await _get_user_auth(user_id)
+    user_data, access_data = await _get_user_auth(user_id, db)
     path = "uapi/domestic-stock/v1/trading/inquire-psbl-order"
-    api_url = f"{access_data.get('api_url')}/{path}"
+
+    if access_data.get("simulation_yn") == "Y":
+        url = settings.DEV_API_URL
+    else:
+        url = settings.REAL_API_URL
+    api_url = f"{url}/{path}"
 
     if access_data.get("simulation_yn") == "Y":
         tr_id = "VTTC8908R"  # 모의투자
@@ -158,9 +176,9 @@ async def get_balance(user_id: str) -> int:
     return int(cash)
 
 
-async def get_stock_balance(user_id: str, fk100="", nk100="", result: Optional[List] = None,):
+async def get_stock_balance(user_id: str, db: AsyncSession, fk100="", nk100="", result: Optional[List] = None,):
     """보유 주식 조회"""
-    user_data, access_data = await _get_user_auth(user_id)
+    user_data, access_data = await _get_user_auth(user_id, db)
 
     path = "/uapi/domestic-stock/v1/trading/inquire-balance"
     if access_data.get("simulation_yn") == "Y":
@@ -206,7 +224,7 @@ async def get_stock_balance(user_id: str, fk100="", nk100="", result: Optional[L
         result.extend(body.get("output1"))
 
     if tr_cont == "F" or tr_cont == "M":  # 다음 페이지 존재하는 경우 자기 호출 처리
-        return await get_stock_balance(user_id, ctx_area_fk100, ctx_area_nk100, result)
+        return await get_stock_balance(user_id, db, ctx_area_fk100, ctx_area_nk100, result)
 
     return result
 
@@ -215,9 +233,9 @@ async def get_stock_balance(user_id: str, fk100="", nk100="", result: Optional[L
 # 주문 관련
 # ============================================================
 
-async def place_order_api(user_id: str, order: Order):
+async def place_order_api(user_id: str, order: Order, db: AsyncSession):
     """주식 주문"""
-    user_data, access_data = await _get_user_auth(user_id)
+    user_data, access_data = await _get_user_auth(user_id, db)
     if access_data.get("simulation_yn") == "Y":
         url = settings.DEV_API_URL
     else:
@@ -256,9 +274,9 @@ async def place_order_api(user_id: str, order: Order):
     return body
 
 
-async def get_cancelable_orders_api(user_id: str, fk100="", nk100=""):
+async def get_cancelable_orders_api(user_id: str, db: AsyncSession, fk100="", nk100=""):
     """주식 정정/취소 가능 주문 내역"""
-    user_data, access_data = await _get_user_auth(user_id)
+    user_data, access_data = await _get_user_auth(user_id, db)
 
     path = "/uapi/domestic-stock/v1/trading/inquire-psbl-rvsecncl"
     api_url = f"{settings.REAL_API_URL}/{path}"
@@ -282,9 +300,9 @@ async def get_cancelable_orders_api(user_id: str, fk100="", nk100=""):
     return body
 
 
-async def modify_or_cancel_order_api(user_id: str, order: ModifyOrder):
+async def modify_or_cancel_order_api(user_id: str, order: ModifyOrder, db: AsyncSession):
     """주문 정정/취소"""
-    user_data, access_data = await _get_user_auth(user_id)
+    user_data, access_data = await _get_user_auth(user_id, db)
     if access_data.get("simulation_yn") == "Y":
         url = settings.DEV_API_URL
     else:
@@ -324,9 +342,9 @@ async def modify_or_cancel_order_api(user_id: str, order: ModifyOrder):
 # 시세 조회 관련
 # ============================================================
 
-async def get_inquire_daily_ccld_obj(user_id: str, inqr_strt_dt=None, inqr_end_dt=None, fk100="", nk100=""):
+async def get_inquire_daily_ccld_obj(user_id: str, db: AsyncSession, inqr_strt_dt=None, inqr_end_dt=None, fk100="", nk100=""):
     """주식일별주문체결(현황)조회"""
-    user_data, access_data = await _get_user_auth(user_id)
+    user_data, access_data = await _get_user_auth(user_id, db)
     if access_data.get("simulation_yn") == "Y":
         url = settings.DEV_API_URL
         tr_id = "VTSC9215R"
@@ -368,7 +386,7 @@ async def get_inquire_daily_ccld_obj(user_id: str, inqr_strt_dt=None, inqr_end_d
     return body
 
 
-async def check_order_execution(user_id: str, order_no: str, max_retry: int = 3, delay: float = 1.0) -> Optional[dict]:
+async def check_order_execution(user_id: str, order_no: str, db: AsyncSession, max_retry: int = 3, delay: float = 1.0) -> Optional[dict]:
     """
     주문 체결 확인 (폴링)
 
@@ -393,7 +411,7 @@ async def check_order_execution(user_id: str, order_no: str, max_retry: int = 3,
 
     for attempt in range(max_retry):
         try:
-            result = await get_inquire_daily_ccld_obj(user_id)
+            result = await get_inquire_daily_ccld_obj(user_id, db)
 
             if not result or "output1" not in result:
                 logger.warning(f"[체결확인] 응답 없음, 재시도 {attempt + 1}/{max_retry}")
@@ -462,9 +480,9 @@ async def get_target_price(code: str):
     return body['output'][0]
 
 
-async def get_stock_data(user_id: str, code: str, start_date: str, end_date: str):
+async def get_stock_data(user_id: str, code: str, start_date: str, end_date: str, db: AsyncSession):
     """기간별 주식 데이터 조회"""
-    user_data, access_data = await _get_user_auth(user_id)
+    user_data, access_data = await _get_user_auth(user_id, db)
     if access_data.get("simulation_yn") == "Y":
         url = settings.DEV_API_URL
     else:
@@ -514,9 +532,9 @@ async def get_stock_data(user_id: str, code: str, start_date: str, end_date: str
     return body
 
 
-async def get_inquire_asking_price(user_id: str, code: str):
+async def get_inquire_asking_price(user_id: str, code: str, db: AsyncSession):
     """주식 호가 조회"""
-    user_data, access_data = await _get_user_auth(user_id)
+    user_data, access_data = await _get_user_auth(user_id, db)
     path = "/uapi/domestic-stock/v1/quotations/inquire-asking-price-exp-ccn"
     if access_data.get("simulation_yn") == "Y":
         url = settings.DEV_API_URL
@@ -538,9 +556,9 @@ async def get_inquire_asking_price(user_id: str, code: str):
     return body
 
 
-async def get_inquire_price(user_id: str, code: str):
+async def get_inquire_price(user_id: str, code: str, db: AsyncSession):
     """주식현재가 시세"""
-    user_data, access_data = await _get_user_auth(user_id)
+    user_data, access_data = await _get_user_auth(user_id, db)
     path = "/uapi/domestic-stock/v1/quotations/inquire-price"
     if access_data.get("simulation_yn") == "Y":
         url = settings.DEV_API_URL
