@@ -6,7 +6,7 @@
 import base64
 import os
 import jwt
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 from jwt.exceptions import ExpiredSignatureError
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
@@ -37,7 +37,8 @@ def create_access_token(user_id: str, user_info: dict = None) -> str:
     settings = get_settings()
     to_encode = {
         "sub": user_id,
-        "exp": datetime.now() + settings.token_access_exp,
+        "type": "access",
+        "exp": datetime.now(timezone.utc) + settings.token_access_exp,
         "user_claims": user_info or {}
     }
     return jwt.encode(to_encode, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
@@ -48,16 +49,22 @@ def create_refresh_token(user_id: str) -> str:
     settings = get_settings()
     to_encode = {
         "sub": user_id,
-        "exp": datetime.now() + settings.token_refresh_exp
+        "type": "refresh",
+        "exp": datetime.now(timezone.utc) + settings.token_refresh_exp
     }
     return jwt.encode(to_encode, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
 
 
-def verify_token(token: str) -> Optional[TokenData]:
+def verify_token(token: str, expected_type: str = "access") -> Optional[TokenData]:
     """토큰 검증 및 페이로드 추출"""
     settings = get_settings()
     try:
         payload = jwt.decode(token, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
+        token_type = payload.get("type")
+        if token_type != expected_type:
+            raise AuthenticationError(
+                f"잘못된 토큰 타입입니다: {token_type}", reason="invalid_token_type"
+            )
         user_id: str = payload.get("sub")
         if user_id is None:
             return None
