@@ -31,7 +31,7 @@ class BaseSingleEMAStrategy:
     ACCUM_ENTRY_OBV_MIN = 0.0        # OBV z-score 최소값
 
     # 1차 매수 [시나리오 B] 추세 추종 EMA 돌파 진입
-    BREAKOUT_ENTRY_GAP_MAX = 1.03    # EMA 괴리율 상한 (돌파 직후만)
+    BREAKOUT_ENTRY_GAP_MAX = 1.06    # EMA 괴리율 상한 (돌파 직후만)
     BREAKOUT_ENTRY_ADX_MIN = 15      # ADX 최소값 (최소 추세 강도)
     BREAKOUT_ENTRY_OBV_MIN = 0.0     # OBV z-score 최소값
 
