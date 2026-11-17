@@ -540,7 +540,12 @@ async def _run_job(user_id: str, mrkt: str, st_code: str, st_nm: str, token: str
         error = e.message
         error_code = e.error_code
         retry_at = getattr(e, "retry_at", None)  # QuotaExhaustedError — 한도 초기화 시각
-        logger.warning(f"[종목리뷰] {st_code} {st_nm} 실패: {e.message}")
+        # KIS 오류는 message 만으로 어느 TR 인지 알 수 없다 (HTTP 404 만 남는다) — 호출 URL·응답 본문을 같이 남긴다
+        origin = ""
+        if isinstance(e.detail, dict) and e.detail.get("url"):
+            origin = f" [{e.detail.get('method')} {e.detail['url']} → {e.detail.get('status_code')}: " \
+                     f"{(e.detail.get('response_text') or '')[:200]}]"
+        logger.warning(f"[종목리뷰] {st_code} {st_nm} 실패: {e.message}{origin}")
     except Exception as e:
         error = "분석 중 오류가 발생했습니다"
         logger.error(f"[종목리뷰] {st_code} {st_nm} 실패: {e}", exc_info=True)
