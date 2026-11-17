@@ -11,13 +11,12 @@ SIGNAL 상태:
 배치 스케줄:
 - 08:30: ema_cache_warmup_job (EMA 캐시 워밍업)
 - 09:00-14:55: trade_job (장중 매수/손절 체크)
-- 15:35: day_collect_job (일별 데이터 수집 + 종가 매도 신호 확정)
+- 15:35: day_collect_job (일별 데이터 수집)
 """
 import logging
 import asyncio
 from datetime import datetime
 from decimal import Decimal
-from dateutil.relativedelta import relativedelta
 from app.domain.swing.indicators import TechnicalIndicators
 from app.external.kis_api import get_target_price, get_inquire_price
 from app.common.database import Database
@@ -177,22 +176,17 @@ async def process_single_swing(
 
 async def day_collect_job():
     """
-    일별 데이터 수집 + 종가 매도 신호 확정 (장 마감 후 15:35)
+    일별 데이터 수집 (장 마감 후 15:35)
 
-    작업:
-    1. 활성 스윙의 당일 OHLCV 데이터 수집
-    2. SIGNAL 1, 2, 3 상태의 스윙에 대해 EOD trailing stop 신호 확정 (DB 저장)
+    작업: 활성 스윙의 당일 OHLCV 데이터 수집
     """
-    logger.info("[DAY COLLECT] 데이터 수집 + 매도 신호 확정 시작")
+    logger.info("[DAY COLLECT] 데이터 수집 시작")
     db = await Database.get_session()
 
     try:
-        swing_service = SwingService(db)
         stock_service = StockService(db)
 
-        # ========================================
-        # 1단계: 데이터 수집 (DATA_YN='Y'인 종목 대상)
-        # ========================================
+        # 데이터 수집 (DATA_YN='Y'인 종목 대상)
         data_target_stocks = await stock_service.get_data_target_stocks()
         logger.info(f"[DAY COLLECT] 데이터 수집 대상 종목 수: {len(data_target_stocks)}")
 
@@ -223,105 +217,10 @@ async def day_collect_job():
 
         logger.info("[DAY COLLECT] 데이터 수집 완료")
 
-        # ========================================
-        # 2단계: EOD 매도 신호 확정 (SIGNAL 1, 2, 3 대상)
-        # ========================================
-        await update_eod_signals_for_positions(swing_service, stock_service)
-
     except Exception as e:
         logger.error(f"[DAY COLLECT] day_collect_job 실패: {e}", exc_info=True)
     finally:
         await db.close()
-
-
-async def update_eod_signals_for_positions(swing_service: SwingService, stock_service: StockService):
-    """
-    포지션 보유 중인 스윙의 EOD trailing stop 신호 확정 (DB 저장)
-
-    대상: SIGNAL 1, 2, 3 (매수 완료 + 1차 매도 완료 상태)
-    작업:
-    1. 종가 기준으로 trailing stop 조건 체크
-       - 추세 약화: (+DI - -DI) 격차 2일 연속 감소
-       - 수급 약화: OBV z-score 감소 (2일전 대비)
-       - 고점 대비 하락률로 매도 단계 결정
-    2. EOD_SIGNALS 컬럼에 JSON 저장
-    3. PEAK_PRICE 업데이트
-    """
-    try:
-        from .trading_strategy_factory import TradingStrategyFactory
-        import pandas as pd
-
-        # SIGNAL 1, 2, 3 상태의 스윙 조회 (Service 계층 사용)
-        positions = await swing_service.get_eod_target_swings()
-
-        logger.info(f"[EOD SIGNALS] 대상 포지션: {len(positions)}개")
-
-        for position in positions:
-            try:
-                st_code = position.ST_CODE
-                swing_id = position.SWING_ID
-                swing_type = position.SWING_TYPE
-                signal = position.SIGNAL
-
-                # 과거 3년 데이터 조회
-                mrkt_code = position.MRKT_CODE
-                start_date = datetime.now() - relativedelta(years=3)
-                price_history = await stock_service.get_stock_history(mrkt_code, st_code, start_date)
-
-                if price_history is None or len(price_history) < 20:
-                    logger.warning(f"[EOD SIGNALS] {st_code}: 데이터 부족, 스킵")
-                    continue
-
-                # 지표 계산 (공통 메서드 사용)
-                df = pd.DataFrame(price_history)
-                indicators = TechnicalIndicators.prepare_full_indicators_for_single_ema(
-                    df,
-                    ema_short=20,
-                    ema_long=120,
-                    atr_period=14,
-                    adx_period=14,
-                    obv_lookback=7
-                )
-
-                row = indicators.iloc[-1]
-                prev_row = indicators.iloc[-2]
-                prev_prev_row = indicators.iloc[-3]
-
-                # 전략 선택
-                strategy = TradingStrategyFactory.get_strategy(swing_type)
-
-                # EOD trailing stop 체크 (JSON 생성 + PEAK_PRICE 업데이트)
-                updated_eod_signals, updated_peak = await strategy.update_eod_signals_to_db(
-                    row=row,
-                    prev_row=prev_row,
-                    prev_prev_row=prev_prev_row,
-                    peak_price=float(position.PEAK_PRICE or 0),
-                    signal=signal
-                )
-
-                # DB 업데이트
-                update_data = {
-                    "EOD_SIGNALS": updated_eod_signals,
-                    "PEAK_PRICE": updated_peak,
-                    "MOD_DT": datetime.now()
-                }
-                await swing_service.update_swing(swing_id, update_data)
-
-                if updated_eod_signals:
-                    import json
-                    eod_data = json.loads(updated_eod_signals)
-                    logger.info(f"[EOD SIGNALS] {st_code}: 매도 신호 확정 - {eod_data.get('action')} ({eod_data.get('reason')})")
-                else:
-                    logger.debug(f"[EOD SIGNALS] {st_code}: 신호 없음 (PEAK_PRICE={updated_peak:.0f})")
-
-            except Exception as e:
-                logger.error(f"[EOD SIGNALS] {position.ST_CODE} 처리 실패: {e}", exc_info=True)
-                continue
-
-        logger.info("[EOD SIGNALS] EOD 매도 신호 확정 완료")
-
-    except Exception as e:
-        logger.error(f"[EOD SIGNALS] update_eod_signals_for_positions 실패: {e}", exc_info=True)
 
 
 async def ema_cache_warmup_job():

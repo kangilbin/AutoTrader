@@ -189,7 +189,7 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
         if peak_price <= 0:
             return None, ""
 
-        drawdown_pct = (peak_price - row["STCK_LWPR"]) / peak_price * 100
+        drawdown_pct = (peak_price - row["STCK_CLPR"]) / peak_price * 100
 
         # ATR 기반 동적 trailing stop 임계값 계산
         atr = row.get("atr", 0)
@@ -240,10 +240,6 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
             return False, ""
 
         current_price = row["STCK_CLPR"]
-
-        row_date = row["STCK_BSOP_DATE"]
-        if hasattr(row_date, "month") and row_date.month == 6 and row_date.day == 2:
-            print("hellow TEST")
 
         # === 공통 필터 ===
         surge_filtered = abs(row["daily_return"]) <= self.MAX_SURGE_RATIO

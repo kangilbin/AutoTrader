@@ -138,51 +138,16 @@ class TradingStrategy(ABC):
         pass
 
     @classmethod
-    async def update_eod_signals_to_db(cls, row, prev_row, prev_prev_row, peak_price, signal):
-        pass
-
-    @classmethod
-    async def check_eod_sell_signal(
+    async def check_trailing_stop_signal(
         cls,
-        swing,
+        symbol: str,
+        current_price,
+        peak_price: int,
+        signal: int,
         cached_indicators: Dict
     ) -> Optional[Dict]:
-        """
-        EOD 신호 기반 매도 신호 체크 (DB의 EOD_SIGNALS 읽기)
-
-        Args:
-            swing: SWING_TRADE 레코드 (EOD_SIGNALS 컬럼 포함)
-            cached_indicators: 실시간 증분 계산된 지표
-
-        Returns:
-            {
-                "action": "SELL_PRIMARY" | "SELL_ALL" | "HOLD",
-                "reasons": list,
-                "signal_count": int
-            }
-        """
-        import json
-
-        eod_signals_json = swing.EOD_SIGNALS if hasattr(swing, 'EOD_SIGNALS') else None
-
-        if not eod_signals_json:
-            return {"action": "HOLD", "reasons": [], "signal_count": 0}
-
-        try:
-            eod_data = json.loads(eod_signals_json)
-            action = eod_data.get("action")
-            reason = eod_data.get("reason", "")
-
-            if action in ("SELL_PRIMARY", "SELL_ALL"):
-                return {
-                    "action": action,
-                    "reasons": [reason],
-                    "signal_count": 1
-                }
-            return {"action": "HOLD", "reasons": [], "signal_count": 0}
-        except Exception as e:
-            logger.error(f"EOD 신호 파싱 실패: {e}")
-            return {"action": "HOLD", "reasons": [], "signal_count": 0}
+        """[2차 방어선] 장중 trailing stop — 하위 클래스에서 구현"""
+        return None
 
     @classmethod
     async def process_trading_cycle(
@@ -395,12 +360,18 @@ class TradingStrategy(ABC):
                         logger.warning(f"[{st_code}] USER_ID 없음, 손절 주문 실행 불가")
 
                 else:
-                    # 손절 아니면 EOD 매도 신호 체크
-                    eod_result = await cls.check_eod_sell_signal(swing, cached_indicators)
+                    # 손절 아니면 장중 trailing stop 체크
+                    ts_result = await cls.check_trailing_stop_signal(
+                        symbol=st_code,
+                        current_price=current_price,
+                        peak_price=peak_price,
+                        signal=current_signal,
+                        cached_indicators=cached_indicators
+                    )
 
-                    if eod_result.get("action") == "SELL_PRIMARY":
+                    if ts_result and ts_result.get("action") == "SELL_PRIMARY":
                         logger.warning(
-                            f"[{user_id} - 주식: {st_code}] EOD 1차 매도 신호! 사유={eod_result.get('reasons')}"
+                            f"[{user_id} - 주식: {st_code}] 2차 방어선 1차 매도 신호! 사유={ts_result.get('reasons')}"
                         )
 
                         if user_id:
@@ -429,18 +400,18 @@ class TradingStrategy(ABC):
                                     swing_id=swing_id,
                                     trade_type="S",
                                     order_result=order_result,
-                                    reasons=eod_result.get("reasons", ["EOD 1차 매도"])
+                                    reasons=ts_result.get("reasons", ["1차 분할 매도"])
                                 )
 
-                                logger.info(f"[{user_id} - 주식: {st_code}] EOD 1차 분할 매도 완료 (sell_ratio={sell_ratio}%, 잔량={hold_qty}주)")
+                                logger.info(f"[{user_id} - 주식: {st_code}] 1차 분할 매도 완료 (sell_ratio={sell_ratio}%, 잔량={hold_qty}주)")
                             else:
-                                logger.error(f"[{user_id} - 주식: {st_code}] EOD 1차 매도 실패: {order_result.get('reason')}")
+                                logger.error(f"[{user_id} - 주식: {st_code}] 1차 분할 매도 실패: {order_result.get('reason')}")
                         else:
                             logger.warning(f"[{st_code}] USER_ID 없음, 매도 주문 실행 불가")
 
-                    elif eod_result.get("action") == "SELL_ALL":
+                    elif ts_result and ts_result.get("action") == "SELL_ALL":
                         logger.warning(
-                            f"[{user_id} - 주식: {st_code}] EOD 전량 매도 신호! 사유={eod_result.get('reasons')}"
+                            f"[{user_id} - 주식: {st_code}] 2차 방어선 전량 매도 신호! 사유={ts_result.get('reasons')}"
                         )
 
                         if user_id:
@@ -471,17 +442,17 @@ class TradingStrategy(ABC):
                                     swing_id=swing_id,
                                     trade_type="S",
                                     order_result=order_result,
-                                    reasons=eod_result.get("reasons", ["EOD 전량 매도"])
+                                    reasons=ts_result.get("reasons", ["전량 매도"])
                                 )
 
-                                logger.info(f"[{user_id} - 주식: {st_code}] EOD 전량 매도 완료, 사이클 종료")
+                                logger.info(f"[{user_id} - 주식: {st_code}] 전량 매도 완료, 사이클 종료")
                             else:
-                                logger.error(f"[{user_id} - 주식: {st_code}] EOD 전량 매도 실패: {order_result.get('reason')}")
+                                logger.error(f"[{user_id} - 주식: {st_code}] 전량 매도 실패: {order_result.get('reason')}")
                         else:
                             logger.warning(f"[{st_code}] USER_ID 없음, 매도 주문 실행 불가")
 
                     else:
-                        # EOD 매도 신호도 없으면 2차 매수 조건 확인
+                        # trailing stop 신호 없으면 2차 매수 조건 확인
                         entry_result = await cls.check_second_buy_signal(
                             redis_client=redis_client,
                             swing_id=swing_id,
@@ -594,10 +565,16 @@ class TradingStrategy(ABC):
                         logger.warning(f"[{st_code}] USER_ID 없음, 손절 주문 실행 불가")
 
                 else:
-                    # 손절 아니면 EOD 매도 신호 체크
-                    eod_result = await cls.check_eod_sell_signal(swing, cached_indicators)
+                    # 손절 아니면 장중 trailing stop 체크
+                    ts_result = await cls.check_trailing_stop_signal(
+                        symbol=st_code,
+                        current_price=current_price,
+                        peak_price=peak_price,
+                        signal=current_signal,
+                        cached_indicators=cached_indicators
+                    )
 
-                    if eod_result.get("action") == "SELL_PRIMARY":
+                    if ts_result and ts_result.get("action") == "SELL_PRIMARY":
                         if user_id:
                             # 1차 분할 매도 (sell_ratio%)
                             sell_qty = int(hold_qty * sell_ratio / 100)
@@ -624,18 +601,18 @@ class TradingStrategy(ABC):
                                     swing_id=swing_id,
                                     trade_type="S",
                                     order_result=order_result,
-                                    reasons=eod_result.get("reasons", ["EOD 1차 매도"])
+                                    reasons=ts_result.get("reasons", ["1차 분할 매도"])
                                 )
 
-                                logger.info(f"[{user_id} - 주식: {st_code}] EOD 1차 분할 매도 완료 (sell_ratio={sell_ratio}%, 잔량={hold_qty}주)")
+                                logger.info(f"[{user_id} - 주식: {st_code}] 1차 분할 매도 완료 (sell_ratio={sell_ratio}%, 잔량={hold_qty}주)")
                             else:
-                                logger.error(f"[{user_id} - 주식: {st_code}] EOD 1차 매도 실패: {order_result.get('reason')}")
+                                logger.error(f"[{user_id} - 주식: {st_code}] 1차 분할 매도 실패: {order_result.get('reason')}")
                         else:
                             logger.warning(f"[{st_code}] USER_ID 없음, 매도 주문 실행 불가")
 
-                    elif eod_result.get("action") == "SELL_ALL":
+                    elif ts_result and ts_result.get("action") == "SELL_ALL":
                         logger.warning(
-                            f"[{st_code}] EOD 전량 매도 신호! 사유={eod_result.get('reasons')}"
+                            f"[{st_code}] 2차 방어선 전량 매도 신호! 사유={ts_result.get('reasons')}"
                         )
 
                         if user_id:
@@ -666,12 +643,12 @@ class TradingStrategy(ABC):
                                     swing_id=swing_id,
                                     trade_type="S",
                                     order_result=order_result,
-                                    reasons=eod_result.get("reasons", ["EOD 전량 매도"])
+                                    reasons=ts_result.get("reasons", ["전량 매도"])
                                 )
 
-                                logger.info(f"[{user_id} - 주식: {st_code}] EOD 전량 매도 완료, 사이클 종료")
+                                logger.info(f"[{user_id} - 주식: {st_code}] 전량 매도 완료, 사이클 종료")
                             else:
-                                logger.error(f"[{user_id} - 주식: {st_code}] EOD 전량 매도 실패: {order_result.get('reason')}")
+                                logger.error(f"[{user_id} - 주식: {st_code}] 전량 매도 실패: {order_result.get('reason')}")
                         else:
                             logger.warning(f"[{st_code}] USER_ID 없음, 매도 주문 실행 불가")
 
@@ -796,10 +773,16 @@ class TradingStrategy(ABC):
                         logger.warning(f"[{st_code}] USER_ID 없음, 재진입 주문 실행 불가")
 
                 else:
-                    # 우선순위 2: 2차 매도 신호 체크
-                    eod_result = await cls.check_eod_sell_signal(swing, cached_indicators)
+                    # 우선순위 2: 장중 trailing stop (2차 전량 매도)
+                    ts_result = await cls.check_trailing_stop_signal(
+                        symbol=st_code,
+                        current_price=current_price,
+                        peak_price=peak_price,
+                        signal=current_signal,
+                        cached_indicators=cached_indicators
+                    )
 
-                    if eod_result.get("action") == "SELL_ALL":
+                    if ts_result and ts_result.get("action") == "SELL_ALL":
                         logger.info(f"[{st_code}] 2차 전량 매도 실행 (잔량: {hold_qty}주)")
 
                         if user_id:
@@ -829,7 +812,7 @@ class TradingStrategy(ABC):
                                     swing_id=swing_id,
                                     trade_type="S",
                                     order_result=order_result,
-                                    reasons=eod_result.get("reasons", ["2차 전량 매도"])
+                                    reasons=ts_result.get("reasons", ["2차 전량 매도"])
                                 )
 
                                 logger.info(f"[{user_id} - 주식: {st_code}] 2차 매도 완료, 사이클 종료")
