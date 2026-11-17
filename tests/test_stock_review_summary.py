@@ -5,9 +5,9 @@
   uv run pytest tests/test_stock_review_summary.py -v
 
 Gemini는 넘겨받은 숫자를 그대로 믿으므로, 요약 단계의 오독 가능 지점을 고정한다.
-- KIS 분기 손익은 연 누적이다 → 개별 분기로 바꾸지 않으면 2분기 실적이 두 배로 보인다
-- 연간 조회 첫 행은 진행 중인 연도의 누적이다 → 확정 실적과 섞이면 '실적 반토막'으로 읽힌다
-- 결산월이 12월이 아닌 종목이 있다 (6월 결산 → 첫 분기는 9월)
+- DART 분기 손익은 thstrm_amount 가 단독 분기, thstrm_add_amount 가 누적이다 → 헷갈리면 실적이 두 배로 보인다
+- 4분기는 보고서가 없다 → 사업보고서 연간 − 3분기 누적으로 구하고, 3분기를 모르면 만들지 않는다
+- 결산월이 12월이 아닌 종목이 있다 → 달력이 아니라 계정 행의 기간 문자열에서 읽는다
 - 뉴스 TR은 다른 종목 기사와 시황 묶음을 섞어 준다
 """
 import unittest
@@ -15,77 +15,118 @@ import unittest
 from app.domain.stock_review import summary as s
 
 
-def _income(yymm: str, sale, op, net) -> dict:
-    return {"stac_yymm": yymm, "sale_account": str(sale), "bsop_prti": str(op), "thtr_ntin": str(net)}
+def _is(name: str, amount, add=None, dt="2026.01.01 ~ 2026.09.30", sj="IS") -> dict:
+    """DART 주요계정 행 — 분기·반기 보고서의 thstrm_amount 는 단독 분기, thstrm_add_amount 는 연 누적"""
+    return {"sj_div": sj, "account_nm": name, "thstrm_amount": f"{amount:,}" if amount is not None else "-",
+            "thstrm_add_amount": f"{add:,}" if add is not None else None, "thstrm_dt": dt}
 
 
-class QuarterlyIncomeTest(unittest.TestCase):
-    """연 누적 → 개별 분기"""
+def _report(year: int, code: str, sales, op, net, add=(None, None, None), dt="2026.01.01 ~ 2026.09.30") -> dict:
+    rows = [_is("매출액", sales, add[0], dt), _is("영업이익", op, add[1], dt),
+            _is("당기순이익(손실)", net, add[2], dt), _is("당기순이익(손실)", net, add[2], dt)]
+    return {"year": year, "reprt_code": code, "rows": rows}
 
-    def test_december_fiscal_year(self):
-        rows = [
-            _income("202606", 300, 30, 20),   # 1~6월 누적
-            _income("202603", 100, 10, 5),    # 1분기 = 누적 그대로
-            _income("202512", 1000, 90, 60),
-            _income("202509", 700, 60, 40),
+
+EOK = 100_000_000
+
+
+class DartQuarterlyIncomeTest(unittest.TestCase):
+    """DART 보고서 → 개별 분기 손익"""
+
+    def test_quarter_and_half_reports_use_standalone_amount(self):
+        """thstrm_amount 가 이미 단독 분기다 — thstrm_add_amount(누적)를 쓰면 실적이 부풀어 보인다"""
+        reports = [_report(2026, "11014", 300 * EOK, 30 * EOK, 20 * EOK, add=(900 * EOK, 90 * EOK, 60 * EOK))]
+        result = s.quarterly_income(reports)
+        self.assertEqual(result[0]["매출액_억원"], 300.0)
+        self.assertEqual(result[0]["결산월"], "2026-09")
+        self.assertEqual(result[0]["영업이익률_pct"], 10.0)
+
+    def test_fourth_quarter_is_annual_minus_third_quarter_cumulative(self):
+        reports = [
+            _report(2025, "11011", 1000 * EOK, 100 * EOK, 60 * EOK, dt="2025.01.01 ~ 2025.12.31"),
+            _report(2025, "11014", 250 * EOK, 25 * EOK, 15 * EOK, add=(700 * EOK, 70 * EOK, 40 * EOK),
+                    dt="2025.01.01 ~ 2025.09.30"),
         ]
-        result = s.quarterly_income(rows, fiscal_end_month=12)
+        result = s.quarterly_income(reports)
+        self.assertEqual(result[0]["결산월"], "2025-12")
+        self.assertEqual(result[0]["매출액_억원"], 300.0)      # 1000 - 700
+        self.assertEqual(result[0]["당기순이익_억원"], 20.0)    # 60 - 40
+        self.assertEqual(result[1]["매출액_억원"], 250.0)
 
-        self.assertEqual([r["결산월"] for r in result], ["202606", "202603", "202512", "202509"])
-        self.assertEqual(result[0]["매출액_억원"], 200)   # 300 - 100
-        self.assertEqual(result[0]["영업이익_억원"], 20)
-        self.assertEqual(result[1]["매출액_억원"], 100)   # 첫 분기는 차감 없음
-        self.assertEqual(result[2]["매출액_억원"], 300)   # 1000 - 700
+    def test_fourth_quarter_skipped_without_third_quarter_report(self):
+        """3분기 누적을 모르면 4분기를 계산할 수 없다 — 연간 값을 4분기 값으로 내보내면 안 된다"""
+        reports = [_report(2025, "11011", 1000 * EOK, 100 * EOK, 60 * EOK, dt="2025.01.01 ~ 2025.12.31")]
+        self.assertEqual(s.quarterly_income(reports), [])
 
-    def test_missing_previous_quarter_is_none(self):
-        """직전 분기 누적이 없으면 추정하지 않는다"""
-        result = s.quarterly_income([_income("202509", 700, 60, 40)], fiscal_end_month=12)
-        self.assertIsNone(result[0]["매출액_억원"])
+    def test_non_december_fiscal_year_uses_period_end_from_dates(self):
+        """6월 결산 회사의 3분기 보고서 = 3월말 — 달력 분기로 가정하지 않고 기간 문자열에서 읽는다"""
+        reports = [_report(2026, "11014", 100 * EOK, 10 * EOK, 5 * EOK, dt="2025.07.01 ~ 2026.03.31")]
+        self.assertEqual(s.quarterly_income(reports)[0]["결산월"], "2026-03")
 
-    def test_june_fiscal_year(self):
-        """6월 결산: 9월이 첫 분기, 12월은 9월을 뺀다"""
+    def test_missing_operating_income_is_none(self):
+        """금융업 등 영업이익 계정이 없는 회사 — 지어내지 않고 None"""
+        rep = {"year": 2026, "reprt_code": "11013",
+               "rows": [_is("매출액", 100 * EOK, dt="2026.01.01 ~ 2026.03.31")]}
+        item = s.quarterly_income([rep])[0]
+        self.assertIsNone(item["영업이익_억원"])
+        self.assertIsNone(item["영업이익률_pct"])
+
+    def test_limit(self):
+        reports = [_report(2026, "11014", EOK, EOK, EOK)] * 7
+        self.assertEqual(len(s.quarterly_income(reports, limit=5)), 5)
+
+
+class DartAnnualIncomeTest(unittest.TestCase):
+
+    def _annual(self):
+        """실제 응답처럼 한 계정 행에 당기·전기·전전기가 같이 온다"""
+        row = {"sj_div": "IS", "account_nm": "매출액",
+               "thstrm_amount": f"{1500 * EOK:,}", "thstrm_dt": "2025.01.01 ~ 2025.12.31",
+               "frmtrm_amount": f"{700 * EOK:,}", "frmtrm_dt": "2024.01.01 ~ 2024.12.31",
+               "bfefrmtrm_amount": f"{500 * EOK:,}", "bfefrmtrm_dt": "2023.01.01 ~ 2023.12.31"}
+        return {"year": 2025, "reprt_code": "11011", "rows": [row]}
+
+    def test_three_years_from_one_annual_report(self):
+        result = s.annual_income([self._annual()])
+        self.assertEqual([r["결산월"] for r in result], ["2025-12", "2024-12", "2023-12"])
+        self.assertEqual([r["매출액_억원"] for r in result], [1500.0, 700.0, 500.0])
+
+    def test_no_annual_report(self):
+        """분기 보고서의 누적 행은 확정 연간 실적이 아니다"""
+        self.assertEqual(s.annual_income([_report(2026, "11014", EOK, EOK, EOK)]), [])
+
+
+class DartIndicatorsTest(unittest.TestCase):
+
+    def test_picks_by_code_and_blanks_broken_values(self):
         rows = [
-            _income("202612", 250, 25, 15),
-            _income("202609", 100, 10, 5),
-            _income("202606", 900, 80, 50),
-            _income("202603", 600, 50, 30),
+            {"idx_code": "M211550", "idx_nm": "ROE", "idx_val": "66.495"},
+            {"idx_code": "M221100", "idx_nm": "부채비율", "idx_val": "91.099"},
+            {"idx_code": "M221000", "idx_nm": "자기자본비율", "idx_val": "#########"},   # 실제로 내려오는 깨진 값
+            {"idx_code": "M231000", "idx_nm": "매출액증가율(YoY)"},                      # idx_val 키 자체가 없는 행
+            {"idx_code": "M212600", "idx_nm": "납입자본이익률", "idx_val": "9477.5"},    # 고르지 않는 지표
         ]
-        result = s.quarterly_income(rows, fiscal_end_month=6)
-        by = {r["결산월"]: r["매출액_억원"] for r in result}
-        self.assertEqual(by["202612"], 150)
-        self.assertEqual(by["202609"], 100)
-        self.assertEqual(by["202606"], 300)
-
-    def test_october_fiscal_year_wraps_to_january(self):
-        """10월 결산: 첫 분기는 이듬해 1월 — 13월로 계산하면 전년 연간 누적을 빼서 큰 음수가 된다"""
-        rows = [
-            _income("202604", 250, 25, 15),   # 2분기 누적 (11~4월)
-            _income("202601", 100, 10, 5),    # 1분기 (11~1월)
-            _income("202510", 900, 80, 50),   # 전 회계연도 연간
-        ]
-        by = {r["결산월"]: r["매출액_억원"] for r in s.quarterly_income(rows, fiscal_end_month=10)}
-        self.assertEqual(by["202601"], 100)
-        self.assertEqual(by["202604"], 150)
-
-    def test_first_quarter_month_all_fiscal_ends(self):
-        expected = {12: 3, 3: 6, 6: 9, 9: 12, 10: 1, 11: 2}
-        for fiscal_end, first_q in expected.items():
-            self.assertEqual(s._first_quarter_month(fiscal_end), first_q, fiscal_end)
-
-    def test_missing_marker_is_none(self):
-        rows = [_income("202603", "99.99", 10, 5)]
-        result = s.quarterly_income(rows, fiscal_end_month=12)
-        self.assertIsNone(result[0]["매출액_억원"])
-        self.assertEqual(result[0]["영업이익_억원"], 10)
+        result = s.indicators(rows)
+        self.assertEqual(result["수익성"]["ROE_pct"], 66.5)
+        self.assertEqual(result["안정성"]["부채비율_pct"], 91.1)
+        self.assertIsNone(result["안정성"]["자기자본비율_pct"])
+        self.assertIsNone(result["성장성"]["매출액증가율_pct"])
+        self.assertNotIn("납입자본이익률", str(result))
 
 
-class AnnualIncomeTest(unittest.TestCase):
+class SummarizeFinancialsTest(unittest.TestCase):
 
-    def test_excludes_in_progress_year(self):
-        """연간 조회 첫 행(202606 = 올해 상반기 누적)은 확정 실적이 아니다"""
-        rows = [_income("202606", 300, 30, 20), _income("202512", 1000, 90, 60), _income("202412", 900, 80, 50)]
-        result = s.annual_income(rows, fiscal_end_month=12)
-        self.assertEqual([r["결산월"] for r in result], ["202512", "202412"])
+    def test_no_reports_leaves_reason_for_model(self):
+        """신규 상장 등 보고서가 없으면 빈 재무를 '좋은 실적'처럼 보내지 않고 사유를 남긴다"""
+        result = s.summarize_financials({"reports": [], "indicators": []})
+        self.assertIn("조회실패", result)
+        self.assertNotIn("분기실적_개별분기", result)
+
+    def test_shape(self):
+        data = {"reports": [_report(2026, "11014", 300 * EOK, 30 * EOK, 20 * EOK)], "indicators": []}
+        result = s.summarize_financials(data)
+        self.assertEqual(result["기준보고서"], "2026년 3분기 (2026-09 결산)")
+        self.assertEqual(set(result), {"기준보고서", "분기실적_개별분기", "연간실적_확정", "재무지표_최근보고서_연초누적기준"})
 
 
 class QuoteStatusTest(unittest.TestCase):

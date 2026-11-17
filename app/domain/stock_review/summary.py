@@ -1,9 +1,9 @@
 """
-종목 리뷰용 데이터 요약 — KIS 원본 응답을 Gemini 프롬프트용 dict로 줄인다.
+종목 리뷰용 데이터 요약 — KIS·DART 원본 응답을 Gemini 프롬프트용 dict로 줄인다.
 
 순수 함수만 둔다 (DB·네트워크·Redis 없음). LLM은 원시 숫자 수백 개를 정확히
-읽지 못하므로 지표를 여기서 계산해 넘기고, 오독하기 쉬운 값(연 누적 분기 실적,
-진행 중인 연도의 연간 행, KIS의 결측 표시 99.99)은 여기서 정리한다.
+읽지 못하므로 지표를 여기서 계산해 넘기고, 오독하기 쉬운 값(DART 분기 단독/누적 구분,
+4분기 파생, 깨진 지표값 #####, KIS의 결측 표시 99.99)은 여기서 정리한다.
 """
 import re
 from datetime import date
@@ -12,7 +12,7 @@ from typing import Optional
 import numpy as np
 import talib as ta
 
-# KIS 재무 TR이 값이 없는 항목에 채워 보내는 표시
+# KIS 가 값이 없는 항목에 채워 보내는 표시 (재무 TR 종료 후에도 현재가 등 다른 TR 에서 쓰인다)
 _MISSING = "99.99"
 
 # 주식현재가 iscd_stat_cls_code
@@ -228,85 +228,136 @@ def summarize_price(bars: list[dict], last_bar_incomplete: bool = False) -> dict
 
 
 # ============================================================
-# 재무
+# 재무 (DART)
 # ============================================================
+# 분기·반기 보고서의 thstrm_amount 는 그 분기 단독 값이고 thstrm_add_amount 가 연 누적이다.
+# 사업보고서는 연간 값뿐이라 4분기 단독 값은 '연간 − 같은 해 3분기 누적'으로 구한다.
+# 결산월은 계정 행의 기간 문자열("2026.01.01 ~ 2026.09.30", "2026.09.30 현재")에서 읽는다 — 12월 결산이 아닌 회사도 맞는다.
 
-def _yymm_minus_3(yymm: str) -> str:
-    year, month = int(yymm[:4]), int(yymm[4:])
-    month -= 3
-    if month <= 0:
-        year, month = year - 1, month + 12
-    return f"{year:04d}{month:02d}"
+_Q1, _HALF, _Q3, _ANNUAL = "11013", "11012", "11014", "11011"
+_QUARTER_NAME = {_Q1: "1분기", _HALF: "반기", _Q3: "3분기", _ANNUAL: "사업보고서"}
+
+_IS = "IS"
+_ACCOUNT_NAMES = {
+    "매출액": ("매출액", "영업수익", "수익(매출액)"),
+    "영업이익": ("영업이익", "영업이익(손실)"),
+    "당기순이익": ("당기순이익", "당기순이익(손실)", "분기순이익", "반기순이익"),
+}
+_EOK = 1e8
+_DATE = re.compile(r"(\d{4})\.(\d{2})\.\d{2}")
+
+# 지표는 이름이 아니라 코드로 고른다 (이름은 분류 안에서 겹치거나 바뀔 수 있다)
+_INDICATORS = {
+    "수익성": {"M211200": "순이익률_pct", "M211300": "매출총이익률_pct", "M211550": "ROE_pct"},
+    "안정성": {"M221100": "부채비율_pct", "M221200": "유동비율_pct", "M221000": "자기자본비율_pct"},
+    "성장성": {"M231000": "매출액증가율_pct", "M231400": "영업이익증가율_pct", "M231800": "순이익증가율_pct"},
+}
 
 
-def _first_quarter_month(fiscal_end_month: int) -> int:
-    """회계연도 첫 분기 결산월 (12월 결산 → 3월, 6월 결산 → 9월, 10월 결산 → 1월)"""
-    return (fiscal_end_month + 3 - 1) % 12 + 1
+def _amount(value) -> Optional[float]:
+    """DART 금액 문자열("1,527,344,973,381") → float(원). 빈 값·'-'는 None"""
+    if value is None:
+        return None
+    text = str(value).replace(",", "").strip()
+    if not text or text == "-":
+        return None
+    try:
+        return float(text)
+    except ValueError:
+        return None
 
 
-_INCOME_FIELDS = {"sale_account": "매출액", "bsop_prti": "영업이익", "thtr_ntin": "당기순이익"}
+def _account(rows: list[dict], key: str) -> Optional[dict]:
+    """손익계산서(IS) 행 중 계정명이 맞는 첫 행 (당기순이익은 같은 이름이 두 번 나오는데 값은 같다)"""
+    names = _ACCOUNT_NAMES[key]
+    return next((r for r in rows if r.get("sj_div") == _IS and r.get("account_nm") in names), None)
 
 
-def quarterly_income(rows: list[dict], fiscal_end_month: int, limit: int = 5) -> list[dict]:
-    """연 누적 분기 손익 → 개별 분기 값 (최신 먼저)
+def _period_end(rows: list[dict], field: str = "thstrm_dt") -> Optional[str]:
+    """계정 행의 기간 문자열에서 마지막 날짜의 연-월 ("2026.01.01 ~ 2026.09.30" → "2026-09")"""
+    for row in rows:
+        dates = _DATE.findall(row.get(field) or "")
+        if dates:
+            year, month = dates[-1]
+            return f"{year}-{month}"
+    return None
 
-    KIS 분기 손익은 회계연도 시작부터의 누적이다 (12월 결산 202606 = 1~6월 합계).
-    첫 분기는 누적값이 곧 분기값이고, 나머지는 직전 분기 누적을 뺀다.
-    직전 분기 행이 없으면 계산할 수 없으므로 None으로 둔다.
+
+def _eok(value: Optional[float]) -> Optional[float]:
+    return None if value is None else _round(value / _EOK, 1)
+
+
+def _margin(op: Optional[float], sales: Optional[float]) -> Optional[float]:
+    return _round(op / sales * 100, 1) if op is not None and sales not in (None, 0) else None
+
+
+def _quarter_item(period: Optional[str], sales, op, net) -> dict:
+    return {"결산월": period, "매출액_억원": _eok(sales), "영업이익_억원": _eok(op),
+            "당기순이익_억원": _eok(net), "영업이익률_pct": _margin(op, sales)}
+
+
+def quarterly_income(reports: list[dict], limit: int = 5) -> list[dict]:
+    """제출된 보고서(최신 먼저) → 개별 분기 손익 (최신 먼저)
+
+    4분기는 사업보고서 연간 값에서 같은 해 3분기 누적을 뺀다. 3분기 보고서가 없으면 계산할 수 없어 건너뛴다.
     """
-    by_yymm = {r["stac_yymm"]: r for r in rows if r.get("stac_yymm")}
-    first_q = _first_quarter_month(fiscal_end_month)
+    q3_cum = {}  # 사업연도 → 3분기 누적 (매출·영업이익·순이익)
+    for rep in reports:
+        if rep["reprt_code"] == _Q3:
+            q3_cum[rep["year"]] = tuple(
+                _amount((_account(rep["rows"], k) or {}).get("thstrm_add_amount")) for k in _ACCOUNT_NAMES
+            )
+
     result = []
-    for yymm in sorted(by_yymm, reverse=True)[:limit]:
-        cur = by_yymm[yymm]
-        prev = None if int(yymm[4:]) == first_q else by_yymm.get(_yymm_minus_3(yymm))
-        item = {"결산월": yymm}
-        for field, label in _INCOME_FIELDS.items():
-            value = _num(cur.get(field))
-            if int(yymm[4:]) != first_q:
-                prev_value = _num(prev.get(field)) if prev else None
-                value = value - prev_value if value is not None and prev_value is not None else None
-            item[f"{label}_억원"] = _round(value)
-        result.append(item)
-    return result
+    for rep in reports:
+        values = tuple(_amount((_account(rep["rows"], k) or {}).get("thstrm_amount")) for k in _ACCOUNT_NAMES)
+        if all(v is None for v in values):
+            continue
+        if rep["reprt_code"] == _ANNUAL:
+            cum = q3_cum.get(rep["year"])
+            if cum is None:
+                continue
+            values = tuple(a - c if a is not None and c is not None else None for a, c in zip(values, cum))
+        result.append(_quarter_item(_period_end(rep["rows"]), *values))
+    return result[:limit]
 
 
-def annual_income(rows: list[dict], fiscal_end_month: int, limit: int = 3) -> list[dict]:
-    """연간 손익 — 결산월 행만 (진행 중인 연도의 누적 행은 확정 실적이 아니므로 제외)"""
-    closed = [r for r in rows if r.get("stac_yymm") and int(r["stac_yymm"][4:]) == fiscal_end_month]
-    closed.sort(key=lambda r: r["stac_yymm"], reverse=True)
-    return [
-        {"결산월": r["stac_yymm"], **{f"{label}_억원": _num(r.get(f)) for f, label in _INCOME_FIELDS.items()}}
-        for r in closed[:limit]
-    ]
+def annual_income(reports: list[dict], limit: int = 3) -> list[dict]:
+    """가장 최근 사업보고서의 당기·전기·전전기 연간 손익 (최신 먼저)"""
+    annual = next((r for r in reports if r["reprt_code"] == _ANNUAL), None)
+    if not annual:
+        return []
+    rows = annual["rows"]
+    result = []
+    for amount_field, date_field in (("thstrm_amount", "thstrm_dt"), ("frmtrm_amount", "frmtrm_dt"),
+                                     ("bfefrmtrm_amount", "bfefrmtrm_dt")):
+        values = tuple(_amount((_account(rows, k) or {}).get(amount_field)) for k in _ACCOUNT_NAMES)
+        if all(v is None for v in values):
+            continue
+        result.append(_quarter_item(_period_end(rows, date_field), *values))
+    return result[:limit]
 
 
-def ratio_rows(ratio: list[dict], stability: list[dict], limit: int = 5) -> list[dict]:
-    """재무비율 + 안정성비율 (최신 먼저). 분기 행은 연 누적 기준 비율이다"""
-    stab_by = {r.get("stac_yymm"): r for r in stability}
-    rows = sorted((r for r in ratio if r.get("stac_yymm")), key=lambda r: r["stac_yymm"], reverse=True)
-    return [
-        {
-            "결산월": r["stac_yymm"],
-            "ROE_pct": _num(r.get("roe_val")),
-            "매출액증가율_pct": _num(r.get("grs")),
-            "영업이익증가율_pct": _num(r.get("bsop_prfi_inrt")),
-            "순이익증가율_pct": _num(r.get("ntin_inrt")),
-            "부채비율_pct": _num(r.get("lblt_rate")),
-            "유동비율_pct": _num((stab_by.get(r["stac_yymm"]) or {}).get("crnt_rate")),
-            "EPS_연누적": _num(r.get("eps")),   # 해당 결산월까지 올해 누적 (연간 EPS 와 직접 비교 불가)
-            "BPS_분기말": _num(r.get("bps")),
-        }
-        for r in rows[:limit]
-    ]
-
-
-def summarize_financials(income_q: list[dict], income_y: list[dict], ratio_q: list[dict],
-                         stability_q: list[dict], fiscal_end_month: int) -> dict:
+def indicators(rows: list[dict]) -> dict:
+    """최신 보고서의 재무지표 {수익성: {...}, 안정성: {...}, 성장성: {...}} — 결측·깨진 값(#####)은 None"""
+    by_code = {r.get("idx_code"): _num(r.get("idx_val")) for r in rows}
     return {
-        "분기실적_개별분기": quarterly_income(income_q, fiscal_end_month),
-        "연간실적_확정": annual_income(income_y, fiscal_end_month),
-        "재무비율_분기_연누적기준": ratio_rows(ratio_q, stability_q),
+        group: {label: _round(by_code.get(code), 1) for code, label in fields.items()}
+        for group, fields in _INDICATORS.items()
+    }
+
+
+def summarize_financials(data: dict) -> dict:
+    """DART 보고서 묶음({"reports", "indicators"}) → 프롬프트용 재무. 보고서가 없으면 그 사실을 남긴다"""
+    reports = data.get("reports") or []
+    if not reports:
+        return {"조회실패": "DART 에 제출된 재무 보고서가 없다(신규 상장 등) — 재무 판단은 PER·EPS 등 현재가 지표로만 한다"}
+    latest = reports[0]
+    return {
+        "기준보고서": f"{latest['year']}년 {_QUARTER_NAME.get(latest['reprt_code'], '')} ({_period_end(latest['rows'])} 결산)",
+        "분기실적_개별분기": quarterly_income(reports),
+        "연간실적_확정": annual_income(reports),
+        "재무지표_최근보고서_연초누적기준": indicators(data.get("indicators") or []),
     }
 
 

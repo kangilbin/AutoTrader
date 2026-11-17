@@ -34,6 +34,8 @@ docker run -p 8000:auto-trader
   지정한 사용자는 `AUTH_KEY` 행을 최소 1개 가지고 있어야 한다 (로그인 상태는 불필요).
 - `GEMINI_API_KEY`: AI 종목 분석용 서버 키 (무료 등급 — 모델별 하루 20회, 실패 요청도 셈)
 - `FINNHUB_API_KEY`: 미국 종목 재무 지표 (무료 등급 분당 60회). 없으면 미국 분석은 재무 없이 진행된다
+- `DART_API_KEY`: 국내 종목 재무 (DART OpenAPI, 무료·일 약 2만 건). **KIS 국내 재무 TR(손익·재무비율 등)은 2026-11-11 종료돼 404 로 막힌다.**
+  없으면 국내 분석은 재무 없이(현재가 PER·EPS 로만) 진행된다. 운영 `.env` 에도 넣어야 한다
 - `FRED_API_KEY`: 하이일드 스프레드(신용 게이트) 조회용 공식 API 키 (선택). 없으면 키 없는 CSV 엔드포인트로 받는다
 
 ## 아키텍처
@@ -86,6 +88,7 @@ app/
 │   ├── headers.py           # KIS API 헤더 생성
 │   ├── gemini_api.py        # Gemini 호출 (서버 키, 무료 모델 대체·한도 소진 처리, JSON 스키마 응답)
 │   ├── finnhub_api.py       # 미국 종목 재무 지표 (KIS 해외 TR 엔 재무제표가 없다)
+│   ├── dart_api.py          # 국내 종목 재무 (DART — 고유번호 Redis 캐시, 주요계정·재무지표, 로그의 crtfc_key 마스킹)
 │   ├── fred_api.py          # FRED 하이일드 스프레드(BAMLH0A0HYM2) — 신용 게이트용, 로그의 api_key 마스킹
 │   └── expo_push.py         # Expo 푸시 알림 발송
 ├── domain/                  # 도메인별 모듈
@@ -125,7 +128,7 @@ app/
 │   │   └── price_adjustment_batch.py # 액면분할 등 가격 보정
 │   ├── trade_history/       # 체결 이력 (TRADE_HISTORY)
 │   ├── stock_review/        # AI 종목 분석 (지금 가격이 합리적인가 + 전략 추천, 국내·미국)
-│   │   ├── summary.py       # KIS 원본 → 프롬프트용 요약 (누적 재무→분기, 뉴스 필터)
+│   │   ├── summary.py       # KIS·DART 원본 → 프롬프트용 요약 (DART 재무→분기·연간·지표, 뉴스 필터)
 │   │   ├── prompt.py        # 시스템 지시문 (실전 전략 describe_all() 포함)
 │   │   └── service.py       # 백그라운드 분석 + Redis 상태 (DB 미사용)
 │   └── [domain]/            # user, account, auth, order, device,

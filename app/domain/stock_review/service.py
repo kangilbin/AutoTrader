@@ -39,7 +39,7 @@ from app.domain.stock_review.schemas import GeminiReview, StockReviewResponse, s
 from app.domain.swing.trading.trading_strategy_factory import TradingStrategyFactory
 from app.core.market_code import is_overseas
 from app.exceptions import AppError, NotFoundError
-from app.external import finnhub_api, foreign_api, gemini_api, kis_api
+from app.external import dart_api, finnhub_api, foreign_api, gemini_api, kis_api
 
 logger = logging.getLogger(__name__)
 
@@ -285,7 +285,7 @@ class StockReviewService:
 
     async def _collect_kr(self, user_id: str, mrkt: str, st_code: str, st_nm: str,
                           auth: dict) -> Union[StockReviewResponse, CollectedData]:
-        """국내 — KIS 현재가·일봉·투자자·재무·뉴스"""
+        """국내 — KIS 현재가·일봉·투자자·뉴스 + DART 재무"""
         now = _now()
         quote = (await kis_api.get_inquire_price(user_id, st_code, self.db, access_data=auth))["output"]
 
@@ -303,18 +303,7 @@ class StockReviewService:
         investors = await kis_api.get_investor_trend(user_id, st_code, self.db, access_data=auth)
         investor_incomplete = session_open and bool(investors) and investors[0].get("stck_bsop_date") == today
 
-        async def fin(kind: str, quarterly: bool = True) -> list:
-            return await kis_api.get_financial_statement(
-                user_id, st_code, kind, self.db, quarterly=quarterly, access_data=auth,
-            )
-
-        financials = summary.summarize_financials(
-            income_q=await fin("income"),
-            income_y=await fin("income", quarterly=False),
-            ratio_q=await fin("ratio"),
-            stability_q=await fin("stability"),
-            fiscal_end_month=int(quote.get("stac_month") or 12),
-        )
+        financials = await self._kr_financials(st_code, now)
         news = summary.filter_news(await self._fetch_news(user_id, st_code, now, auth), st_code, name=st_nm)
 
         return CollectedData(
@@ -362,6 +351,19 @@ class StockReviewService:
                 "뉴스": news,
             },
         )
+
+    @staticmethod
+    async def _kr_financials(st_code: str, now: datetime) -> dict:
+        """DART 재무 — KIS 국내 재무 TR 은 2026-11-11 종료됐다. 실패해도 분석은 계속한다.
+        실패 사실을 데이터에 남겨 모델이 '재무 근거 없음'을 감안하게 한다."""
+        try:
+            corp_code = await dart_api.get_corp_code(st_code)
+            if not corp_code:
+                return {"조회실패": "DART 에 등록된 상장사가 아니다 — 재무 판단은 PER·EPS 등 현재가 지표로만 한다"}
+            return summary.summarize_financials(await dart_api.get_recent_reports(corp_code, now.year))
+        except AppError as e:
+            logger.warning(f"[종목리뷰] {st_code} DART 재무 조회 실패: {e.message}")
+            return {"조회실패": "재무 데이터를 가져오지 못했다 — 재무 판단은 PER·EPS 등 현재가 지표로만 한다"}
 
     @staticmethod
     async def _us_financials(symbol: str) -> dict:
