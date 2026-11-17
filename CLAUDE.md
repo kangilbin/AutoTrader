@@ -82,7 +82,7 @@ app/
 │   ├── price.py             # 가격 정밀도·호가 단위 (국내 정수 / 해외 소수점)
 │   └── order.py             # 주문 파라미터 DTO + 주문번호 비교
 ├── external/                # 외부 API 통합
-│   ├── kis_api.py           # KIS 국내 API (시세, 주문, 잔고, 체결, 재무·투자자·뉴스)
+│   ├── kis_api.py           # KIS 국내 API (시세, 주문, 잔고, 체결, 투자자·뉴스)
 │   ├── foreign_api.py       # KIS 해외 API (시세, 호가, 주문, 체결)
 │   ├── http_client.py       # 범용 HTTP 클라이언트 (httpx 래퍼, 재시도)
 │   ├── headers.py           # KIS API 헤더 생성

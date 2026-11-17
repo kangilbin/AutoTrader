@@ -1064,23 +1064,12 @@ async def get_volume_power_rank(user_id: str, db: AsyncSession, input_iscd: str 
 
 
 # ============================================================
-# 종목 리서치 (투자자 동향 / 재무 / 뉴스·공시)
+# 종목 리서치 (투자자 동향 / 뉴스·공시)
 # ============================================================
 # 인증은 사용자가 지금 쓰는 키(_quote_auth: 세션 선택 키 → 없으면 계좌 무관 키)를 따른다.
-# 재무 TR은 모의 앱키를 실전 도메인으로 보내면 "실전투자 도메인은 모의투자 앱키로
-# 호출하실 수 없습니다"로 거절하므로, 도메인은 고정하지 않고 키 종류에 맞춘다.
+# 도메인은 고정하지 않고 키 종류(모의/실전)에 맞춘다.
 # 여러 TR을 이어 부를 때는 access_data 를 한 번 골라 넘기면 인증 조회(DB)를 반복하지 않는다.
-
-# kind → (path, tr_id). 분기 값은 '해당 연도 누적'이다 (202606 = 1~6월 합계).
-_FINANCIAL_TRS = {
-    "balance": ("finance/balance-sheet", "FHKST66430100"),        # 대차대조표
-    "income": ("finance/income-statement", "FHKST66430200"),      # 손익계산서
-    "ratio": ("finance/financial-ratio", "FHKST66430300"),        # 재무비율
-    "profit": ("finance/profit-ratio", "FHKST66430400"),          # 수익성비율
-    "other": ("finance/other-major-ratios", "FHKST66430500"),     # 기타주요비율
-    "stability": ("finance/stability-ratio", "FHKST66430600"),    # 안정성비율
-    "growth": ("finance/growth-ratio", "FHKST66430800"),          # 성장성비율
-}
+# 국내 재무 TR(손익·재무비율 등)은 2026-11-11 KIS 가 종료해 제거했다 — 재무는 external/dart_api.py.
 
 
 def _quote_base_url(access_data: dict) -> str:
@@ -1104,29 +1093,6 @@ async def get_investor_trend(user_id: str, code: str, db: AsyncSession,
     query = {
         "FID_COND_MRKT_DIV_CODE": "J",
         "FID_INPUT_ISCD": code,
-    }
-    response = await kis_fetch("GET", api_url, access_data, params=query, headers=headers)
-    return response["body"].get("output") or []
-
-
-async def get_financial_statement(user_id: str, code: str, kind: str, db: AsyncSession,
-                                  quarterly: bool = True, access_data: Optional[dict] = None) -> list:
-    """국내주식 재무 TR 조회 (최신 결산월 먼저, 최대 30기)
-
-    Args:
-        kind: _FINANCIAL_TRS 키 (income, ratio, growth, stability 등)
-        quarterly: True=분기(연 누적), False=연간
-
-    값이 없는 항목은 KIS가 "99.99"로 채워 보낸다 — 호출측에서 걸러야 한다.
-    """
-    path, tr_id = _FINANCIAL_TRS[kind]
-    access_data = access_data or await _quote_auth(user_id, db)
-    api_url = f"{_quote_base_url(access_data)}/uapi/domestic-stock/v1/{path}"
-    headers = kis_headers(access_data, tr_id=tr_id)
-    query = {
-        "FID_DIV_CLS_CODE": "1" if quarterly else "0",
-        "fid_cond_mrkt_div_code": "J",
-        "fid_input_iscd": code,
     }
     response = await kis_fetch("GET", api_url, access_data, params=query, headers=headers)
     return response["body"].get("output") or []
