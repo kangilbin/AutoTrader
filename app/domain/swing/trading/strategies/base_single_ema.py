@@ -42,6 +42,9 @@ class BaseSingleEMAStrategy:
     SECOND_BUY_OBV_MIN = 0.5         # OBV z-score 최소값
 
     # 매도 조건
+    # [2차 방어선] 수급 약화 판단
+    SUPPLY_WEAKNESS_OBV_Z = -0.65  # OBV z-score 임계값 (이하 시 수급 약화)
+
     # [1차 방어선] 장중 손절
     ATR_MULTIPLIER = 1.0
 

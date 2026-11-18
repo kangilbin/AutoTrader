@@ -165,6 +165,10 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
         조건: 추세 약화((+DI - -DI) 격차 2일 연속 감소) + 수급 약화(OBV z-score 감소) 충족 시
         → 고점 대비 하락률로 매도 단계 결정
         """
+        row_date = row["STCK_BSOP_DATE"]
+        if hasattr(row_date, "month") and row_date.month == 7 and row_date.day == 21:
+            print("hellow TEST")
+
         # NaN 체크
         required_cols = ["minus_di", "plus_di", "obv_z"]
         if any(pd.isna(row[col]) for col in required_cols):
@@ -180,26 +184,24 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
         di_spread_prev2 = prev_prev_row["plus_di"] - prev_prev_row["minus_di"]
         trend_weakening = di_spread_today < di_spread_prev < di_spread_prev2
 
-        # 조건 2: 수급 약화 — OBV z-score 감소 (전일 대비)
-        supply_weakening = row["obv_z"] < prev_row["obv_z"]
+        # 조건 2: 수급 약화 — OBV z-score 임계값 이하
+        supply_weakening = round(row["obv_z"],2) < self.SUPPLY_WEAKNESS_OBV_Z
         if not (trend_weakening and supply_weakening):
             return None, ""
 
-        # 고점 대비 하락률 계산 (종가 기준 — 실전과 동일)
+        # ATR Trailing Stop 손절가 계산
         if peak_price <= 0:
             return None, ""
 
-        drawdown_pct = (peak_price - row["STCK_CLPR"]) / peak_price * 100
-
-        # ATR 기반 동적 trailing stop 임계값 계산
+        low_price = row["STCK_LWPR"]
         atr = row.get("atr", 0)
-        if pd.notna(atr) and atr > 0 and peak_price > 0:
-            atr_pct = (atr / peak_price) * 100
-            trailing_partial = max(atr_pct * self.TRAILING_STOP_ATR_PARTIAL_MULT, self.TRAILING_STOP_PARTIAL_MIN)
-            trailing_full = max(atr_pct * self.TRAILING_STOP_ATR_FULL_MULT, self.TRAILING_STOP_FULL_MIN)
+
+        if pd.notna(atr) and atr > 0:
+            stop_partial = int(peak_price - atr * self.TRAILING_STOP_ATR_PARTIAL_MULT)
+            stop_full = int(peak_price - atr * self.TRAILING_STOP_ATR_FULL_MULT)
         else:
-            trailing_partial = self.TRAILING_STOP_PARTIAL
-            trailing_full = self.TRAILING_STOP_FULL
+            stop_partial = int(peak_price * (1 - self.TRAILING_STOP_PARTIAL / 100))
+            stop_full = int(peak_price * (1 - self.TRAILING_STOP_FULL / 100))
 
         # 약화 사유 동적 생성
         weakness_reasons = []
@@ -209,13 +211,15 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
             weakness_reasons.append("수급약화")
         weakness_str = "+".join(weakness_reasons)
 
-        # 2차 전량 매도: SELL_PRIMARY 상태 + ATR 기반 임계값 이상 하락
-        if position_status == 'SELL_PRIMARY' and drawdown_pct >= trailing_full:
-            return "SELL_ALL", f"2차 전량매도({weakness_str}, 고점대비 -{drawdown_pct:.1f}% 하락, 변동성 기준 -{trailing_full:.1f}% 초과)"
+        drawdown_pct = round((peak_price - low_price) / peak_price * 100, 1)
 
-        # 1차 분할 매도: BUY_COMPLETE 상태 + ATR 기반 임계값 이상 하락
-        if position_status == 'BUY_COMPLETE' and drawdown_pct >= trailing_partial:
-            return "SELL_PRIMARY", f"1차 분할매도({weakness_str}, 고점대비 -{drawdown_pct:.1f}% 하락, 변동성 기준 -{trailing_partial:.1f}% 초과)"
+        # 2차 전량 매도: SELL_PRIMARY 상태 + 저가가 전량매도 손절가 이하
+        if position_status == 'SELL_PRIMARY' and low_price <= stop_full:
+            return "SELL_ALL", f"2차 전량매도({weakness_str}, 고점대비 -{drawdown_pct}%, 손절가 {stop_full:.0f}원)"
+
+        # 1차 분할 매도: BUY_COMPLETE 상태 + 저가가 분할매도 손절가 이하
+        if position_status == 'BUY_COMPLETE' and low_price <= stop_partial:
+            return "SELL_PRIMARY", f"1차 분할매도({weakness_str}, 고점대비 -{drawdown_pct}%, 손절가 {stop_partial:.0f}원)"
 
         return None, ""
 
