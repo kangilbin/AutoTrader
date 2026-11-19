@@ -5,7 +5,7 @@ import json
 import logging
 from typing import Dict, Optional
 from decimal import Decimal
-from datetime import datetime, date
+from datetime import datetime
 from .base_trading_strategy import TradingStrategy
 from .base_single_ema import BaseSingleEMAStrategy
 from app.domain.swing.indicators import TechnicalIndicators

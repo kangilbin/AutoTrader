@@ -27,8 +27,8 @@ from app.common.redis import Redis
 
 logger = logging.getLogger(__name__)
 
-# ===== 실시간 거래 동시 실행 제어 =====
-_TRADE_SEMAPHORE = asyncio.Semaphore(5)  # 동시에 최대 5개 종목 처리
+# ===== 동시 실행 제어 =====
+_SEMAPHORE = asyncio.Semaphore(5)  # 동시에 최대 5개 종목 처리
 
 
 async def trade_job():
@@ -87,7 +87,7 @@ async def process_single_swing(
         swing_service: SwingService 인스턴스
         redis_client: Redis 클라이언트
     """
-    async with _TRADE_SEMAPHORE:
+    async with _SEMAPHORE:
         try:
             swing_id = swing.SWING_ID
             st_code = swing.ST_CODE
@@ -179,6 +179,7 @@ async def day_collect_job():
     일별 데이터 수집 (장 마감 후 15:35)
 
     작업: 활성 스윙의 당일 OHLCV 데이터 수집
+    병렬 처리: 최대 5개 종목 동시 실행
     """
     logger.info("[DAY COLLECT] 데이터 수집 시작")
     db = await Database.get_session()
@@ -190,37 +191,63 @@ async def day_collect_job():
         data_target_stocks = await stock_service.get_data_target_stocks()
         logger.info(f"[DAY COLLECT] 데이터 수집 대상 종목 수: {len(data_target_stocks)}")
 
-        for stock in data_target_stocks:
-            try:
-                code = stock.ST_CODE
-                mrkt_code = stock.MRKT_CODE
-                response = await get_target_price(code)
+        # 병렬 처리: asyncio.gather로 모든 종목 동시 실행
+        tasks = [
+            collect_single_stock(stock, stock_service)
+            for stock in data_target_stocks
+        ]
 
-                if response:
-                    history_data = [{
-                        "MRKT_CODE": mrkt_code,
-                        "ST_CODE": code,
-                        "STCK_BSOP_DATE": datetime.now().strftime('%Y%m%d'),
-                        "STCK_OPRC": response.get('stck_oprc'),
-                        "STCK_HGPR": response.get('stck_hgpr'),
-                        "STCK_LWPR": response.get('stck_lwpr'),
-                        "STCK_CLPR": response.get('stck_clpr'),
-                        "ACML_VOL": response.get('acml_vol'),
-                        "FRGN_NTBY_QTY": response.get('frgn_ntby_qty'),
-                        "REG_DT": datetime.now()
-                    }]
-                    await stock_service.save_history_bulk(history_data)
-                    logger.debug(f"[DAY COLLECT] 데이터 저장 완료: {code}")
+        results = await asyncio.gather(*tasks, return_exceptions=True)
 
-            except Exception as e:
-                logger.error(f"[DAY COLLECT] 데이터 수집 실패 ({stock.ST_CODE}): {e}")
+        # 결과 로깅
+        success_count = sum(1 for r in results if not isinstance(r, Exception))
+        error_count = len(results) - success_count
 
-        logger.info("[DAY COLLECT] 데이터 수집 완료")
+        logger.info(
+            f"[DAY COLLECT] 데이터 수집 완료 - "
+            f"성공: {success_count}, 실패: {error_count}, 총: {len(results)}"
+        )
 
     except Exception as e:
         logger.error(f"[DAY COLLECT] day_collect_job 실패: {e}", exc_info=True)
     finally:
         await db.close()
+
+
+async def collect_single_stock(stock, stock_service: StockService):
+    """
+    개별 종목 데이터 수집 (세마포어로 동시 실행 제어)
+
+    Args:
+        stock: STOCK_INFO 레코드
+        stock_service: StockService 인스턴스
+    """
+    async with _SEMAPHORE:
+        code = stock.ST_CODE
+        mrkt_code = stock.MRKT_CODE
+
+        try:
+            response = await get_target_price(code)
+
+            if response:
+                history_data = [{
+                    "MRKT_CODE": mrkt_code,
+                    "ST_CODE": code,
+                    "STCK_BSOP_DATE": datetime.now().strftime('%Y%m%d'),
+                    "STCK_OPRC": response.get('stck_oprc'),
+                    "STCK_HGPR": response.get('stck_hgpr'),
+                    "STCK_LWPR": response.get('stck_lwpr'),
+                    "STCK_CLPR": response.get('stck_clpr'),
+                    "ACML_VOL": response.get('acml_vol'),
+                    "FRGN_NTBY_QTY": response.get('frgn_ntby_qty'),
+                    "REG_DT": datetime.now()
+                }]
+                await stock_service.save_history_bulk(history_data)
+                logger.debug(f"[DAY COLLECT] 데이터 저장 완료: {code}")
+
+        except Exception as e:
+            logger.error(f"[DAY COLLECT] 데이터 수집 실패 ({code}): {e}")
+            raise
 
 
 async def ema_cache_warmup_job():

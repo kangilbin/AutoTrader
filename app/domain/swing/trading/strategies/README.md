@@ -135,7 +135,7 @@ SIGNAL 1 (1차 매수 완료) ← PEAK_PRICE = 매수가 초기화
 | 조건 | 설명 |
 |-----|------|
 | 추세 약화 | (+DI - -DI) 격차가 2일 연속 감소 (prev_prev > prev > today) |
-| 수급 약화 | OBV z-score가 전일 대비 감소 (today < prev) |
+| 수급 약화 | OBV z-score < -0.65 (SUPPLY_WEAKNESS_OBV_Z 임계값) |
 
 > 추세 추종 전략에서 매도는 보수적이어야 하므로, 추세 약화와 수급 약화가 동시에 발생해야 매도를 판단합니다.
 
@@ -145,17 +145,16 @@ SIGNAL 1 (1차 매수 완료) ← PEAK_PRICE = 매수가 초기화
 - `today DI`: 실시간 증분 계산 (`realtime_plus_di`, `realtime_minus_di`)
 
 **1차 분할 매도 (SIGNAL 1/2 → SIGNAL 3)**
-- 게이트 조건 충족 + 고점(PEAK_PRICE) 대비 현재가 **ATR×2.0 이상** 하락 시 (최소 3%)
+- 게이트 조건 충족 + 현재가 ≤ 고점(PEAK_PRICE) - **ATR×2.0**
 - `sell_ratio%` 분할 매도, 잔량 보유 후 SIGNAL 3으로 전환
 
 **2차 전량 매도 (SIGNAL 3 → SIGNAL 0)**
-- 게이트 조건 충족 + 고점(PEAK_PRICE) 대비 현재가 **ATR×3.0 이상** 하락 시 (최소 5%)
+- 게이트 조건 충족 + 현재가 ≤ 고점(PEAK_PRICE) - **ATR×3.0**
 - 잔량 전량 매도 후 SIGNAL 0으로 복귀
 
-**ATR 기반 동적 임계값 계산:**
-- `atr_pct = (ATR / PEAK_PRICE) × 100`
-- 1차 기준 = `max(atr_pct × 2.0, 3.0%)`
-- 2차 기준 = `max(atr_pct × 3.0, 5.0%)`
+**ATR 기반 손절가 계산:**
+- 1차 손절가 = `PEAK_PRICE - ATR × 2.0`
+- 2차 손절가 = `PEAK_PRICE - ATR × 3.0`
 - ATR 무효 시 폴백: 1차 5.0%, 2차 8.0%
 
 ---
@@ -215,10 +214,9 @@ SIGNAL 1 (1차 매수 완료) ← PEAK_PRICE = 매수가 초기화
 | MAX_SURGE_RATIO | 0.05 | 전일 대비 최대 급등률 (5%) |
 | CONSECUTIVE_REQUIRED | 2 | 연속 확인 횟수 (10분) |
 | ATR_MULTIPLIER | 1.0 | 즉시 손절 ATR 배수 |
+| SUPPLY_WEAKNESS_OBV_Z | -0.65 | 수급 약화 OBV z-score 임계값 |
 | TRAILING_STOP_ATR_PARTIAL_MULT | 2.0 | 1차 분할 매도 ATR 배수 |
 | TRAILING_STOP_ATR_FULL_MULT | 3.0 | 2차 전량 매도 ATR 배수 |
-| TRAILING_STOP_PARTIAL_MIN | 3.0 | 1차 분할 매도 최소 하한 (%) |
-| TRAILING_STOP_FULL_MIN | 5.0 | 2차 전량 매도 최소 하한 (%) |
 | TRAILING_STOP_PARTIAL | 5.0 | 1차 폴백 (ATR 무효 시) |
 | TRAILING_STOP_FULL | 8.0 | 2차 폴백 (ATR 무효 시) |
 | SECOND_BUY_TIME_MIN | 1200 | 2차 매수 최소 대기 시간 (초, 20분) |
@@ -244,7 +242,7 @@ SIGNAL 1 (1차 매수 완료) ← PEAK_PRICE = 매수가 초기화
 | **2차 매수** | 통합 조건 (20분 경과 + 전일 양봉) | 동일 (전일 양봉) |
 | **즉시 손절** | 실시간 현재가 기준 | 일일 저가 기준 |
 | **2차 방어선** | 장중 실시간 trailing stop (5분마다 체크) | EOD 조건부 trailing stop (종가 기준) |
-| **2차 방어선 하락률 기준** | 고점 대비 현재가 기준 | 고점 대비 종가 기준 |
+| **2차 방어선 하락률 기준** | 현재가 ≤ 고점 - ATR×MULT | 저가 ≤ 고점 - ATR×MULT |
 | **PEAK_PRICE 갱신** | 장중 5분마다 고가(stck_hgpr) 기준 | 일일 고가(STCK_HGPR) 기준 |
 | **DI 비교 데이터** | 캐시(prev_prev) + 캐시 역산(prev) + 실시간(today) | 일별 데이터 직접 비교 |
 | **1차 분할 매도** | 고점 대비 ATR×2.0 (최소 3%) | 동일 (BUY_COMPLETE → SELL_PRIMARY) |

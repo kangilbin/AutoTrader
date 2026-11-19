@@ -331,18 +331,26 @@ class TradingStrategy(ABC):
                     )
 
                     if user_id:
-                        # 손절은 전량 매도
-                        order_result = await SwingOrderExecutor.execute_second_sell(
+                        # 손절은 전량 TWAP 매도
+                        order_result = await SwingOrderExecutor.execute_sell_with_partial(
+                            redis_client=redis_client,
+                            swing_id=swing_id,
                             user_id=user_id,
                             st_code=st_code,
+                            current_price=current_price,
+                            target_qty=hold_qty,
+                            avg_daily_amount=avg_daily_amount,
+                            signal_on_complete=0,
                             db=db
                         )
 
                         if order_result.get("success"):
-                            new_signal = 0
-                            entry_price = 0
-                            hold_qty = 0
-                            peak_price = 0
+                            hold_qty -= order_result.get("qty", 0)
+                            if order_result.get("completed", True):
+                                new_signal = 0
+                                entry_price = 0
+                                hold_qty = 0
+                                peak_price = 0
 
                             # 거래 내역 저장
                             trade_service = TradeHistoryService(db)
@@ -536,18 +544,26 @@ class TradingStrategy(ABC):
                     )
 
                     if user_id:
-                        # 손절은 전량 매도
-                        order_result = await SwingOrderExecutor.execute_second_sell(
+                        # 손절은 전량 TWAP 매도
+                        order_result = await SwingOrderExecutor.execute_sell_with_partial(
+                            redis_client=redis_client,
+                            swing_id=swing_id,
                             user_id=user_id,
                             st_code=st_code,
+                            current_price=current_price,
+                            target_qty=hold_qty,
+                            avg_daily_amount=avg_daily_amount,
+                            signal_on_complete=0,
                             db=db
                         )
 
                         if order_result.get("success"):
-                            new_signal = 0
-                            entry_price = 0
-                            hold_qty = 0
-                            peak_price = 0
+                            hold_qty -= order_result.get("qty", 0)
+                            if order_result.get("completed", True):
+                                new_signal = 0
+                                entry_price = 0
+                                hold_qty = 0
+                                peak_price = 0
 
                             # 거래 내역 저장
                             trade_service = TradeHistoryService(db)
@@ -677,18 +693,26 @@ class TradingStrategy(ABC):
                 )
 
                 if user_id:
-                    # 손절은 전량 매도
-                    order_result = await SwingOrderExecutor.execute_second_sell(
+                    # 손절은 전량 TWAP 매도
+                    order_result = await SwingOrderExecutor.execute_sell_with_partial(
+                        redis_client=redis_client,
+                        swing_id=swing_id,
                         user_id=user_id,
                         st_code=st_code,
+                        current_price=current_price,
+                        target_qty=hold_qty,
+                        avg_daily_amount=avg_daily_amount,
+                        signal_on_complete=0,
                         db=db
                     )
 
                     if order_result.get("success"):
-                        new_signal = 0
-                        entry_price = 0
-                        hold_qty = 0
-                        peak_price = 0
+                        hold_qty -= order_result.get("qty", 0)
+                        if order_result.get("completed", True):
+                            new_signal = 0
+                            entry_price = 0
+                            hold_qty = 0
+                            peak_price = 0
 
                         # 거래 내역 저장
                         trade_service = TradeHistoryService(db)
