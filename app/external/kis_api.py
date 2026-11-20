@@ -393,6 +393,7 @@ async def check_order_execution(user_id: str, order_no: str, db: AsyncSession, m
     Args:
         user_id: 사용자 ID
         order_no: 주문번호 (ODNO)
+        db: AsyncSession (DB 세션)
         max_retry: 최대 재시도 횟수
         delay: 재시도 간격 (초)
 
