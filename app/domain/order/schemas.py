@@ -5,13 +5,6 @@ from pydantic import BaseModel
 from typing import Optional
 
 
-class OrderCreateRequest(BaseModel):
-    """주문 요청"""
-    ORD_DV: str  # buy(매수), sell(매도)
-    ITM_NO: str  # 종목번호
-    QTY: int  # 주문수량
-
-
 class OrderModifyRequest(BaseModel):
     """주문 정정/취소 요청"""
     ORD_ORGNO: str  # 주문조직번호

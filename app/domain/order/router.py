@@ -4,12 +4,11 @@ Order API Router
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Annotated, Optional
-
 from app.common.database import get_db
 from app.common.dependencies import get_current_user
 from app.core.response import success_response
 from app.domain.order.service import OrderService
-from app.domain.order.schemas import OrderCreateRequest, OrderModifyRequest
+from app.domain.order.schemas import OrderModifyRequest
 
 router = APIRouter(prefix="/orders", tags=["Orders"])
 
@@ -17,17 +16,6 @@ router = APIRouter(prefix="/orders", tags=["Orders"])
 def get_order_service(db: AsyncSession = Depends(get_db)) -> OrderService:
     """OrderService 의존성 주입"""
     return OrderService(db)
-
-
-@router.post("")
-async def create_order(
-    request: OrderCreateRequest,
-    service: Annotated[OrderService, Depends(get_order_service)],
-    user_id: Annotated[str, Depends(get_current_user)]
-):
-    """주식 매수/매도 주문"""
-    result = await service.place_order(user_id, request)
-    return success_response("주문 완료", result)
 
 
 @router.get("/cancelable")
