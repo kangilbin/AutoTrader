@@ -2,7 +2,7 @@
 Trade History Repository - 데이터 접근 계층
 """
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, extract
+from sqlalchemy import select
 from typing import Optional, List
 from datetime import datetime
 from app.common.database import TradeHistoryModel, SwingModel, AccountModel
@@ -84,13 +84,16 @@ class TradeHistoryRepository:
         result = await self.db.execute(query)
         return result.scalar_one_or_none()
 
-    async def find_by_swing_id_and_year(self, swing_id: int, year: int) -> List[TradeHistoryModel]:
+    async def find_by_swing_id_and_period(
+        self, swing_id: int, start_date: datetime, end_date: datetime
+    ) -> List[TradeHistoryModel]:
         """
-        특정 스윙의 연도별 거래 내역 조회
+        특정 스윙의 기간별 거래 내역 조회
 
         Args:
             swing_id: 스윙 ID
-            year: 조회 연도
+            start_date: 조회 시작일
+            end_date: 조회 종료일
 
         Returns:
             거래 내역 리스트 (날짜 오름차순)
@@ -99,7 +102,8 @@ class TradeHistoryRepository:
             select(TradeHistoryModel)
             .where(
                 TradeHistoryModel.SWING_ID == swing_id,
-                extract('year', TradeHistoryModel.TRADE_DATE) == year,
+                TradeHistoryModel.TRADE_DATE >= start_date,
+                TradeHistoryModel.TRADE_DATE <= end_date,
             )
             .order_by(TradeHistoryModel.TRADE_DATE.asc())
         )

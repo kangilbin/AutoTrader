@@ -42,7 +42,8 @@ class TradeHistoryWithChartResponse(BaseModel):
     """매매 내역 + 차트 데이터 응답"""
     swing_id: int
     st_code: str
-    year: int
+    start_date: str
+    end_date: str
     trades: List[TradeHistoryResponse]
     price_history: List[PriceHistoryItem]
     ema20_history: List[Ema20HistoryItem]

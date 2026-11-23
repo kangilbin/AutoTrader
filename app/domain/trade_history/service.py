@@ -141,7 +141,7 @@ class TradeHistoryService:
             raise DatabaseError("최근 매도 내역 조회에 실패했습니다")
 
     async def get_trade_history_with_chart(
-        self, user_id: str, swing_id: int, year: int
+        self, user_id: str, swing_id: int, start_date, end_date
     ) -> dict:
         """
         매매 내역 + 주가 차트 + EMA20 데이터 통합 조회
@@ -149,7 +149,8 @@ class TradeHistoryService:
         Args:
             user_id: 사용자 ID (소유권 검증)
             swing_id: 스윙 ID
-            year: 조회 연도
+            start_date: 조회 시작일 (date)
+            end_date: 조회 종료일 (date)
 
         Returns:
             TradeHistoryWithChartResponse 구조의 dict
@@ -163,17 +164,19 @@ class TradeHistoryService:
             if not swing:
                 raise NotFoundError("스윙 전략", swing_id)
 
-            # 3. 연도별 매매 내역 조회
-            trades = await self.repo.find_by_swing_id_and_year(swing_id, year)
+            # 2. 기간별 매매 내역 조회
+            trade_start = datetime.combine(start_date, datetime.min.time())
+            trade_end = datetime.combine(end_date, datetime.max.time())
+            trades = await self.repo.find_by_swing_id_and_period(swing_id, trade_start, trade_end)
             trades_data = [
                 TradeHistoryResponse.model_validate(t).model_dump() for t in trades
             ]
 
-            # 4. 주가 데이터 조회 (EMA20 워밍업을 위해 2개월 전부터)
-            start_date = datetime(year, 1, 1) - relativedelta(months=2)
+            # 3. 주가 데이터 조회 (EMA20 워밍업을 위해 2개월 전부터)
+            warmup_start = datetime.combine(start_date, datetime.min.time()) - relativedelta(months=2)
             stock_service = StockService(self.db)
             price_days = await stock_service.get_stock_history(
-                swing.MRKT_CODE, swing.ST_CODE, start_date
+                swing.MRKT_CODE, swing.ST_CODE, warmup_start
             )
 
             price_history = []
@@ -186,26 +189,27 @@ class TradeHistoryService:
                 close_arr = pd.to_numeric(prices_df["STCK_CLPR"], errors="coerce").values
                 prices_df["ema20"] = ta.EMA(close_arr, timeperiod=20)
 
-                # 해당 연도만 필터링
-                year_start = f"{year}0101"
-                year_end = f"{year}1231"
-                year_mask = (prices_df["STCK_BSOP_DATE"] >= year_start) & (
-                    prices_df["STCK_BSOP_DATE"] <= year_end
+                # 조회 기간만 필터링
+                date_start = start_date.strftime("%Y%m%d")
+                date_end = end_date.strftime("%Y%m%d")
+                period_mask = (prices_df["STCK_BSOP_DATE"] >= date_start) & (
+                    prices_df["STCK_BSOP_DATE"] <= date_end
                 )
-                year_df = prices_df.loc[year_mask].copy()
+                period_df = prices_df.loc[period_mask].copy()
 
-                price_history = year_df[
+                price_history = period_df[
                     ["STCK_BSOP_DATE", "STCK_OPRC", "STCK_HGPR", "STCK_LWPR", "STCK_CLPR", "ACML_VOL"]
                 ].to_dict(orient="records")
 
-                ema20_history = year_df[["STCK_BSOP_DATE", "ema20"]].assign(
-                    ema20=year_df["ema20"].round(2).where(year_df["ema20"].notna(), None)
+                ema20_history = period_df[["STCK_BSOP_DATE", "ema20"]].assign(
+                    ema20=period_df["ema20"].round(2).where(period_df["ema20"].notna(), None)
                 ).to_dict(orient="records")
 
             return {
                 "swing_id": swing_id,
                 "st_code": swing.ST_CODE,
-                "year": year,
+                "start_date": start_date.isoformat(),
+                "end_date": end_date.isoformat(),
                 "trades": trades_data,
                 "price_history": price_history,
                 "ema20_history": ema20_history,
