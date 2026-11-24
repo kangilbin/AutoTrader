@@ -11,7 +11,7 @@ from app.domain.auth.repository import AuthRepository
 from app.domain.auth.entity import Auth
 from app.domain.auth.schemas import AuthCreateRequest, AuthResponse
 from app.core.security import encrypt, decrypt
-from app.exceptions import ValidationError, NotFoundError, DatabaseError
+from app.exceptions import NotFoundError, DatabaseError
 from app.common.redis import get_redis
 from app.external.kis_api import oauth_token
 

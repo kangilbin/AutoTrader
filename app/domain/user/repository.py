@@ -6,8 +6,7 @@ from sqlalchemy import select, update, delete
 from typing import Optional
 from datetime import datetime
 
-from app.common.database import UserModel, UserIdSequenceModel
-from app.domain.user.entity import User
+from app.domain.user.entity import User, UserIdSequence
 from app.domain.user.schemas import UserResponse
 import logging
 
@@ -22,57 +21,48 @@ class UserRepository:
 
     async def find_by_id(self, user_id: str) -> Optional[dict]:
         """사용자 조회"""
-        query = select(UserModel).filter(UserModel.USER_ID == user_id)
+        query = select(User).filter(User.USER_ID == user_id)
         result = await self.db.execute(query)
         db_user = result.scalars().first()
         if not db_user:
             return None
         return UserResponse.model_validate(db_user).model_dump()
 
-    async def save(self, user: User) -> UserModel:
+    async def save(self, user: User) -> User:
         """사용자 저장 (flush만 수행)"""
-        db_user = UserModel(
-            USER_ID=user.user_id,
-            USER_NAME=user.user_name,
-            EMAIL=user.email,
-            PHONE=user.phone,
-            GOOGLE_ACCESS_TOKEN=user.google_access_token,
-            GOOGLE_REFRESH_TOKEN=user.google_refresh_token,
-            GOOGLE_TOKEN_EXPIRES_AT=user.google_token_expires_at
-        )
-        self.db.add(db_user)
+        self.db.add(user)
         await self.db.flush()
-        await self.db.refresh(db_user)
-        return db_user
+        await self.db.refresh(user)
+        return user
 
-    async def update(self, user_id: str, data: dict) -> Optional[UserModel]:
+    async def update(self, user_id: str, data: dict) -> Optional[User]:
         """사용자 수정 (flush만 수행)"""
         query = (
-            update(UserModel)
-            .filter(UserModel.USER_ID == user_id)
+            update(User)
+            .filter(User.USER_ID == user_id)
             .values(**data)
             .execution_options(synchronize_session=False)
         )
         await self.db.execute(query)
         await self.db.flush()
-        return await self.db.get(UserModel, user_id)
+        return await self.db.get(User, user_id)
 
     async def delete(self, user_id: str) -> bool:
         """사용자 삭제 (flush만 수행)"""
-        query = delete(UserModel).filter(UserModel.USER_ID == user_id)
+        query = delete(User).filter(User.USER_ID == user_id)
         result = await self.db.execute(query)
         await self.db.flush()
         return result.rowcount > 0
 
     async def exists(self, user_id: str) -> bool:
         """사용자 존재 여부 확인"""
-        query = select(UserModel.USER_ID).filter(UserModel.USER_ID == user_id)
+        query = select(User.USER_ID).filter(User.USER_ID == user_id)
         result = await self.db.execute(query)
         return result.scalar() is not None
 
     async def find_by_email(self, email: str) -> Optional[dict]:
         """이메일로 사용자 조회"""
-        query = select(UserModel).filter(UserModel.EMAIL == email)
+        query = select(User).filter(User.EMAIL == email)
         result = await self.db.execute(query)
         db_user = result.scalars().first()
         if not db_user:
@@ -91,7 +81,7 @@ class UserRepository:
 
     async def find_by_id_with_tokens(self, user_id: str) -> Optional[dict]:
         """사용자 조회 (Google 토큰 포함)"""
-        query = select(UserModel).filter(UserModel.USER_ID == user_id)
+        query = select(User).filter(User.USER_ID == user_id)
         result = await self.db.execute(query)
         db_user = result.scalars().first()
         if not db_user:
@@ -123,8 +113,8 @@ class UserRepository:
             data["GOOGLE_REFRESH_TOKEN"] = refresh_token
 
         query = (
-            update(UserModel)
-            .filter(UserModel.USER_ID == user_id)
+            update(User)
+            .filter(User.USER_ID == user_id)
             .values(**data)
         )
         await self.db.execute(query)
@@ -138,7 +128,7 @@ class UserRepository:
         USR + 5자리 숫자 형식으로 변환
         """
         # 시퀀스 테이블에 레코드 삽입
-        seq_record = UserIdSequenceModel()
+        seq_record = UserIdSequence()
         self.db.add(seq_record)
         await self.db.flush()
         await self.db.refresh(seq_record)

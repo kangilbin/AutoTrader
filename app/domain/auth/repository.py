@@ -5,7 +5,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, delete, and_
 from typing import Optional, List
 
-from app.common.database import AuthModel
 from app.domain.auth.entity import Auth
 import logging
 
@@ -20,8 +19,8 @@ class AuthRepository:
 
     async def find_by_id(self, user_id: str, auth_id: int) -> Optional[dict]:
         """인증키 조회"""
-        query = select(AuthModel).filter(
-            and_(AuthModel.USER_ID == user_id, AuthModel.AUTH_ID == auth_id)
+        query = select(Auth).filter(
+            and_(Auth.USER_ID == user_id, Auth.AUTH_ID == auth_id)
         )
         result = await self.db.execute(query)
         db_auth = result.scalars().first()
@@ -38,41 +37,34 @@ class AuthRepository:
             "MOD_DT": db_auth.MOD_DT,
         }
 
-    async def find_all_by_user(self, user_id: str) -> List[AuthModel]:
+    async def find_all_by_user(self, user_id: str) -> List[Auth]:
         """사용자의 모든 인증키 조회"""
-        query = select(AuthModel).filter(AuthModel.USER_ID == user_id)
+        query = select(Auth).filter(Auth.USER_ID == user_id)
         result = await self.db.execute(query)
         return result.scalars().all()
 
-    async def save(self, auth: Auth) -> AuthModel:
+    async def save(self, auth: Auth) -> Auth:
         """인증키 저장 (flush만 수행)"""
-        db_auth = AuthModel(
-            USER_ID=auth.user_id,
-            AUTH_NAME=auth.auth_name,
-            SIMULATION_YN=auth.simulation_yn,
-            API_KEY=auth.api_key,
-            SECRET_KEY=auth.secret_key
-        )
-        self.db.add(db_auth)
+        self.db.add(auth)
         await self.db.flush()
-        await self.db.refresh(db_auth)
-        return db_auth
+        await self.db.refresh(auth)
+        return auth
 
-    async def update(self, auth_id: int, data: dict) -> Optional[AuthModel]:
+    async def update(self, auth_id: int, data: dict) -> Optional[Auth]:
         """인증키 수정 (flush만 수행)"""
         query = (
-            update(AuthModel)
-            .filter(AuthModel.AUTH_ID == auth_id)
+            update(Auth)
+            .filter(Auth.AUTH_ID == auth_id)
             .values(**data)
             .execution_options(synchronize_session=False)
         )
         await self.db.execute(query)
         await self.db.flush()
-        return await self.db.get(AuthModel, auth_id)
+        return await self.db.get(Auth, auth_id)
 
     async def delete(self, auth_id: int) -> bool:
         """인증키 삭제 (flush만 수행)"""
-        query = delete(AuthModel).filter(AuthModel.AUTH_ID == auth_id)
+        query = delete(Auth).filter(Auth.AUTH_ID == auth_id)
         result = await self.db.execute(query)
         await self.db.flush()
         return result.rowcount > 0

@@ -1,162 +1,24 @@
 """
-데이터베이스 연결 및 ORM 모델 정의
+데이터베이스 연결 설정
+
+ORM 모델은 각 도메인의 entity.py에 정의되어 있습니다.
+- app/domain/user/entity.py: User, UserIdSequence
+- app/domain/account/entity.py: Account
+- app/domain/auth/entity.py: Auth
+- app/domain/stock/entity.py: Stock, StockHistory
+- app/domain/swing/entity.py: SwingTrade, EmaOption
+- app/domain/trade_history/entity.py: TradeHistory
+- app/domain/device/entity.py: Device
 """
-from sqlalchemy import MetaData, Integer, Sequence, CHAR, Column, String, DateTime, DECIMAL, UniqueConstraint
+from sqlalchemy import MetaData
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker, declarative_base
-from datetime import datetime
 from app.core.config import get_settings
 import logging
 
 logger = logging.getLogger(__name__)
 
 Base = declarative_base()
-
-
-# ==================== ORM Models ====================
-
-class UserIdSequenceModel(Base):
-    """USER_ID 자동 생성용 시퀀스 테이블"""
-    __tablename__ = "USER_ID_SEQUENCE"
-
-    id = Column(Integer, primary_key=True, autoincrement=True, comment='시퀀스 번호')
-    created_at = Column(DateTime, default=datetime.now, comment='생성 시간')
-
-
-class UserModel(Base):
-    """사용자 테이블"""
-    __tablename__ = "USER"
-
-    USER_ID = Column(String(50), primary_key=True, comment='사용자 ID (자동생성: USR00001)')
-    USER_NAME = Column(String(50), nullable=False, comment='사용자 이름')
-    EMAIL = Column(String(100), nullable=True, unique=True, comment='이메일 주소')
-    PHONE = Column(CHAR(11), nullable=True, comment='휴대폰 번호 (OAuth 사용자는 나중에 입력)')
-    GOOGLE_ACCESS_TOKEN = Column(String(2000), nullable=True, comment='Google OAuth access token (Gemini용)')
-    GOOGLE_REFRESH_TOKEN = Column(String(500), nullable=True, comment='Google OAuth refresh token')
-    GOOGLE_TOKEN_EXPIRES_AT = Column(DateTime, nullable=True, comment='Google access token 만료 시점')
-    REG_DT = Column(DateTime, default=datetime.now, nullable=False, comment='등록일')
-    MOD_DT = Column(DateTime, comment='수정일')
-
-
-class AccountModel(Base):
-    """계좌 테이블"""
-    __tablename__ = "ACCOUNT"
-
-    ACCOUNT_ID = Column(Integer, Sequence('account_id_seq'), primary_key=True, comment='ACCOUNT ID')
-    USER_ID = Column(String(50), nullable=False, primary_key=True, comment='사용자 ID')
-    ACCOUNT_NO = Column(String(10), nullable=False, comment='계좌 번호')
-    AUTH_ID = Column(Integer, nullable=False, comment='권한 ID')
-    REG_DT = Column(DateTime, default=datetime.now, nullable=False, comment='등록일')
-    MOD_DT = Column(DateTime, comment='수정일')
-
-
-class AuthModel(Base):
-    """인증키 테이블"""
-    __tablename__ = "AUTH_KEY"
-
-    AUTH_ID = Column(Integer, Sequence('auth_id_seq'), primary_key=True, comment='권한 ID')
-    USER_ID = Column(String(50), nullable=False, primary_key=True, comment='사용자 ID')
-    AUTH_NAME = Column(String(50), nullable=False, comment='권한 이름')
-    SIMULATION_YN = Column(CHAR(1), default='N', nullable=False, comment='모의 투자 여부')
-    API_KEY = Column(String(200), nullable=False, comment='앱키')
-    SECRET_KEY = Column(String(350), nullable=False, comment='시크릿 키')
-    REG_DT = Column(DateTime, default=datetime.now, nullable=False, comment='등록일')
-    MOD_DT = Column(DateTime, comment='수정일')
-
-
-class StockModel(Base):
-    """종목 정보 테이블"""
-    __tablename__ = "STOCK_INFO"
-
-    MRKT_CODE = Column(String(50), nullable=False, primary_key=True, comment='조건 시장 분류 코드(J:KRX, NX:NXT, UN:통합)')
-    ST_CODE = Column(String(50), nullable=False, primary_key=True, comment='종목 코드')
-    SD_CODE = Column(String(50), nullable=False, comment='주식 표준 코드')
-    ST_NM = Column(String(100), nullable=False, comment='종목명')
-    DATA_YN = Column(CHAR(1), nullable=False, default='N', comment='데이터 적재 여부')
-    DEL_YN = Column(CHAR(1), nullable=False, default='N', comment='상장 폐지 여부')
-    REG_DT = Column(DateTime, default=datetime.now, nullable=False, comment='등록일')
-    MOD_DT = Column(DateTime, comment='수정일')
-
-
-class StockHistoryModel(Base):
-    """주식 일별 데이터 테이블"""
-    __tablename__ = "STOCK_DAY_HISTORY"
-
-    MRKT_CODE = Column(String(50), nullable=False, primary_key=True, comment='조건 시장 분류 코드(J:KRX, NX:NXT, UN:통합)')
-    ST_CODE = Column(String(50), nullable=False, primary_key=True, comment='종목 코드')
-    STCK_BSOP_DATE = Column(String(8), nullable=False, primary_key=True, comment='주식 영업 일자')
-    STCK_OPRC = Column(DECIMAL(15, 2), nullable=False, comment='주식 시가')
-    STCK_HGPR = Column(DECIMAL(15, 2), nullable=False, comment='주식 최고가')
-    STCK_LWPR = Column(DECIMAL(15, 2), nullable=False, comment='주식 최저가')
-    STCK_CLPR = Column(DECIMAL(15, 2), nullable=False, comment='주식 종가')
-    ACML_VOL = Column(Integer, nullable=False, comment='누적 거래량')
-    FRGN_NTBY_QTY = Column(Integer, nullable=True, comment='외국인 순매수 수량')
-    REG_DT = Column(DateTime, default=datetime.now, nullable=False, comment='등록일')
-    MOD_DT = Column(DateTime, comment='수정일')
-
-
-class SwingModel(Base):
-    """스윙 매매 테이블"""
-    __tablename__ = "SWING_TRADE"
-    __table_args__ = (
-        UniqueConstraint('ACCOUNT_NO', 'MRKT_CODE', 'ST_CODE', name='uq_swing_account_stock'),
-    )
-
-    SWING_ID = Column(Integer, Sequence('swing_id_seq'), primary_key=True, comment='스윙 ID')
-    ACCOUNT_NO = Column(String(50), nullable=False, comment='계좌 번호')
-    MRKT_CODE = Column(String(50), nullable=False, comment='조건 시장 분류 코드(J:KRX, NX:NXT, UN:통합)')
-    ST_CODE = Column(String(50), nullable=False, comment='종목 코드')
-    USE_YN = Column(CHAR(1), nullable=False, default='N', comment='사용 여부')
-    INIT_AMOUNT = Column(DECIMAL(15, 2), nullable=False, comment='초기 투자금')
-    CUR_AMOUNT = Column(DECIMAL(15, 2), nullable=False, comment='현재 투자금')
-    SWING_TYPE = Column(CHAR(1), nullable=False, comment='스윙 타입 (A: 이평선, B: 일목균형표)')
-    BUY_RATIO = Column(Integer, nullable=False, comment='매수 비율')
-    SELL_RATIO = Column(Integer, nullable=False, comment='매도 비율')
-    SIGNAL = Column(Integer, nullable=False, default=0, comment='매매 신호 상태 (0:대기, 1:1차매수, 2:2차매수, 3:1차매도')
-    ENTRY_PRICE = Column(DECIMAL(15, 2), nullable=True, comment='평균 매수 단가')
-    HOLD_QTY = Column(Integer, nullable=True, default=0, comment='보유 수량')
-    EOD_SIGNALS = Column(String(500), nullable=True, comment='EOD 매도 신호 JSON')
-    PEAK_PRICE = Column(DECIMAL(15, 2), nullable=True, comment='매수 이후 최고 종가')
-    REG_DT = Column(DateTime, default=datetime.now, nullable=False, comment='등록일')
-    MOD_DT = Column(DateTime, comment='수정일')
-
-
-class EmaOptModel(Base):
-    """이평선 옵션 테이블"""
-    __tablename__ = "EMA_OPT"
-
-    ACCOUNT_NO = Column(String(50), nullable=False, primary_key=True, comment='계좌 번호')
-    ST_CODE = Column(String(50), nullable=False, primary_key=True, comment='종목 코드')
-    SHORT_TERM = Column(Integer, nullable=False, comment='단기 이평선')
-    MEDIUM_TERM = Column(Integer, nullable=False, comment='중기 이평선')
-    LONG_TERM = Column(Integer, nullable=False, comment='장기 이평선')
-
-
-class TradeHistoryModel(Base):
-    """거래 내역 테이블"""
-    __tablename__ = "TRADE_HISTORY"
-
-    TRADE_ID = Column(Integer, Sequence('trade_id_seq'), primary_key=True, comment='거래 ID')
-    SWING_ID = Column(Integer, nullable=False, comment='스윙 ID')
-    TRADE_DATE = Column(DateTime, nullable=False, comment='거래 일자')
-    TRADE_TYPE = Column(CHAR(1), nullable=False, comment='거래 타입 (B: 매수, S: 매도)')
-    TRADE_PRICE = Column(DECIMAL(15, 2), nullable=False, comment='거래 가격')
-    TRADE_QTY = Column(Integer, nullable=False, comment='거래 수량')
-    TRADE_AMOUNT = Column(DECIMAL(15, 2), nullable=False, comment='거래 금액')
-    TRADE_REASONS = Column(String(500), nullable=True, comment='매매 사유 JSON ["추세약화","추세반전","EMA 이탈"]')
-    REG_DT = Column(DateTime, default=datetime.now, nullable=False, comment='등록일')
-
-
-class DeviceModel(Base):
-    """디바이스 화이트리스트 테이블"""
-    __tablename__ = "DEVICE"
-
-    DEVICE_ID = Column(String(100), primary_key=True, comment='디바이스 ID')
-    DEVICE_NAME = Column(String(100), nullable=False, comment='디바이스 이름')
-    USER_ID = Column(String(50), nullable=True, comment='사용자 ID (NULL=공용)')
-    ACTIVE_YN = Column(CHAR(1), default='Y', nullable=False, comment='활성 여부')
-    REG_DT = Column(DateTime, default=datetime.now, nullable=False, comment='등록일')
-    MOD_DT = Column(DateTime, comment='수정일')
 
 
 # ==================== Database Connection ====================
@@ -181,6 +43,9 @@ class Database:
                 pool_recycle=settings.DB_POOL_RECYCLE
             )
             logger.info(f"Database engine created (echo={settings.DB_ECHO})")
+
+            # 모든 도메인의 entity를 import하여 Base.metadata에 등록
+            _import_all_entities()
 
             async with cls._engine.begin() as conn:
                 await conn.run_sync(Base.metadata.create_all)
@@ -208,6 +73,17 @@ class Database:
         if cls._engine is None or cls._async_session is None:
             await cls.connect()
         return cls._async_session()
+
+
+def _import_all_entities():
+    """모든 도메인 Entity를 import하여 Base.metadata에 등록"""
+    import app.domain.user.entity  # noqa: F401
+    import app.domain.account.entity  # noqa: F401
+    import app.domain.auth.entity  # noqa: F401
+    import app.domain.stock.entity  # noqa: F401
+    import app.domain.swing.entity  # noqa: F401
+    import app.domain.trade_history.entity  # noqa: F401
+    import app.domain.device.entity  # noqa: F401
 
 
 async def get_db():

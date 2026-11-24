@@ -55,18 +55,3 @@ class SwingResponse(BaseModel):
         }
     }
 
-
-class SwingMappingResponse(BaseModel):
-    """스윙 매핑 응답 (보유 주식 정보 포함)"""
-    SWING_ID: Optional[int] = None
-    MRKT_CODE: Optional[str] = None
-    ST_CODE: Optional[str] = None
-    ACCOUNT_NO: Optional[str] = None
-    USE_YN: Optional[str] = None
-    INIT_AMOUNT: Optional[Decimal] = None
-    CUR_AMOUNT: Optional[Decimal] = None
-    SWING_TYPE: Optional[str] = None
-    SIGNAL: Optional[int] = None
-    ST_NM: Optional[str] = None  # 종목명
-    QTY: Optional[str] = None  # 보유 수량
-    RATE: Optional[float] = None  # 수익률

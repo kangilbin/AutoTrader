@@ -1,5 +1,8 @@
 """
 Order 도메인 엔티티 - 비즈니스 로직 캡슐화
+
+주문은 KIS API를 직접 호출하므로 별도 ORM 모델이 없습니다.
+dataclass로 주문 파라미터 검증을 수행합니다.
 """
 from dataclasses import dataclass
 
@@ -63,15 +66,12 @@ class ModifyOrder:
         if self.qty_all_ord_yn not in ('Y', 'N'):
             raise ValidationError("잔량전부주문여부는 Y 또는 N이어야 합니다")
 
-        # 잔량전부인 경우 수량은 0
         if self.qty_all_ord_yn == 'Y' and self.ord_qty > 0:
             raise ValidationError("잔량전부 취소/정정 시 주문수량은 0이어야 합니다")
 
-        # 잔량일부인 경우 수량 필수
         if self.qty_all_ord_yn == 'N' and self.ord_qty <= 0:
             raise ValidationError("잔량일부 취소/정정 시 주문수량이 필요합니다")
 
-        # 정정인 경우 단가 필수
         if self.rvse_cncl_dvsn_cd == '01' and self.ord_unpr <= 0:
             raise ValidationError("정정 주문 시 주문단가가 필요합니다")
 

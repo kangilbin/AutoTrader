@@ -1,77 +1,38 @@
 """
-Stock 도메인 엔티티 - 비즈니스 로직 캡슐화
+Stock 도메인 엔티티 - ORM 모델 + 비즈니스 로직
 """
-from dataclasses import dataclass, field
+from sqlalchemy import Column, Integer, String, CHAR, DECIMAL, DateTime
 from datetime import datetime
-from typing import Optional
-from decimal import Decimal
+
+from app.common.database import Base
 
 
-@dataclass
-class Stock:
-    """종목 도메인 엔티티"""
-    mrkt_code: str
-    st_code: str
-    sd_code: str = ""
-    name: str = ""
-    data_yn: str = "N"
-    del_yn: str = "N"
-    reg_dt: Optional[datetime] = field(default_factory=datetime.now)
-    mod_dt: Optional[datetime] = None
+class Stock(Base):
+    """종목 정보 엔티티"""
+    __tablename__ = "STOCK_INFO"
 
-    # ==================== 비즈니스 로직 ====================
-
-    def is_data_loaded(self) -> bool:
-        """데이터 적재 완료 여부"""
-        return self.data_yn == 'Y'
-
-    def is_delisted(self) -> bool:
-        """상장폐지 여부"""
-        return self.del_yn == 'Y'
-
-    def mark_data_loaded(self) -> None:
-        """데이터 적재 완료 처리"""
-        self.data_yn = 'Y'
-        self.mod_dt = datetime.now()
-
-    def mark_delisted(self) -> None:
-        """상장폐지 처리"""
-        self.del_yn = 'Y'
-        self.mod_dt = datetime.now()
+    MRKT_CODE = Column(String(50), nullable=False, primary_key=True, comment='조건 시장 분류 코드(J:KRX, NX:NXT, UN:통합)')
+    ST_CODE = Column(String(50), nullable=False, primary_key=True, comment='종목 코드')
+    SD_CODE = Column(String(50), nullable=False, comment='주식 표준 코드')
+    ST_NM = Column(String(100), nullable=False, comment='종목명')
+    DATA_YN = Column(CHAR(1), nullable=False, default='N', comment='데이터 적재 여부')
+    DEL_YN = Column(CHAR(1), nullable=False, default='N', comment='상장 폐지 여부')
+    REG_DT = Column(DateTime, default=datetime.now, nullable=False, comment='등록일')
+    MOD_DT = Column(DateTime, comment='수정일')
 
 
-@dataclass
-class StockHistory:
+class StockHistory(Base):
     """주식 일별 데이터 엔티티"""
-    mrkt_code: str
-    st_code: str
-    stck_bsop_date: str  # YYYYMMDD
-    stck_oprc: Decimal  # 시가
-    stck_hgpr: Decimal  # 고가
-    stck_lwpr: Decimal  # 저가
-    stck_clpr: Decimal  # 종가
-    acml_vol: int  # 거래량
-    reg_dt: Optional[datetime] = field(default_factory=datetime.now)
-    mod_dt: Optional[datetime] = None
+    __tablename__ = "STOCK_DAY_HISTORY"
 
-    # ==================== 비즈니스 로직 ====================
-
-    def get_price_change(self) -> Decimal:
-        """당일 가격 변동폭"""
-        return self.stck_clpr - self.stck_oprc
-
-    def get_price_change_rate(self) -> Decimal:
-        """당일 가격 변동률 (%)"""
-        if self.stck_oprc == 0:
-            return Decimal(0)
-        return ((self.stck_clpr - self.stck_oprc) / self.stck_oprc) * 100
-
-    def is_positive(self) -> bool:
-        """상승 여부"""
-        return self.stck_clpr > self.stck_oprc
-
-    def get_amplitude(self) -> Decimal:
-        """당일 진폭 (%)"""
-        if self.stck_lwpr == 0:
-            return Decimal(0)
-        return ((self.stck_hgpr - self.stck_lwpr) / self.stck_lwpr) * 100
+    MRKT_CODE = Column(String(50), nullable=False, primary_key=True, comment='조건 시장 분류 코드(J:KRX, NX:NXT, UN:통합)')
+    ST_CODE = Column(String(50), nullable=False, primary_key=True, comment='종목 코드')
+    STCK_BSOP_DATE = Column(String(8), nullable=False, primary_key=True, comment='주식 영업 일자')
+    STCK_OPRC = Column(DECIMAL(15, 2), nullable=False, comment='주식 시가')
+    STCK_HGPR = Column(DECIMAL(15, 2), nullable=False, comment='주식 최고가')
+    STCK_LWPR = Column(DECIMAL(15, 2), nullable=False, comment='주식 최저가')
+    STCK_CLPR = Column(DECIMAL(15, 2), nullable=False, comment='주식 종가')
+    ACML_VOL = Column(Integer, nullable=False, comment='누적 거래량')
+    FRGN_NTBY_QTY = Column(Integer, nullable=True, comment='외국인 순매수 수량')
+    REG_DT = Column(DateTime, default=datetime.now, nullable=False, comment='등록일')
+    MOD_DT = Column(DateTime, comment='수정일')

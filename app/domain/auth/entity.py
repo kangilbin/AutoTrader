@@ -1,51 +1,38 @@
 """
-Auth 도메인 엔티티 - 비즈니스 로직 캡슐화
+Auth 도메인 엔티티 - ORM 모델 + 비즈니스 로직
 """
-from dataclasses import dataclass, field
+from sqlalchemy import Column, Integer, String, CHAR, DateTime, Sequence
 from datetime import datetime
-from typing import Optional
 
+from app.common.database import Base
 from app.exceptions import ValidationError
 
 
-@dataclass
-class Auth:
-    """인증키 도메인 엔티티"""
-    auth_id: Optional[int] = None
-    user_id: str = ""
-    auth_name: str = ""
-    simulation_yn: str = "N"
-    api_key: str = ""
-    secret_key: str = ""
-    reg_dt: Optional[datetime] = field(default_factory=datetime.now)
-    mod_dt: Optional[datetime] = None
+class Auth(Base):
+    """인증키 엔티티"""
+    __tablename__ = "AUTH_KEY"
+
+    AUTH_ID = Column(Integer, Sequence('auth_id_seq'), primary_key=True, comment='권한 ID')
+    USER_ID = Column(String(50), nullable=False, primary_key=True, comment='사용자 ID')
+    AUTH_NAME = Column(String(50), nullable=False, comment='권한 이름')
+    SIMULATION_YN = Column(CHAR(1), default='N', nullable=False, comment='모의 투자 여부')
+    API_KEY = Column(String(200), nullable=False, comment='앱키')
+    SECRET_KEY = Column(String(350), nullable=False, comment='시크릿 키')
+    REG_DT = Column(DateTime, default=datetime.now, nullable=False, comment='등록일')
+    MOD_DT = Column(DateTime, comment='수정일')
 
     # ==================== 비즈니스 로직 ====================
 
     def validate(self) -> None:
         """인증키 유효성 검증"""
-        if not self.auth_name:
+        if not self.AUTH_NAME:
             raise ValidationError("인증키 이름은 필수입니다")
-        if self.simulation_yn not in ('Y', 'N'):
+        if self.SIMULATION_YN not in ('Y', 'N'):
             raise ValidationError("모의투자 여부는 Y 또는 N이어야 합니다")
-        if not self.api_key:
+        if not self.API_KEY:
             raise ValidationError("API 키는 필수입니다")
-        if not self.secret_key:
+        if not self.SECRET_KEY:
             raise ValidationError("시크릿 키는 필수입니다")
-
-    def is_simulation(self) -> bool:
-        """모의투자 여부"""
-        return self.simulation_yn == 'Y'
-
-    def update(self, auth_name: str = None, simulation_yn: str = None) -> None:
-        """인증키 정보 수정"""
-        if auth_name:
-            self.auth_name = auth_name
-        if simulation_yn:
-            if simulation_yn not in ('Y', 'N'):
-                raise ValidationError("모의투자 여부는 Y 또는 N이어야 합니다")
-            self.simulation_yn = simulation_yn
-        self.mod_dt = datetime.now()
 
     # ==================== 팩토리 메서드 ====================
 
@@ -54,11 +41,11 @@ class Auth:
                api_key: str, secret_key: str) -> "Auth":
         """새 인증키 생성"""
         auth = cls(
-            user_id=user_id,
-            auth_name=auth_name,
-            simulation_yn=simulation_yn,
-            api_key=api_key,
-            secret_key=secret_key
+            USER_ID=user_id,
+            AUTH_NAME=auth_name,
+            SIMULATION_YN=simulation_yn,
+            API_KEY=api_key,
+            SECRET_KEY=secret_key
         )
         auth.validate()
         return auth

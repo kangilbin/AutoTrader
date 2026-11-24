@@ -4,8 +4,6 @@ KIS API 등 외부 API 통합
 """
 from app.external.kis_api import (
     oauth_token,
-    get_approval,
-    get_balance,
     get_stock_balance,
     get_stock_data,
     get_inquire_asking_price,
@@ -18,8 +16,6 @@ from app.external.kis_api import (
 
 __all__ = [
     "oauth_token",
-    "get_approval",
-    "get_balance",
     "get_stock_balance",
     "get_stock_data",
     "get_inquire_asking_price",

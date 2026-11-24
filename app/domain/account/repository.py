@@ -5,8 +5,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, delete, text
 from typing import Optional, List
 
-from app.common.database import AccountModel, AuthModel
 from app.domain.account.entity import Account
+from app.domain.auth.entity import Auth
 from app.domain.account.schemas import AccountResponse
 import logging
 
@@ -23,13 +23,13 @@ class AccountRepository:
         """계좌 상세 조회 (인증키 정보 포함)"""
         query = (
             select(
-                AccountModel.ACCOUNT_NO,
-                AuthModel.SIMULATION_YN,
-                AuthModel.API_KEY,
-                AuthModel.SECRET_KEY
+                Account.ACCOUNT_NO,
+                Auth.SIMULATION_YN,
+                Auth.API_KEY,
+                Auth.SECRET_KEY
             )
-            .join(AuthModel, AccountModel.AUTH_ID == AuthModel.AUTH_ID)
-            .filter(AccountModel.ACCOUNT_ID == account_id)
+            .join(Auth, Account.AUTH_ID == Auth.AUTH_ID)
+            .filter(Account.ACCOUNT_ID == account_id)
         )
         result = await self.db.execute(query)
         row = result.first()
@@ -55,33 +55,28 @@ class AccountRepository:
         result = await self.db.execute(query, {"user_id": user_id})
         return [AccountResponse.model_validate(row).model_dump() for row in result]
 
-    async def save(self, account: Account) -> AccountModel:
+    async def save(self, account: Account) -> Account:
         """계좌 저장 (flush만 수행)"""
-        db_account = AccountModel(
-            USER_ID=account.user_id,
-            ACCOUNT_NO=account.account_no,
-            AUTH_ID=account.auth_id
-        )
-        self.db.add(db_account)
+        self.db.add(account)
         await self.db.flush()
-        await self.db.refresh(db_account)
-        return db_account
+        await self.db.refresh(account)
+        return account
 
-    async def update(self, account_id: str, data: dict) -> Optional[AccountModel]:
+    async def update(self, account_id: str, data: dict) -> Optional[Account]:
         """계좌 수정 (flush만 수행)"""
         query = (
-            update(AccountModel)
-            .filter(AccountModel.ACCOUNT_ID == account_id)
+            update(Account)
+            .filter(Account.ACCOUNT_ID == account_id)
             .values(**data)
             .execution_options(synchronize_session=False)
         )
         await self.db.execute(query)
         await self.db.flush()
-        return await self.db.get(AccountModel, account_id)
+        return await self.db.get(Account, account_id)
 
     async def delete(self, account_id: str) -> bool:
         """계좌 삭제 (flush만 수행)"""
-        query = delete(AccountModel).filter(AccountModel.ACCOUNT_ID == account_id)
+        query = delete(Account).filter(Account.ACCOUNT_ID == account_id)
         result = await self.db.execute(query)
         await self.db.flush()
         return result.rowcount > 0

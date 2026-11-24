@@ -102,44 +102,6 @@ class TradeHistoryService:
             logger.error(f"거래 내역 조회 실패: {e}", exc_info=True)
             raise DatabaseError("거래 내역 조회에 실패했습니다")
 
-    async def get_latest_buy(self, swing_id: int) -> Optional[dict]:
-        """
-        가장 최근 매수 내역 조회
-
-        Args:
-            swing_id: 스윙 ID
-
-        Returns:
-            최근 매수 내역 또는 None
-        """
-        try:
-            trade = await self.repo.find_latest_by_type(swing_id, "B")
-            if trade:
-                return TradeHistoryResponse.model_validate(trade).model_dump()
-            return None
-        except SQLAlchemyError as e:
-            logger.error(f"최근 매수 내역 조회 실패: {e}", exc_info=True)
-            raise DatabaseError("최근 매수 내역 조회에 실패했습니다")
-
-    async def get_latest_sell(self, swing_id: int) -> Optional[dict]:
-        """
-        가장 최근 매도 내역 조회
-
-        Args:
-            swing_id: 스윙 ID
-
-        Returns:
-            최근 매도 내역 또는 None
-        """
-        try:
-            trade = await self.repo.find_latest_by_type(swing_id, "S")
-            if trade:
-                return TradeHistoryResponse.model_validate(trade).model_dump()
-            return None
-        except SQLAlchemyError as e:
-            logger.error(f"최근 매도 내역 조회 실패: {e}", exc_info=True)
-            raise DatabaseError("최근 매도 내역 조회에 실패했습니다")
-
     async def get_trade_history_with_chart(
         self, user_id: str, swing_id: int, start_date, end_date
     ) -> dict:

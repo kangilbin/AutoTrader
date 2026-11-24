@@ -5,7 +5,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from typing import Optional, List
 from datetime import datetime
-from app.common.database import TradeHistoryModel, SwingModel, AccountModel
+from app.domain.trade_history.entity import TradeHistory
+from app.domain.swing.entity import SwingTrade
+from app.domain.account.entity import Account
 import logging
 
 logger = logging.getLogger(__name__)
@@ -17,7 +19,7 @@ class TradeHistoryRepository:
     def __init__(self, db: AsyncSession):
         self.db = db
 
-    async def save(self, trade_data: dict) -> TradeHistoryModel:
+    async def save(self, trade_data: dict) -> TradeHistory:
         """
         거래 내역 저장 (flush만 수행)
 
@@ -25,9 +27,9 @@ class TradeHistoryRepository:
             trade_data: 거래 정보 딕셔너리
 
         Returns:
-            저장된 TradeHistoryModel
+            저장된 TradeHistory
         """
-        db_trade = TradeHistoryModel(
+        db_trade = TradeHistory(
             SWING_ID=trade_data["SWING_ID"],
             TRADE_DATE=trade_data.get("TRADE_DATE", datetime.now()),
             TRADE_TYPE=trade_data["TRADE_TYPE"],
@@ -41,7 +43,7 @@ class TradeHistoryRepository:
         await self.db.refresh(db_trade)
         return db_trade
 
-    async def find_by_swing_id(self, swing_id: int) -> List[TradeHistoryModel]:
+    async def find_by_swing_id(self, swing_id: int) -> List[TradeHistory]:
         """
         특정 스윙의 거래 내역 조회
 
@@ -52,41 +54,16 @@ class TradeHistoryRepository:
             거래 내역 리스트 (최신순)
         """
         query = (
-            select(TradeHistoryModel)
-            .where(TradeHistoryModel.SWING_ID == swing_id)
-            .order_by(TradeHistoryModel.TRADE_DATE.desc())
+            select(TradeHistory)
+            .where(TradeHistory.SWING_ID == swing_id)
+            .order_by(TradeHistory.TRADE_DATE.desc())
         )
         result = await self.db.execute(query)
         return result.scalars().all()
 
-    async def find_latest_by_type(
-        self, swing_id: int, trade_type: str
-    ) -> Optional[TradeHistoryModel]:
-        """
-        특정 스윙의 가장 최근 특정 타입 거래 조회
-
-        Args:
-            swing_id: 스윙 ID
-            trade_type: 거래 타입 ("B" or "S")
-
-        Returns:
-            가장 최근 거래 내역 또는 None
-        """
-        query = (
-            select(TradeHistoryModel)
-            .where(
-                TradeHistoryModel.SWING_ID == swing_id,
-                TradeHistoryModel.TRADE_TYPE == trade_type,
-            )
-            .order_by(TradeHistoryModel.TRADE_DATE.desc())
-            .limit(1)
-        )
-        result = await self.db.execute(query)
-        return result.scalar_one_or_none()
-
     async def find_by_swing_id_and_period(
         self, swing_id: int, start_date: datetime, end_date: datetime
-    ) -> List[TradeHistoryModel]:
+    ) -> List[TradeHistory]:
         """
         특정 스윙의 기간별 거래 내역 조회
 
@@ -99,20 +76,20 @@ class TradeHistoryRepository:
             거래 내역 리스트 (날짜 오름차순)
         """
         query = (
-            select(TradeHistoryModel)
+            select(TradeHistory)
             .where(
-                TradeHistoryModel.SWING_ID == swing_id,
-                TradeHistoryModel.TRADE_DATE >= start_date,
-                TradeHistoryModel.TRADE_DATE <= end_date,
+                TradeHistory.SWING_ID == swing_id,
+                TradeHistory.TRADE_DATE >= start_date,
+                TradeHistory.TRADE_DATE <= end_date,
             )
-            .order_by(TradeHistoryModel.TRADE_DATE.asc())
+            .order_by(TradeHistory.TRADE_DATE.asc())
         )
         result = await self.db.execute(query)
         return result.scalars().all()
 
     async def find_swing_with_ownership(
         self, swing_id: int, user_id: str
-    ) -> Optional[SwingModel]:
+    ) -> Optional[SwingTrade]:
         """
         스윙 조회 + 소유권 검증
 
@@ -123,29 +100,15 @@ class TradeHistoryRepository:
             user_id: 사용자 ID
 
         Returns:
-            소유권 검증된 SwingModel 또는 None
+            소유권 검증된 SwingTrade 또는 None
         """
         query = (
-            select(SwingModel)
-            .join(AccountModel, SwingModel.ACCOUNT_NO == AccountModel.ACCOUNT_NO)
+            select(SwingTrade)
+            .join(Account, SwingTrade.ACCOUNT_NO == Account.ACCOUNT_NO)
             .where(
-                SwingModel.SWING_ID == swing_id,
-                AccountModel.USER_ID == user_id,
+                SwingTrade.SWING_ID == swing_id,
+                Account.USER_ID == user_id,
             )
         )
-        result = await self.db.execute(query)
-        return result.scalar_one_or_none()
-
-    async def find_by_id(self, trade_id: int) -> Optional[TradeHistoryModel]:
-        """
-        거래 ID로 조회
-
-        Args:
-            trade_id: 거래 ID
-
-        Returns:
-            거래 내역 또는 None
-        """
-        query = select(TradeHistoryModel).where(TradeHistoryModel.TRADE_ID == trade_id)
         result = await self.db.execute(query)
         return result.scalar_one_or_none()
