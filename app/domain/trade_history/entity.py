@@ -18,5 +18,7 @@ class TradeHistory(Base):
     TRADE_PRICE = Column(DECIMAL(15, 2), nullable=False, comment='거래 가격')
     TRADE_QTY = Column(Integer, nullable=False, comment='거래 수량')
     TRADE_AMOUNT = Column(DECIMAL(15, 2), nullable=False, comment='거래 금액')
+    TOTAL_FEE = Column(DECIMAL(15, 2), nullable=True, comment='제비용합계 (수수료+세금, 매도 시)')
+    REALIZED_PNL = Column(DECIMAL(15, 2), nullable=True, comment='실현손익 (매도 시)')
     TRADE_REASONS = Column(String(500), nullable=True, comment='매매 사유 JSON ["추세약화","추세반전","EMA 이탈"]')
     REG_DT = Column(DateTime, default=datetime.now, nullable=False, comment='등록일')

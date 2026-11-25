@@ -2,8 +2,8 @@
 Trade History Repository - 데이터 접근 계층
 """
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
-from typing import Optional, List
+from sqlalchemy import select, func, case
+from typing import Optional, List, Tuple
 from datetime import datetime
 from app.domain.trade_history.entity import TradeHistory
 from app.domain.swing.entity import SwingTrade
@@ -36,6 +36,8 @@ class TradeHistoryRepository:
             TRADE_PRICE=trade_data["TRADE_PRICE"],
             TRADE_QTY=trade_data["TRADE_QTY"],
             TRADE_AMOUNT=trade_data["TRADE_AMOUNT"],
+            TOTAL_FEE=trade_data.get("TOTAL_FEE"),
+            REALIZED_PNL=trade_data.get("REALIZED_PNL"),
             TRADE_REASONS=trade_data.get("TRADE_REASONS"),
         )
         self.db.add(db_trade)
@@ -86,6 +88,55 @@ class TradeHistoryRepository:
         )
         result = await self.db.execute(query)
         return result.scalars().all()
+
+    async def count_by_swing_id(self, swing_id: int) -> dict:
+        """
+        스윙별 거래 통계 (총 건수, 매수/매도 건수)
+
+        Returns:
+            {"total_count": int, "buy_count": int, "sell_count": int}
+        """
+        query = select(
+            func.count().label("total_count"),
+            func.sum(case((TradeHistory.TRADE_TYPE == "B", 1), else_=0)).label("buy_count"),
+            func.sum(case((TradeHistory.TRADE_TYPE == "S", 1), else_=0)).label("sell_count"),
+        ).where(TradeHistory.SWING_ID == swing_id)
+
+        result = await self.db.execute(query)
+        row = result.one()
+        return {
+            "total_count": row.total_count or 0,
+            "buy_count": row.buy_count or 0,
+            "sell_count": row.sell_count or 0,
+        }
+
+    async def find_by_swing_id_paged(
+        self, swing_id: int, page: int, size: int
+    ) -> Tuple[List[TradeHistory], int]:
+        """
+        페이징 거래 내역 조회
+
+        Returns:
+            (거래 내역 리스트, 전체 건수)
+        """
+        # 전체 건수
+        count_query = select(func.count()).where(TradeHistory.SWING_ID == swing_id)
+        count_result = await self.db.execute(count_query)
+        total_count = count_result.scalar() or 0
+
+        # 페이징 데이터
+        offset = (page - 1) * size
+        data_query = (
+            select(TradeHistory)
+            .where(TradeHistory.SWING_ID == swing_id)
+            .order_by(TradeHistory.TRADE_DATE.desc())
+            .offset(offset)
+            .limit(size)
+        )
+        data_result = await self.db.execute(data_query)
+        trades = data_result.scalars().all()
+
+        return trades, total_count
 
     async def find_swing_with_ownership(
         self, swing_id: int, user_id: str
