@@ -42,6 +42,14 @@ async def list_swing_mapping(
     return success_response("스윙 매핑 완료", result)
 
 
+@router.get("/strategies")
+async def list_strategies(
+    user_id: Annotated[str, Depends(get_current_user)]
+):
+    """선택 가능한 전략 목록 (SWING_TYPE) — 설정 화면용. 같은 SWING_TYPE 으로 백테스트(POST /backtesting)도 돌릴 수 있다"""
+    return success_response("전략 목록 조회 완료", SwingService.list_strategies())
+
+
 @router.get("/{swing_id}")
 async def get_swing(
     swing_id: int,

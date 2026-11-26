@@ -4,6 +4,7 @@
 import logging
 from typing import Type
 from .strategies.base_trading_strategy import TradingStrategy
+from .strategies.ichimoku_strategy import IchimokuStrategy
 from .strategies.single_ema_strategy import SingleEMAStrategy
 
 logger = logging.getLogger(__name__)
@@ -21,7 +22,8 @@ class TradingStrategyFactory:
 
     # 실시간 거래 전략 매핑
     _strategies: dict[str, Type[TradingStrategy]] = {
-        'S': SingleEMAStrategy,  # 단일 20EMA 전략 (현재 유일한 실전 전략)
+        'S': SingleEMAStrategy,  # 단일 20EMA 전략
+        'I': IchimokuStrategy,   # 일목균형표 전략 (백테스트 'I' 와 같은 규칙 — BaseIchimokuStrategy)
     }
 
     @classmethod
@@ -34,10 +36,9 @@ class TradingStrategyFactory:
 
         Args:
             swing_type: SWING_TRADE.SWING_TYPE
-                - 'A': 이평선 전략
-                - 'B': 일목균형표 전략 (현재 SingleEMAStrategy 사용)
                 - 'S': 단일 20EMA 전략
-                - 기타: SingleEMAStrategy (기본값)
+                - 'I': 일목균형표 전략
+                - 'A'/'B' 등 실전 미등록 타입: SingleEMAStrategy (기본값, warning 로그)
 
         Returns:
             전략 클래스 (check_entry_signal, check_exit_signal 제공)

@@ -13,7 +13,7 @@
 import logging
 from collections import Counter
 from dataclasses import dataclass, field
-from typing import Awaitable, Callable, Iterable, List, Tuple
+from typing import Awaitable, Callable, Iterable, List, Optional, Tuple
 
 from app.domain.pool.entity import PoolSetting
 from app.domain.swing import risk_sizing
@@ -53,6 +53,7 @@ class EntryCandidate:
     avg_daily_amount: float     # 20일 평균 거래대금 (유동성 필터)
     reasons: Tuple[str, ...] = ("EMA돌파",)
     recovery: bool = False      # 회복 재진입 — 쿨다운(SIGNAL 3/4) 중에도 산다 (recovery_reentry)
+    initial_stop: Optional[float] = None   # 전략이 정한 1R 손절선 — 없으면 단일 EMA 청산선 공식(initial_stop 함수)
 
 
 @dataclass(frozen=True)
@@ -119,12 +120,12 @@ async def run_pool_entries(
             logger.error(f"[POOL] 연속 {consecutive_failures}건 주문 실패 → 이번 사이클 중단 (남은 후보 {len(ordered) - i}건)")
             break
 
-        if c.atr <= 0:
+        if c.initial_stop is None and c.atr <= 0:     # 전략이 손절선을 직접 주면 ATR 이 없어도 사이징할 수 있다
             result.skipped[SKIP_NO_ATR] += 1
             logger.warning(f"[{c.st_code}] ATR 없음 → 풀 매수 보류 (청산선·리스크 계산 불가)")
             continue
 
-        stop = initial_stop(c.price, c.atr)
+        stop = c.initial_stop if c.initial_stop is not None else initial_stop(c.price, c.atr)
         sized = risk_sizing.calc_qty(equity, risk_pct, c.price, stop, max_position_pct)
         if sized.qty <= 0:
             result.skipped[SKIP_ZERO_QTY] += 1

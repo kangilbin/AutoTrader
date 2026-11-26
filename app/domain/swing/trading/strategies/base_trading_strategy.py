@@ -32,6 +32,22 @@ class TradingStrategy(ABC):
     MAX_ENTRY_PCT: float
     ATR_MULTIPLIER: float
 
+    # ── 오케스트레이터(auto_swing_batch)가 읽는 전략 특성 — 기본값은 단일 EMA 의 동작과 같다 ──
+    # 새 전략은 EMA·OBV 에 묶인 단계를 이 속성으로 끈다 (오케스트레이터에서 전략 타입으로 분기하지 않는다).
+    ENRICH_REALTIME_INDICATORS: bool = True   # EMA/OBV/ADX 실시간 증분 지표 보강 (캐시에 해당 키가 있는 전략만)
+    COOLDOWN_AFTER_EXIT: bool = True          # 전량 매도 뒤 SIGNAL 3→4→0 (OBV 수급 쿨다운). False 면 바로 SIGNAL 0
+    USES_ENTRY_FILTERS: bool = True           # 종가 확인 재진입·연속 손실 가드·신용 게이트·회복 재진입
+
+    @classmethod
+    def initial_stop(cls, price: float, cached_indicators: Dict) -> Optional[float]:
+        """풀 사이징의 1R 기준이 되는 진입 시 손절선. None 이면 풀의 기본 공식(단일 EMA 청산선)을 쓴다"""
+        return None
+
+    @classmethod
+    def position_stop(cls, cached_indicators: Dict, entry_price: float, peak_price: float) -> Optional[float]:
+        """보유 포지션의 현재 손절선 (풀의 열린 리스크 계산용). None 이면 풀의 기본 공식을 쓴다"""
+        return None
+
     @classmethod
     def describe(cls) -> dict:
         """전략 설명 — AI 종목 분석이 '이 종목에 맞는 전략'을 고를 때 그대로 전달된다.

@@ -15,6 +15,7 @@ from unittest.mock import AsyncMock, patch
 
 from app.domain.swing.trading import pool_state as ps
 from app.domain.swing.trading.pool_state import AccountSnapshot, PoolPosition
+from app.domain.swing.trading.strategies.single_ema_strategy import SingleEMAStrategy
 
 
 def pos(entry=100.0, peak=100.0, atr=2.0, qty=10, code="X"):
@@ -183,12 +184,12 @@ class LoadPositionsTest(unittest.IsolatedAsyncioTestCase):
             return self.swings
 
     def swing(self, code, entry, peak, qty):
-        return SimpleNamespace(ST_CODE=code, ENTRY_PRICE=entry, PEAK_PRICE=peak, HOLD_QTY=qty)
+        return SimpleNamespace(ST_CODE=code, ENTRY_PRICE=entry, PEAK_PRICE=peak, HOLD_QTY=qty, SWING_TYPE='S')
 
     async def test_atr_from_cache_and_conservative_when_missing(self):
         repo = self.FakeRepo([self.swing("A", 100, 120, 10), self.swing("B", 50, None, 4)])
         cache = {"A": {"atr": 2.5}, "B": None}
-        with patch.object(ps.SingleEMAStrategy, "get_cached_indicators",
+        with patch.object(SingleEMAStrategy, "get_cached_indicators",
                           AsyncMock(side_effect=lambda r, code: cache[code])):
             positions = await ps.load_positions(repo, None, "acc", "US")
         a, b = positions
@@ -198,7 +199,7 @@ class LoadPositionsTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_kr_pool_queries_domestic(self):
         repo = self.FakeRepo([])
-        with patch.object(ps.SingleEMAStrategy, "get_cached_indicators", AsyncMock(return_value=None)):
+        with patch.object(SingleEMAStrategy, "get_cached_indicators", AsyncMock(return_value=None)):
             self.assertEqual(await ps.load_positions(repo, None, "acc", "KR"), [])
         self.assertEqual(repo.calls, [("acc", False)])
 

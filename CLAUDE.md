@@ -117,14 +117,17 @@ app/
 │   │   │   └── strategies/
 │   │   │       ├── base_trading_strategy.py  # TradingStrategy 추상 클래스
 │   │   │       ├── base_single_ema.py        # 단일 EMA 공통 로직/파라미터
-│   │   │       └── single_ema_strategy.py    # 실전 전략 (유일)
+│   │   │       ├── single_ema_strategy.py    # 실전 전략 S
+│   │   │       ├── base_ichimoku.py          # 일목 공통 규칙 (실전·백테스트가 공유) + 지표 캐시용 snapshot
+│   │   │       └── ichimoku_strategy.py      # 실전 전략 I (일목균형표)
 │   │   └── backtest/        # 백테스팅 (실전 전략과 분리)
 │   │       ├── backtest_service.py
 │   │       ├── strategy_factory.py
 │   │       └── strategies/
 │   │           ├── base_strategy.py              # BacktestStrategy 추상 클래스
 │   │           ├── ema_strategy.py               # A: 이평선
-│   │           ├── ichimoku_strategy.py          # B: 일목균형표
+│   │           ├── ichimoku_strategy.py          # B: 예전 일목 규칙 (레거시, 실전과 무관)
+│   │           ├── ichimoku_state_backtest_strategy.py  # I: 일목균형표 (실전과 같은 규칙)
 │   │           └── single_ema_backtest_strategy.py  # S: 단일 20EMA
 │   ├── stock/               # 종목 마스터 + 일별 데이터 수집 배치
 │   │   ├── stock_data_batch.py       # 일별 OHLCV 수집
@@ -261,7 +264,8 @@ async def create_swing(
 
    | SWING_TYPE | 전략 |
    |------------|------|
-   | `S` | `SingleEMAStrategy` — 단일 20EMA + 단일 청산선 (**현재 유일한 실전 전략**) |
+   | `S` | `SingleEMAStrategy` — 단일 20EMA + 단일 청산선 |
+   | `I` | `IchimokuStrategy` — 일목균형표: 구름 위 + 전환선>기준선 상태가 최근 5일 내 성립하면 진입, 종가가 구름 하단 아래로 마감하면 청산 (쿨다운·부분익절 없음, 사이징 손절선 = 구름 하단) |
    | 그 외 | `SingleEMAStrategy` 폴백 (warning 로그) |
 
    **백테스트** — `backtest/strategy_factory.py` → `BacktestStrategy` 상속
@@ -271,14 +275,26 @@ async def create_swing(
    | `A` | `EMAStrategy` — EMA 골든크로스 (단기/중기/장기) |
    | `B` | `IchimokuStrategy` — 일목균형표 신호 |
    | `S` | `SingleEMABacktestStrategy` — 단일 20EMA (실전과 동일 정의) |
+   | `I` | `IchimokuBacktestStrategy` — 일목균형표 (실전과 동일 규칙 — `BaseIchimokuStrategy` 공유, 신호와 체결 시점까지 같다) |
 
-   `EMAStrategy`·`IchimokuStrategy`는 백테스트에만 등록되어 있어 실전 매매에서는
+   `EMAStrategy`·`IchimokuStrategy`(B, 레거시)는 백테스트에만 등록되어 있어 실전 매매에서는
    호출되지 않는다. 실전 전략 추가 시 `TradingStrategyFactory._strategies`에 등록해야 한다.
 
    **실전 전략은 `describe()`를 구현해야 한다** — AI 종목 분석(`domain/stock_review`)이
    `TradingStrategyFactory.describe_all()`을 Gemini에 넘겨 종목에 맞는 전략을 고르게 한다.
    설명 속 수치는 판정 로직과 같은 클래스 상수로 조립할 것 (손으로 쓴 설명은 실제 동작과 어긋났었다).
    누락은 `tests/test_strategy_description.py`가 잡는다.
+
+   **전략 훅 (오케스트레이터가 읽는 `TradingStrategy` 클래스 속성 — 기본값은 단일 EMA 동작)**: `ENRICH_REALTIME_INDICATORS`(EMA/OBV 실시간 증분 지표 보강),
+   `COOLDOWN_AFTER_EXIT`(전량 매도 뒤 SIGNAL 3→4→0, 끄면 바로 0 — `reset_cycle(cooldown=)`), `USES_ENTRY_FILTERS`(종가 확인 재진입·연속 손실 가드·신용 게이트·회복 재진입),
+   `initial_stop`/`position_stop`(풀 사이징 1R 손절선·열린 리스크 — `EntryCandidate.initial_stop`, `PoolPosition.stop`, 없으면 EMA 청산선 공식).
+   새 전략은 오케스트레이터에서 타입으로 분기하지 말고 이 속성으로 EMA 전용 단계를 끈다 (기본값이 바뀌면 EMA 회귀 테스트가 잡는다).
+   일목(`I`)은 전부 끈다. **일목 신호는 전일 완성봉 기준**이다 — 지표 캐시(`indicators:{code}`, 종목 단위 하나라 EMA 페이로드에 `ichi_*` 값을 얹는다)를 하루 내내 읽고,
+   전일 종가로 판정해 오늘 장 시작 뒤 첫 배치에서 주문한다 (백테스트의 t 종가 판정·t+1 시가 체결과 같다). 진입 신호는 상태가 성립한 날부터 5일간 켜져 있어 첫날 못 사도 재시도된다.
+   **일목 근거와 한계**: 워크포워드(`scripts/research/ichimoku_popular.py`, 후보 B0-X2) 검증 구간에서 한국·미국 모두 플러스였지만 같은 낙폭의 "지수+예금" 선에 못 미쳤다(사전 기준 미통과).
+   AI 종목 분석은 등록된 모든 전략을 추천 후보로 삼으므로 `describe()` 에 이 한계를 적어 두었다 — 설명을 고칠 때 근거 없는 낙관을 넣지 말 것.
+   **API**: `GET /swing/strategies` 가 선택 가능한 전략 목록(SWING_TYPE·설명·백테스트 가능 여부)을 준다. `PUT /swing/{id}/settings` 의 `SWING_TYPE` 변경은 실전 등록 타입만 허용하고,
+   보유 중이거나 SIGNAL≠0 이면 거부한다(전략마다 사이클 상태가 달라 넘겨받을 수 없다). 같은 `SWING_TYPE` 으로 `POST /backtesting` 을 돌리면 그 전략의 규칙으로 백테스트된다.
 
 5. **신호 흐름**: SWING_TRADE.SIGNAL 컬럼으로 상태 추적
 

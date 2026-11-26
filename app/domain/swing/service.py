@@ -11,6 +11,8 @@ from datetime import datetime, time, timedelta
 from zoneinfo import ZoneInfo
 from decimal import Decimal, InvalidOperation
 from app.domain.swing.indicators import TechnicalIndicators
+from app.core.bars import clean_bars
+from app.domain.swing.trading.strategies.base_ichimoku import BaseIchimokuStrategy
 from app.domain.swing.trading.strategies.base_single_ema import BaseSingleEMAStrategy
 from app.domain.swing.repository import SwingRepository
 from app.domain.account.repository import AccountRepository
@@ -259,6 +261,41 @@ class SwingService:
             raise NotFoundError("스윙 전략", swing_id)
         return SwingResponse.model_validate(swing).model_dump()
 
+    @staticmethod
+    def list_strategies() -> List[Dict[str, Any]]:
+        """앱이 설정 화면에서 보여 줄 선택 가능한 실전 전략 목록 — 실전 팩토리에 등록된 전략 전부
+
+        BACKTEST 는 같은 SWING_TYPE 으로 백테스트(POST /backtesting)를 돌릴 수 있는지다. 실전·백테스트는 같은 규칙 모듈을 쓴다.
+        """
+        from app.domain.swing.backtest.strategy_factory import StrategyFactory
+        from app.domain.swing.trading.trading_strategy_factory import TradingStrategyFactory
+        backtestable = set(StrategyFactory.get_available_strategies())
+        return [
+            {"SWING_TYPE": code, "NAME": d["이름"], "SUMMARY": d["요약"], "ENTRY": d["매수조건"], "EXIT": d["청산"],
+             "SIZING": d["매수수량"], "CAUTION": d["안맞는종목"], "BACKTEST": code in backtestable}
+            for code, d in TradingStrategyFactory.describe_all().items()
+        ]
+
+    @staticmethod
+    def _validate_type_change(swing, data: dict) -> None:
+        """전략 타입(SWING_TYPE)을 바꾸는 수정 요청 검증 — 이 경로는 엔티티 검증을 거치지 않아 아무 값이나 저장될 수 있었다
+
+        - 실전 팩토리에 등록된 타입만 허용 (미등록 타입은 실전에서 단일 EMA 로 폴백해 설정과 실제 매매가 어긋난다)
+        - 모멘텀 행(M)은 월간 배치가 관리하므로 바꿀 수 없다
+        - 보유 중이거나 SIGNAL 이 0이 아니면 바꿀 수 없다 (전략마다 청산선·쿨다운 상태가 달라 진행 중인 사이클을 넘겨받을 수 없다)
+        """
+        if "SWING_TYPE" not in data or data["SWING_TYPE"] == swing.SWING_TYPE:
+            return
+        from app.domain.swing.trading.trading_strategy_factory import TradingStrategyFactory
+        new_type = data["SWING_TYPE"]
+        if new_type not in TradingStrategyFactory.get_available_strategies():
+            raise ValidationError(f"선택할 수 없는 전략입니다: {new_type}")
+        if swing.SWING_TYPE == MOMENTUM_TYPE:
+            raise BusinessRuleError("모멘텀 포지션 행은 전략을 바꿀 수 없습니다", rule="MOMENTUM_ROW_FIXED")
+        if (swing.HOLD_QTY or 0) > 0 or swing.SIGNAL != 0:
+            raise BusinessRuleError("보유 중이거나 진행 중인 사이클이 있으면 전략을 바꿀 수 없습니다. 청산이 끝난 뒤 바꿔주세요",
+                                    rule="STRATEGY_CHANGE_WHILE_HOLDING")
+
     async def update_swing(self, swing_id: int, data: dict, user_id: str) -> dict:
         """스윙 수정 - 소유권 검증 포함
 
@@ -269,6 +306,8 @@ class SwingService:
             swing = await self.repo.find_by_id_with_ownership(user_id, swing_id)
             if not swing:
                 raise NotFoundError("스윙 전략", swing_id)
+
+            self._validate_type_change(swing, data)
 
             # 비활성 → 활성 전환 여부 (풀 켜기 + 데이터 적재 트리거 기준)
             is_activating = data.get("USE_YN") == "Y" and swing.USE_YN == "N"
@@ -674,6 +713,12 @@ class SwingService:
             "sma200": None if pd.isna(sma200_now) else float(sma200_now),
             "sma200_prev20": None if pd.isna(sma200_prev20) else float(sma200_prev20),
         }
+
+        # 일목균형표(SWING_TYPE='I') 신호 값 — 같은 페이로드에 얹는다 (캐시 키가 종목 단위라 전략마다 따로 둘 수 없다. EMA 키는 그대로).
+        # 분할·병합 미보정 구간이 있으면 가짜 신호가 나므로 연구와 같은 보정을 거친다. 봉이 모자라면 ichi_* 가 없고 일목 전략은 판단하지 않는다.
+        ichimoku = BaseIchimokuStrategy.snapshot(clean_bars(df))
+        if ichimoku:
+            indicators_data.update(ichimoku)
 
         return indicators_data
 

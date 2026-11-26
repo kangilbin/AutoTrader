@@ -105,6 +105,12 @@ def is_opening_guard(mrkt_code: str, guard_minutes: int = 10) -> bool:
     return config["open"] <= now < guard_end
 
 
+def _reset_cycle(swing, obv_z=None) -> None:
+    """전량 청산 뒤 사이클 초기화 — 쿨다운 여부는 전략이 정한다 (단일 EMA 는 OBV 쿨다운 SIGNAL 3, 일목은 없음 → SIGNAL 0)"""
+    strategy = TradingStrategyFactory.get_strategy(swing.SWING_TYPE)
+    swing.reset_cycle(obv_z=obv_z, cooldown=strategy.COOLDOWN_AFTER_EXIT)
+
+
 def _trading_allowed(mrkt_code: str, label: str) -> bool:
     """매매 배치 실행 가능 여부 (정규장 가드)
 
@@ -320,17 +326,18 @@ async def process_single_swing(
                 prdy_ctrt = float(current_price_data.get("prdy_ctrt", 0))
 
             # 실시간 지표 증분 계산 (base 전략 상수와 동기화)
-            cached_indicators = TechnicalIndicators.enrich_cached_indicators_with_realtime(
-                cached_indicators=cached_indicators,
-                current_price=float(current_price),
-                current_volume=acml_vol,
-                current_high=float(current_high),
-                current_low=float(current_low),
-                ema_period=BaseSingleEMAStrategy.EMA_PERIOD,
-                atr_period=14,
-                obv_lookback=BaseSingleEMAStrategy.OBV_LOOKBACK,
-                accum_ema_period=BaseSingleEMAStrategy.ACCUM_EMA_PERIOD
-            )
+            if strategy.ENRICH_REALTIME_INDICATORS:      # EMA/OBV 증분 지표가 필요 없는 전략(일목 등)은 건너뛴다
+                cached_indicators = TechnicalIndicators.enrich_cached_indicators_with_realtime(
+                    cached_indicators=cached_indicators,
+                    current_price=float(current_price),
+                    current_volume=acml_vol,
+                    current_high=float(current_high),
+                    current_low=float(current_low),
+                    ema_period=BaseSingleEMAStrategy.EMA_PERIOD,
+                    atr_period=14,
+                    obv_lookback=BaseSingleEMAStrategy.OBV_LOOKBACK,
+                    accum_ema_period=BaseSingleEMAStrategy.ACCUM_EMA_PERIOD
+                )
 
             # 장중 5분 샘플 저장 (장중 규칙 검증용) — 실패해도 매매는 계속한다
             today_open = float(current_price_data.get("open" if _overseas else "stck_oprc", 0) or 0)
@@ -399,7 +406,7 @@ async def process_single_swing(
                     new_signal = pending_result.get("signal_on_complete", swing.SIGNAL)
                     if new_signal == 0:
                         obv_z = cached_indicators.get('realtime_obv_z', 0) if cached_indicators else 0
-                        swing.reset_cycle(obv_z=obv_z)
+                        _reset_cycle(swing, obv_z=obv_z)
                         await close_confirm.record_full_exit(
                             redis_client, swing.SWING_ID, mrkt_code,
                             entry_price=entry_price, exit_price=pending_result.get("avg_price"))
@@ -663,13 +670,15 @@ def _build_candidate(swing, strategy, user_id, st_code, mrkt_code, current_price
     """풀 매수 후보 — 신호 매수와 회복 재진입이 같은 필드·같은 확신도 계산을 쓴다"""
     realtime_adx = cached_indicators.get('realtime_adx', 0)
     realtime_obv_z = cached_indicators.get('realtime_obv_z', 0)
+    calc_conviction = getattr(strategy, "calc_conviction", None)     # EMA 전용 확신도 — 없는 전략은 모두 같은 우선순위
     return EntryCandidate(
         swing_id=swing.SWING_ID, user_id=user_id, account_no=swing.ACCOUNT_NO, st_code=st_code,
         mrkt_code=mrkt_code or swing.MRKT_CODE, price=float(current_price),
-        conviction=strategy.calc_conviction(realtime_adx, realtime_obv_z),
+        conviction=calc_conviction(realtime_adx, realtime_obv_z) if calc_conviction else 1.0,
         atr=float(cached_indicators.get('atr', 0) or 0),
         avg_daily_amount=float(avg_daily_amount or 0),
         reasons=reasons, recovery=recovery,
+        initial_stop=strategy.initial_stop(float(current_price), cached_indicators),
     )
 
 
@@ -756,17 +765,21 @@ async def _handle_waiting(
     )
 
     if not (entry_result and entry_result.get("action") == "BUY"):
+        if not strategy.USES_ENTRY_FILTERS:
+            return                    # 회복 재진입은 단일 EMA 의 SMA200·EMA20 규칙이라 다른 전략에는 적용하지 않는다
         # 신호가 없어도 청산 뒤 장기 추세로 복귀했으면 회복 재진입을 본다
         return await _handle_recovery(
             swing, strategy, redis_client, user_id, st_code, current_price,
             cached_indicators, avg_daily_amount, mrkt_code, pool_bucket, final_batch)
 
-    # 재진입은 마지막 배치(종가 근처)에서만 산다 — 신호는 장중 내내 유지되면 그때 다시 충족된다
-    if await _defer_reentry(redis_client, swing, st_code, mrkt_code, final_batch):
-        return
+    # 종가 확인 재진입·연속 손실 가드·신용 게이트는 단일 EMA 로 검증한 필터라 그 전략에서만 쓴다 (전략 속성 USES_ENTRY_FILTERS)
+    if strategy.USES_ENTRY_FILTERS:
+        # 재진입은 마지막 배치(종가 근처)에서만 산다 — 신호는 장중 내내 유지되면 그때 다시 충족된다
+        if await _defer_reentry(redis_client, swing, st_code, mrkt_code, final_batch):
+            return
 
-    if await _entry_blocked(redis_client, swing, st_code, mrkt_code):
-        return
+        if await _entry_blocked(redis_client, swing, st_code, mrkt_code):
+            return
 
     if not user_id:
         logger.warning(f"[{st_code}] USER_ID 없음, 주문 실행 불가")
@@ -943,7 +956,7 @@ async def _execute_full_sell(
     if order_result["completed"]:
         obv_z = cached_indicators.get('realtime_obv_z', 0) if cached_indicators else 0
         entry_price = swing.ENTRY_PRICE   # reset_cycle 이 지우기 전에 — 연속 손실 판정용
-        swing.reset_cycle(obv_z=obv_z)
+        _reset_cycle(swing, obv_z=obv_z)
         await close_confirm.record_full_exit(
             redis_client, swing.SWING_ID, mrkt_code,
             entry_price=entry_price, exit_price=order_result.get("avg_price"))
@@ -1024,7 +1037,7 @@ async def _reconcile_after_sell_rejected(swing, redis_client, db, user_id, st_co
         swing.touch()
     if fully_sold:
         entry_price = swing.ENTRY_PRICE   # reset_cycle 이 지우기 전에 — 연속 손실 판정용
-        swing.reset_cycle()
+        _reset_cycle(swing)
         # 체결내역을 일부만 찾았거나 없으면 청산가를 신뢰할 수 없다 → 연속 손실 횟수는 그대로 둔다
         exit_price = recovered_amt / recovered_qty if recovered_qty >= missing_qty > 0 else None
         await close_confirm.record_full_exit(

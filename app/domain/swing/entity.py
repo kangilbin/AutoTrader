@@ -27,7 +27,7 @@ class SwingTrade(Base):
     MRKT_CODE = Column(String(50), nullable=False, comment='조건 시장 분류 코드(J:KRX, NX:NXT, UN:통합)')
     ST_CODE = Column(String(50), nullable=False, comment='종목 코드')
     USE_YN = Column(CHAR(1), nullable=False, default='N', comment='사용 여부')
-    SWING_TYPE = Column(CHAR(1), nullable=False, comment='스윙 타입 (A: 이평선, B: 일목균형표)')
+    SWING_TYPE = Column(CHAR(1), nullable=False, comment='스윙 타입 (S: 단일 20EMA, I: 일목균형표, A: 이평선(백테스트), B: 구 일목(백테스트), M: 모멘텀)')
     SIGNAL = Column(Integer, nullable=False, default=0, comment='매매 신호 상태 (0:대기, 1:보유-익절전, 2:보유-익절후, 3:수급이탈대기, 4:수급재유입대기)')
     ENTRY_PRICE = Column(DECIMAL(15, 2), nullable=True, comment='평균 매수 단가')
     HOLD_QTY = Column(Integer, nullable=True, default=0, comment='보유 수량')
@@ -48,8 +48,8 @@ class SwingTrade(Base):
             raise ValidationError(f"시장코드는 {VALID_MRKT_CODES} 중 하나여야 합니다")
         if not self.ST_CODE:
             raise ValidationError("종목코드는 필수입니다")
-        if self.SWING_TYPE not in ('S', 'A', 'B', MOMENTUM_TYPE):
-            raise ValidationError("스윙 타입은 [S,A,B,M]여야 합니다")
+        if self.SWING_TYPE not in ('S', 'A', 'B', 'I', MOMENTUM_TYPE):
+            raise ValidationError("스윙 타입은 [S,A,B,I,M]여야 합니다")
 
     # ==================== 상태 조회 ====================
 
@@ -129,18 +129,20 @@ class SwingTrade(Base):
         self.HOLD_QTY = (self.HOLD_QTY or 0) - sold_qty
         self.MOD_DT = datetime.now()
 
-    def reset_cycle(self, obv_z: float = None) -> None:
+    def reset_cycle(self, obv_z: float = None, cooldown: bool = True) -> None:
         """
         사이클 종료 — 전량 매도 후 초기화
 
-        무조건 SIGNAL 3 (수급 안정화 대기) 진입:
+        기본(cooldown=True)은 무조건 SIGNAL 3 (수급 안정화 대기) 진입 — 단일 EMA 의 동작.
+        cooldown=False 는 쿨다운 없는 전략(일목 등)용으로 곧바로 SIGNAL 0 (매수 대기)로 돌아간다.
+        아래 설명은 cooldown=True 기준:
         - 매도 직후엔 매수 진입 조건이 잔존 수급으로 즉시 충족될 위험이 있음
         - 3 → 4 → 0 사이클로 *수급 이탈 확인 → 강한 재유입 확인*을 강제
         - 백테스트와 동일한 보수적 흐름
 
         obv_z 파라미터는 호출부 호환성 위해 유지 (사용 안 함)
         """
-        self.SIGNAL = 3
+        self.SIGNAL = 3 if cooldown else 0
         self.ENTRY_PRICE = None
         self.HOLD_QTY = 0
         self.PEAK_PRICE = None

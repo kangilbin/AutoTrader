@@ -25,7 +25,7 @@ from app.domain.pool.entity import PARK_ETF, POOL_KR, POOL_US
 from app.domain.swing import risk_sizing
 from app.domain.swing.repository import SwingRepository
 from app.domain.swing.trading.strategies.base_single_ema import BaseSingleEMAStrategy
-from app.domain.swing.trading.strategies.single_ema_strategy import SingleEMAStrategy
+from app.domain.swing.trading.trading_strategy_factory import TradingStrategyFactory
 from app.external import foreign_api, kis_api
 
 logger = logging.getLogger(__name__)
@@ -47,10 +47,13 @@ class PoolPosition:
     entry_price: float
     peak_price: float
     atr: float      # 전일 완성봉 ATR (없으면 0 → 최대 손절폭으로 보수적 계산)
+    stop: Optional[float] = None   # 전략이 정한 현재 손절선 (일목 등) — 없으면 단일 EMA 청산선 공식
 
     @property
     def exit_line(self) -> float:
         """현재 청산선 — 실전 청산 판정과 같은 함수 (진입 시 청산선이 1R 기준)"""
+        if self.stop is not None:
+            return self.stop
         return BaseSingleEMAStrategy.calculate_exit_line(self.entry_price, self.peak_price, self.atr)
 
     @property
@@ -154,11 +157,14 @@ async def load_positions(
     swings = await repo.find_holdings(account_no, overseas=(market == POOL_US))
     positions = []
     for s in swings:
-        cached = await SingleEMAStrategy.get_cached_indicators(redis_client, s.ST_CODE)
+        # 전략별로 캐시 로더·손절선이 다르다 (단일 EMA 는 청산선 공식, 일목은 구름 하단)
+        strategy = TradingStrategyFactory.get_strategy(s.SWING_TYPE)
+        cached = await strategy.get_cached_indicators(redis_client, s.ST_CODE)
         atr = float(cached["atr"]) if cached and cached.get("atr") else 0.0
         entry = float(s.ENTRY_PRICE or 0)
+        peak = float(s.PEAK_PRICE or entry)
+        stop = strategy.position_stop(cached, entry, peak) if cached else None
         positions.append(PoolPosition(
-            code=s.ST_CODE, qty=int(s.HOLD_QTY or 0), entry_price=entry,
-            peak_price=float(s.PEAK_PRICE or entry), atr=atr,
+            code=s.ST_CODE, qty=int(s.HOLD_QTY or 0), entry_price=entry, peak_price=peak, atr=atr, stop=stop,
         ))
     return positions

@@ -5,6 +5,7 @@ from typing import Dict
 from .strategies.base_strategy import BacktestStrategy
 from .strategies.ema_strategy import EMAStrategy
 from .strategies.ichimoku_strategy import IchimokuStrategy
+from .strategies.ichimoku_state_backtest_strategy import IchimokuBacktestStrategy
 from .strategies.single_ema_backtest_strategy import SingleEMABacktestStrategy
 
 
@@ -14,7 +15,8 @@ class StrategyFactory:
     # 전략 매핑
     _strategies: Dict[str, BacktestStrategy] = {
         "A": EMAStrategy(),
-        "B": IchimokuStrategy(),
+        "B": IchimokuStrategy(),                  # 예전 일목 규칙(분할 매수·매도) — 실전과 무관한 레거시
+        "I": IchimokuBacktestStrategy(),          # 일목균형표 (실전 IchimokuStrategy 와 같은 규칙 — BaseIchimokuStrategy)
         "S": SingleEMABacktestStrategy(),
     }
     
