@@ -68,10 +68,10 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
                 peak_price = max(peak_price, row["STCK_HGPR"])
 
                 # [1차 방어선] 즉시 매도 조건 체크 (저가 기준)
-                immediate_sell_signal, reason, sell_price = self._check_immediate_sell_conditions(row)
+                immediate_sell_signal, reasons, sell_price = self._check_immediate_sell_conditions(row)
 
                 if immediate_sell_signal:
-                    current_capital = self._execute_sell(trades, current_date, sell_price, current_capital, reason, sell_all=True)
+                    current_capital = self._execute_sell(trades, current_date, sell_price, current_capital, reasons, sell_all=True)
 
                     # 상태 초기화
                     position_status, buy_count = None, 0
@@ -79,30 +79,31 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
                     continue
 
                 # [2차 방어선] EOD 조건부 trailing stop (종가 기준)
-                eod_sell_action, reason = self._check_eod_trailing_stop(
+                eod_sell_action, reasons = self._check_eod_trailing_stop(
                     row, prev_row, prev_prev_row, peak_price, position_status
                 )
 
                 if eod_sell_action == 'SELL_PRIMARY':
                     sell_price = row["STCK_CLPR"]
-                    current_capital = self._execute_sell(trades, current_date, sell_price, current_capital, reason, sell_ratio=sell_ratio)
+                    current_capital = self._execute_sell(trades, current_date, sell_price, current_capital, reasons, sell_ratio=sell_ratio)
                     position_status = 'SELL_PRIMARY'
 
                 elif eod_sell_action == 'SELL_ALL':
                     sell_price = row["STCK_CLPR"]
-                    current_capital = self._execute_sell(trades, current_date, sell_price, current_capital, reason, sell_all=True)
+                    current_capital = self._execute_sell(trades, current_date, sell_price, current_capital, reasons, sell_all=True)
                     position_status, buy_count = None, 0
                     peak_price = 0.0
 
                 elif position_status == 'SELL_PRIMARY':
                     # 매도 신호 없음: 재진입 조건 체크 (실전 SIGNAL 3 재진입과 동일)
-                    matched, signal_reason = self._check_entry_conditions(row, prev_row)
+                    matched, signal_reasons = self._check_entry_conditions(row, prev_row)
                     if matched and current_capital > 0:
                         buy_price = row["STCK_CLPR"]
                         buy_amount = current_capital * buy_ratio
                         buy_quantity = int(buy_amount / buy_price)
                         if buy_quantity > 0:
-                            current_capital = self._execute_buy(trades, current_date, buy_price, buy_quantity, current_capital, f"재진입 매수({signal_reason})")
+                            reasons = ["재진입 매수"] + signal_reasons
+                            current_capital = self._execute_buy(trades, current_date, buy_price, buy_quantity, current_capital, reasons)
                             buy_count = 1
                             position_status = 'BUY_COMPLETE'
                             peak_price = row["STCK_CLPR"]
@@ -113,14 +114,15 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
             if can_buy and current_capital > 0:
                 is_entry = False
                 buy_amount = 0  # 초기화
+                signal_reasons = []
 
                 if position_status is None:
-                    matched, signal_reason = self._check_entry_conditions(row, prev_row)
+                    matched, signal_reasons = self._check_entry_conditions(row, prev_row)
                     if matched:
                        is_entry = True
                        buy_amount = current_capital * buy_ratio
                 else: # 2차 매수
-                    matched, signal_reason = self._check_second_buy_conditions(row, prev_row)
+                    matched, signal_reasons = self._check_second_buy_conditions(row, prev_row)
                     if matched:
                         is_entry = True
                         buy_amount = current_capital
@@ -131,8 +133,8 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
 
                     if buy_quantity > 0:
                         is_first_buy = position_status is None
-                        reason = f"{buy_count+1}차 매수({signal_reason})"
-                        current_capital = self._execute_buy(trades, current_date, buy_price, buy_quantity, current_capital, reason)
+                        reasons = [f"{buy_count+1}차 매수"] + signal_reasons
+                        current_capital = self._execute_buy(trades, current_date, buy_price, buy_quantity, current_capital, reasons)
                         buy_count += 1
                         position_status = 'BUY_COMPLETE'
                         if is_first_buy:
@@ -143,11 +145,11 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
         result = self._format_result(prices_df, params, trades, final_capital)
         return result
 
-    def _check_immediate_sell_conditions(self, row: pd.Series) -> Tuple[bool, str, float]:
+    def _check_immediate_sell_conditions(self, row: pd.Series) -> Tuple[bool, List[str], float]:
         """[1차 방어선] 저가 기준 즉시 매도 조건 체크
 
         Returns:
-            (신호발생여부, 사유, 매도가)
+            (신호발생여부, 사유 리스트, 매도가)
         """
         low_price = row["STCK_LWPR"]
 
@@ -155,11 +157,11 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
         if pd.notna(row["ema_20"]) and pd.notna(row["atr"]) and row["atr"] > 0:
             ema_stop_loss = row["ema_20"] - (row["atr"] * self.ATR_MULTIPLIER)
             if low_price <= ema_stop_loss:
-                return True, "추세 이탈 손절", ema_stop_loss
+                return True, ["추세 이탈 손절"], ema_stop_loss
 
-        return False, "", 0.0
+        return False, [], 0.0
 
-    def _check_eod_trailing_stop(self, row, prev_row, prev_prev_row, peak_price, position_status) -> Tuple[Optional[str], str]:
+    def _check_eod_trailing_stop(self, row, prev_row, prev_prev_row, peak_price, position_status) -> Tuple[Optional[str], List[str]]:
         """[2차 방어선] EOD 조건부 trailing stop
 
         조건: 추세 약화((+DI - -DI) 격차 2일 연속 감소) + 수급 약화(OBV z-score 감소) 충족 시
@@ -172,11 +174,11 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
         # NaN 체크
         required_cols = ["minus_di", "plus_di", "obv_z"]
         if any(pd.isna(row[col]) for col in required_cols):
-            return None, ""
+            return None, []
         if any(pd.isna(prev_row.get(col)) for col in ["minus_di", "plus_di", "obv_z"]):
-            return None, ""
+            return None, []
         if any(pd.isna(prev_prev_row[col]) for col in ["minus_di", "plus_di"]):
-            return None, ""
+            return None, []
 
         # 조건 1: 추세 약화 — (+DI - -DI) 격차 2일 연속 감소
         di_spread_today = row["plus_di"] - row["minus_di"]
@@ -187,11 +189,11 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
         # 조건 2: 수급 약화 — OBV z-score 임계값 이하
         supply_weakening = round(row["obv_z"],2) < self.SUPPLY_WEAKNESS_OBV_Z
         if not (trend_weakening and supply_weakening):
-            return None, ""
+            return None, []
 
         # ATR Trailing Stop 손절가 계산
         if peak_price <= 0:
-            return None, ""
+            return None, []
 
         low_price = row["STCK_LWPR"]
         atr = row.get("atr", 0)
@@ -209,19 +211,20 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
             weakness_reasons.append("추세약화")
         if supply_weakening:
             weakness_reasons.append("수급약화")
-        weakness_str = "+".join(weakness_reasons)
 
         drawdown_pct = round((peak_price - low_price) / peak_price * 100, 1)
 
         # 2차 전량 매도: SELL_PRIMARY 상태 + 저가가 전량매도 손절가 이하
         if position_status == 'SELL_PRIMARY' and low_price <= stop_full:
-            return "SELL_ALL", f"2차 전량매도({weakness_str}, 고점대비 -{drawdown_pct}%, 손절가 {stop_full:.0f}원)"
+            reasons = ["2차 전량매도"] + weakness_reasons + [f"고점대비 -{drawdown_pct}%", f"손절가 {stop_full:.0f}원"]
+            return "SELL_ALL", reasons
 
         # 1차 분할 매도: BUY_COMPLETE 상태 + 저가가 분할매도 손절가 이하
         if position_status == 'BUY_COMPLETE' and low_price <= stop_partial:
-            return "SELL_PRIMARY", f"1차 분할매도({weakness_str}, 고점대비 -{drawdown_pct}%, 손절가 {stop_partial:.0f}원)"
+            reasons = ["1차 분할매도"] + weakness_reasons + [f"고점대비 -{drawdown_pct}%", f"손절가 {stop_partial:.0f}원"]
+            return "SELL_PRIMARY", reasons
 
-        return None, ""
+        return None, []
 
     def _calculate_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
         """지표 계산 (공통 메서드 사용)"""
@@ -234,25 +237,25 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
             obv_lookback=self.OBV_LOOKBACK
         )
 
-    def _check_entry_conditions(self, row: pd.Series, prev_row: pd.Series = None) -> Tuple[bool, str]:
+    def _check_entry_conditions(self, row: pd.Series, prev_row: pd.Series = None) -> Tuple[bool, List[str]]:
         """1차 매수 진입: 시나리오 A(눌림목 매집) + 시나리오 B(추세 추종 돌파)"""
         required_cols = ["ema_20", "obv_z", "plus_di", "minus_di", "daily_return", "adx", "atr"]
         if any(pd.isna(row[col]) for col in required_cols):
-            return False, ""
+            return False, []
 
         if prev_row is None:
-            return False, ""
+            return False, []
 
         current_price = row["STCK_CLPR"]
 
         # === 공통 필터 ===
         surge_filtered = abs(row["daily_return"]) <= self.MAX_SURGE_RATIO
         if not surge_filtered:
-            return False, ""
+            return False, []
 
         prev_day_bullish = prev_row["STCK_CLPR"] >= prev_row["STCK_OPRC"]
         if not prev_day_bullish:
-            return False, ""
+            return False, []
 
         # === 시나리오 A: 눌림목 매집 진입 ===
         accum_lower = row["ema_20"] + (row["atr"] * self.ACCUM_ENTRY_ATR_LOWER)
@@ -266,7 +269,7 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
             trend_direction = row["plus_di"] > row["minus_di"]
 
             if obv_accumulating and adx_mid_range and ema_rising and trend_direction:
-                return True, "눌림목매집(EMA근접+OBV양호+추세상승)"
+                return True, ["눌림목매집", "EMA근접", "OBV양호", "추세상승"]
 
         # === 시나리오 B: 추세 추종 EMA 돌파 진입 ===
         ema_rising = row["ema_20"] > prev_row["ema_20"]
@@ -279,21 +282,21 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
             obv_positive = row["obv_z"] > self.BREAKOUT_ENTRY_OBV_MIN
 
             if trend_direction and adx_sufficient and obv_positive:
-                return True, "EMA돌파(상향돌파+추세확인+거래량동반)"
+                return True, ["EMA돌파", "상향돌파", "추세확인", "거래량동반"]
 
-        return False, ""
+        return False, []
 
-    def _check_second_buy_conditions(self, row: pd.Series, prev_row: pd.Series = None) -> Tuple[bool, str]:
+    def _check_second_buy_conditions(self, row: pd.Series, prev_row: pd.Series = None) -> Tuple[bool, List[str]]:
         """2차 매수: 추세 안정화 확인 후 추가 매수 (단일 조건)"""
         if any(pd.isna(row[col]) for col in ["ema_20", "obv_z", "atr", "adx", "plus_di", "minus_di"]):
-            return False, ""
+            return False, []
 
         if prev_row is None:
-            return False, ""
+            return False, []
 
         # 전일 양봉 필터
         if not (prev_row["STCK_CLPR"] >= prev_row["STCK_OPRC"]):
-            return False, ""
+            return False, []
 
         current_price = row["STCK_CLPR"]
 
@@ -306,9 +309,9 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
             if row["adx"] >= self.SECOND_BUY_ADX_MIN and row["plus_di"] > row["minus_di"]:
                 # 수급 확인: OBV z-score
                 if row["obv_z"] >= self.SECOND_BUY_OBV_MIN:
-                    return True, "추세안정(EMA상단+ADX확인+OBV양전)"
+                    return True, ["추세안정", "EMA상단", "ADX확인", "OBV양전"]
 
-        return False, ""
+        return False, []
         
     def _prepare_data(self, df: pd.DataFrame) -> pd.DataFrame:
         if "STCK_BSOP_DATE" in df.columns:
@@ -319,7 +322,7 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
                 df[col] = pd.to_numeric(df[col], errors="coerce")
         return df
 
-    def _execute_buy(self, trades: List[Dict], date, price: float, quantity: int, current_capital: float, reason: str):
+    def _execute_buy(self, trades: List[Dict], date, price: float, quantity: int, current_capital: float, reasons: List[str]):
         """매수 실행 및 거래 내역 추가"""
         executed_amount = quantity * price
         commission = executed_amount * self.COMMISSION_RATE
@@ -333,12 +336,12 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
             'amount': float(executed_amount),
             'commission': float(commission),
             'current_capital': float(current_capital - total_cost),
-            'reason': reason
+            'reasons': reasons
         })
 
         return current_capital - total_cost
 
-    def _execute_sell(self, trades: List[Dict], date, price: float, current_capital: float, reason: str,
+    def _execute_sell(self, trades: List[Dict], date, price: float, current_capital: float, reasons: List[str],
                       sell_ratio: float = None, sell_all: bool = False):
         """매도 실행 및 거래 내역 추가"""
         curr_qty, curr_avg_cost = self._calculate_position_state(trades)
@@ -379,7 +382,7 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
             'current_capital': float(current_capital + net_proceeds),
             'realized_pnl': float(realized_pnl),
             'realized_pnl_pct': round(realized_pnl_pct, 2),
-            'reason': reason
+            'reasons': reasons
         })
 
         return current_capital + net_proceeds
@@ -397,7 +400,7 @@ class SingleEMABacktestStrategy(BacktestStrategy, BaseSingleEMAStrategy):
                 final_date,
                 final_price,
                 current_capital,
-                "최종 청산",
+                ["최종 청산"],
                 sell_all=True
             )
 
