@@ -257,6 +257,7 @@ def closes_by_stock(data: Dict[tuple, pd.DataFrame]) -> Dict[tuple, pd.Series]:
 
 POOL = "POOL"                      # pool 모드의 단일 현금 장부 키
 SKIP_ZERO_QTY = "zero_qty"         # 수량 0 (손절폭 없음·총자산 부족) — 한도 사유(risk_sizing.REJECT_*)와 같은 집계 키
+SKIP_REGIME = "regime"             # 시장 상태 배율이 0 이라 그날 신규 매수를 건너뜀
 
 
 @dataclass
@@ -273,6 +274,12 @@ class SimParams:
     exits_first: bool = True                    # 같은 날 청산을 진입보다 먼저 처리 (파킹 ETF 매도 후 즉시 재매수 가정)
     adv_ratio: float = BaseSingleEMAStrategy.MAX_ADV_RATIO
     park_apy: float = 0.0                       # 현금에 일할 가산하는 파킹 수익률 (연)
+    # 날짜 → 신규 매수 크기 배율 (pool 모드 전용). None 이면 항상 1.0 (기존 동작). 0 이하면 그날 신규 매수 중단.
+    # 위험 비율과 종목당 최대 비중에 같이 곱한다. 보유 중인 포지션과 청산에는 영향이 없다.
+    exposure_scale: Optional[Dict[pd.Timestamp, float]] = None
+    # 현금이 모자랄 때 목표 수량의 이 비율 이상을 살 수 있으면 살 수 있는 만큼만 매수한다 (pool 모드 전용). None 이면 기존처럼
+    # 통째로 건너뜀(cash). 보유 종목이 올라 비중이 커진 상태에서 신규 진입이 현금 부족으로 계속 막히는 것을 줄이는 옵션.
+    partial_fill_min_ratio: Optional[float] = None
 
 
 @dataclass
@@ -388,7 +395,12 @@ def simulate(trades: List[UnitTrade], closes: Dict[tuple, pd.Series], p: SimPara
             t = trades[i]
             key = key_of(t)
             if pool:
-                sized = risk_sizing.calc_qty(equity_prev, p.risk_pct, t.entry_price, t.initial_stop, p.max_position_pct)
+                scale = 1.0 if p.exposure_scale is None else p.exposure_scale.get(d, 1.0)
+                if scale <= 0:
+                    skipped[SKIP_REGIME] += 1
+                    continue
+                cap = None if p.max_position_pct is None else p.max_position_pct * scale
+                sized = risk_sizing.calc_qty(equity_prev, p.risk_pct * scale, t.entry_price, t.initial_stop, cap)
                 qty, risk_amount, binding = sized.qty, sized.risk_amount, sized.binding
             else:   # 현재 구조: 종목 배정금(CUR_AMOUNT) × MAX_ENTRY_PCT × conviction
                 qty = int(ledger[key] * BaseSingleEMAStrategy.MAX_ENTRY_PCT * t.conviction / t.entry_price)
@@ -401,6 +413,13 @@ def simulate(trades: List[UnitTrade], closes: Dict[tuple, pd.Series], p: SimPara
                 skipped[risk_sizing.REJECT_LIQUIDITY] += 1
                 continue
             cost = amount * (1 + comm + fx)
+            if pool and p.partial_fill_min_ratio is not None and cost > ledger[POOL] > 0:
+                affordable = int(ledger[POOL] / (t.entry_price * (1 + comm + fx)))
+                if affordable >= max(1, int(qty * p.partial_fill_min_ratio)):
+                    qty = affordable
+                    amount = qty * t.entry_price
+                    cost = amount * (1 + comm + fx)
+                    risk_amount = qty * (t.entry_price - t.initial_stop)
             if pool:
                 reason = risk_sizing.check_limits(
                     order_amount=cost, new_risk=risk_amount, cash=ledger[POOL], equity=equity_prev,
