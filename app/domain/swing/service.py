@@ -17,7 +17,7 @@ from app.domain.account.repository import AccountRepository
 from app.domain.pool.entity import PARK_ETF, is_park_etf, pool_market_of
 from app.domain.pool.repository import PoolRepository
 from app.domain.trade_history.repository import TradeHistoryRepository
-from app.domain.swing.entity import SwingTrade, EmaOption
+from app.domain.swing.entity import SwingTrade, EmaOption, MOMENTUM_TYPE
 from app.domain.swing.schemas import SwingCreateRequest, SwingResponse
 from app.domain.stock.service import StockService
 from app.domain.stock.stock_data_batch import fetch_and_store_3_years_data
@@ -84,6 +84,9 @@ class SwingService:
         if is_park_etf(pool_market_of(request.MRKT_CODE), request.ST_CODE):
             raise BusinessRuleError(
                 f"{request.ST_CODE}는 현금 파킹 ETF라 스윙으로 등록할 수 없습니다", rule="PARK_ETF_NOT_SWING")
+        # 모멘텀 포지션 행(SWING_TYPE='M')은 월간 리밸런싱 배치만 만든다 — 사용자가 직접 등록하는 전략이 아니다
+        if request.SWING_TYPE == MOMENTUM_TYPE:
+            raise ValidationError("모멘텀 타입은 직접 등록할 수 없습니다 (월간 리밸런싱이 자동 관리)")
 
         try:
             # 도메인 엔티티 생성 (비즈니스 검증) — 등록 시 USE_YN='N'이므로 자본 검증 불필요 (활성화 시 검증)

@@ -10,6 +10,7 @@ from app.domain.swing.trading.auto_swing_batch import (
     us_ema_cache_warmup_job,
     hy_oas_refresh_job,
 )
+from app.domain.momentum.rebalance_batch import momentum_rebalance_job
 from app.domain.stock.price_adjustment_batch import price_adjustment_reload_job
 from app.domain.stock.stock_data_batch import collect_job_cron
 from app.core.config import get_settings
@@ -109,6 +110,14 @@ async def schedule_start():
         us_day_collect_job,
         CronTrigger(day_of_week='mon-fri', **collect_job_cron(overseas=True))
     )
+
+    # === 상대 모멘텀 월간 리밸런싱 (MOMENTUM_ENABLED=true + MOMENTUM_ACCOUNT_NOS 의 모의 계좌만, 꺼져 있으면 즉시 반환) ===
+    # 하루 세 번 불려도 한 달에 한 번만 일한다 — 첫 실행이 그 달 계획을 만들고, 이후 실행은 일시적으로 못 끝낸 매도·매수를 이어서 처리한다.
+    # 시각은 정규장 시작 + 오프닝 가드(10분) 뒤라야 한다 (잡 안에서도 정규장·가드를 다시 확인한다). 순위는 전일까지 완성된 일봉 기준이다.
+    scheduler.add_job(
+        momentum_rebalance_job, CronTrigger(minute='15', hour='9,11,14', day_of_week='mon-fri'), args=['KR'])
+    scheduler.add_job(
+        momentum_rebalance_job, CronTrigger(minute='45', hour='9,12,15', day_of_week='mon-fri', timezone=us_tz), args=['US'])
 
     scheduler.start()
     # 트리거 없는 잡은 추가한 시각이 실행 시각이라, start() 전에 넣으면 그 사이 지연(misfire_grace_time=1)에 건너뛰어질 수 있다 — 시작 뒤에 넣는다

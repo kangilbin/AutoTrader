@@ -49,11 +49,12 @@ def _seeded_db():
     db = sqlite3.connect(":memory:")
     db.executescript("""
         CREATE TABLE SWING_TRADE (SWING_ID INT, ACCOUNT_NO TEXT, USE_YN TEXT,
-                                  MRKT_CODE TEXT, ST_CODE TEXT);
+                                  MRKT_CODE TEXT, ST_CODE TEXT, SWING_TYPE TEXT);
         CREATE TABLE ACCOUNT (ACCOUNT_ID INT, ACCOUNT_NO TEXT, USER_ID TEXT, AUTH_ID INT);
         CREATE TABLE AUTH_KEY (AUTH_ID INT, USER_ID TEXT, API_KEY TEXT, SECRET_KEY TEXT,
                                SIMULATION_YN TEXT);
-        INSERT INTO SWING_TRADE VALUES (1, 'acc-a', 'Y', 'J', '005930');
+        INSERT INTO SWING_TRADE VALUES (1, 'acc-a', 'Y', 'J', '005930', 'S');
+        INSERT INTO SWING_TRADE VALUES (2, 'acc-a', 'Y', 'J', '000660', 'M');   -- 모멘텀 행은 신호 기반 배치 조회에서 제외된다
         INSERT INTO ACCOUNT VALUES (10, 'acc-a', 'u1', 100), (11, 'acc-a', 'u1', 101);
         INSERT INTO AUTH_KEY VALUES (100, 'u1', 'old-key', 's', 'N'),
                                     (101, 'u1', 'new-key', 's', 'N');

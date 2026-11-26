@@ -1,0 +1,1031 @@
+{
+ "meta": {
+  "generated": "2026-11-26",
+  "rule": "연구 유니버스(portfolio_sim.load_universe): STOCK_DAY_HISTORY 에 일봉 300개 이상인 종목, 비교용 지수 ETF(069500·SPY·QQQ) 제외",
+  "note": "생존 편향 — 현재 DB 에 남은 종목. 실전에서는 이 목록의 종목이 매일 수집되어야 한다 (scripts/momentum_seed_universe.py)"
+ },
+ "KR": [
+  {
+   "mrkt": "J",
+   "code": "000100",
+   "name": "유한양행"
+  },
+  {
+   "mrkt": "J",
+   "code": "000270",
+   "name": "기아"
+  },
+  {
+   "mrkt": "J",
+   "code": "000660",
+   "name": "SK하이닉스"
+  },
+  {
+   "mrkt": "J",
+   "code": "000720",
+   "name": "현대건설"
+  },
+  {
+   "mrkt": "J",
+   "code": "000810",
+   "name": "삼성화재"
+  },
+  {
+   "mrkt": "J",
+   "code": "000880",
+   "name": "한화"
+  },
+  {
+   "mrkt": "J",
+   "code": "000990",
+   "name": "DB하이텍"
+  },
+  {
+   "mrkt": "J",
+   "code": "001040",
+   "name": "CJ"
+  },
+  {
+   "mrkt": "J",
+   "code": "001450",
+   "name": "현대해상"
+  },
+  {
+   "mrkt": "J",
+   "code": "003490",
+   "name": "대한항공"
+  },
+  {
+   "mrkt": "J",
+   "code": "003550",
+   "name": "LG"
+  },
+  {
+   "mrkt": "J",
+   "code": "003670",
+   "name": "포스코퓨처엠"
+  },
+  {
+   "mrkt": "J",
+   "code": "004020",
+   "name": "현대제철"
+  },
+  {
+   "mrkt": "J",
+   "code": "004990",
+   "name": "롯데지주"
+  },
+  {
+   "mrkt": "J",
+   "code": "005380",
+   "name": "현대차"
+  },
+  {
+   "mrkt": "J",
+   "code": "005490",
+   "name": "POSCO홀딩스"
+  },
+  {
+   "mrkt": "J",
+   "code": "005830",
+   "name": "DB손해보험"
+  },
+  {
+   "mrkt": "J",
+   "code": "005930",
+   "name": "삼성전자"
+  },
+  {
+   "mrkt": "J",
+   "code": "006260",
+   "name": "LS"
+  },
+  {
+   "mrkt": "J",
+   "code": "006400",
+   "name": "삼성SDI"
+  },
+  {
+   "mrkt": "J",
+   "code": "006800",
+   "name": "미래에셋증권"
+  },
+  {
+   "mrkt": "J",
+   "code": "009150",
+   "name": "삼성전기"
+  },
+  {
+   "mrkt": "J",
+   "code": "009540",
+   "name": "HD한국조선해양"
+  },
+  {
+   "mrkt": "J",
+   "code": "009830",
+   "name": "한화솔루션"
+  },
+  {
+   "mrkt": "J",
+   "code": "010120",
+   "name": "LS ELECTRIC"
+  },
+  {
+   "mrkt": "J",
+   "code": "010130",
+   "name": "고려아연"
+  },
+  {
+   "mrkt": "J",
+   "code": "010140",
+   "name": "삼성중공업"
+  },
+  {
+   "mrkt": "J",
+   "code": "010950",
+   "name": "S-Oil"
+  },
+  {
+   "mrkt": "J",
+   "code": "011070",
+   "name": "LG이노텍"
+  },
+  {
+   "mrkt": "J",
+   "code": "011170",
+   "name": "롯데케미칼"
+  },
+  {
+   "mrkt": "J",
+   "code": "011200",
+   "name": "HMM"
+  },
+  {
+   "mrkt": "J",
+   "code": "011210",
+   "name": "현대위아"
+  },
+  {
+   "mrkt": "J",
+   "code": "011780",
+   "name": "금호석유화학"
+  },
+  {
+   "mrkt": "J",
+   "code": "012330",
+   "name": "현대모비스"
+  },
+  {
+   "mrkt": "J",
+   "code": "012450",
+   "name": "한화에어로스페이스"
+  },
+  {
+   "mrkt": "J",
+   "code": "015760",
+   "name": "한국전력"
+  },
+  {
+   "mrkt": "J",
+   "code": "016360",
+   "name": "삼성증권"
+  },
+  {
+   "mrkt": "J",
+   "code": "017670",
+   "name": "SK텔레콤"
+  },
+  {
+   "mrkt": "J",
+   "code": "018260",
+   "name": "삼성에스디에스"
+  },
+  {
+   "mrkt": "J",
+   "code": "018880",
+   "name": "한온시스템"
+  },
+  {
+   "mrkt": "J",
+   "code": "021240",
+   "name": "코웨이"
+  },
+  {
+   "mrkt": "J",
+   "code": "023530",
+   "name": "롯데쇼핑"
+  },
+  {
+   "mrkt": "J",
+   "code": "024110",
+   "name": "기업은행"
+  },
+  {
+   "mrkt": "J",
+   "code": "028050",
+   "name": "삼성E&A"
+  },
+  {
+   "mrkt": "J",
+   "code": "028260",
+   "name": "삼성물산"
+  },
+  {
+   "mrkt": "J",
+   "code": "028300",
+   "name": "HLB"
+  },
+  {
+   "mrkt": "J",
+   "code": "029780",
+   "name": "삼성카드"
+  },
+  {
+   "mrkt": "J",
+   "code": "030200",
+   "name": "KT"
+  },
+  {
+   "mrkt": "J",
+   "code": "032830",
+   "name": "삼성생명"
+  },
+  {
+   "mrkt": "J",
+   "code": "033780",
+   "name": "KT&G"
+  },
+  {
+   "mrkt": "J",
+   "code": "034020",
+   "name": "두산에너빌리티"
+  },
+  {
+   "mrkt": "J",
+   "code": "034220",
+   "name": "LG디스플레이"
+  },
+  {
+   "mrkt": "J",
+   "code": "034730",
+   "name": "SK"
+  },
+  {
+   "mrkt": "J",
+   "code": "035250",
+   "name": "강원랜드"
+  },
+  {
+   "mrkt": "J",
+   "code": "035420",
+   "name": "NAVER"
+  },
+  {
+   "mrkt": "J",
+   "code": "035720",
+   "name": "카카오"
+  },
+  {
+   "mrkt": "J",
+   "code": "036460",
+   "name": "한국가스공사"
+  },
+  {
+   "mrkt": "J",
+   "code": "036570",
+   "name": "NC"
+  },
+  {
+   "mrkt": "J",
+   "code": "042660",
+   "name": "한화오션"
+  },
+  {
+   "mrkt": "J",
+   "code": "042700",
+   "name": "한미반도체"
+  },
+  {
+   "mrkt": "J",
+   "code": "047810",
+   "name": "한국항공우주"
+  },
+  {
+   "mrkt": "J",
+   "code": "051900",
+   "name": "LG생활건강"
+  },
+  {
+   "mrkt": "J",
+   "code": "051910",
+   "name": "LG화학"
+  },
+  {
+   "mrkt": "J",
+   "code": "055550",
+   "name": "신한지주"
+  },
+  {
+   "mrkt": "J",
+   "code": "064350",
+   "name": "현대로템"
+  },
+  {
+   "mrkt": "J",
+   "code": "066570",
+   "name": "LG전자"
+  },
+  {
+   "mrkt": "J",
+   "code": "068270",
+   "name": "셀트리온"
+  },
+  {
+   "mrkt": "J",
+   "code": "069960",
+   "name": "현대백화점"
+  },
+  {
+   "mrkt": "J",
+   "code": "071050",
+   "name": "한국금융지주"
+  },
+  {
+   "mrkt": "J",
+   "code": "078930",
+   "name": "GS"
+  },
+  {
+   "mrkt": "J",
+   "code": "079550",
+   "name": "LIG디펜스앤에어로스페이스"
+  },
+  {
+   "mrkt": "J",
+   "code": "086280",
+   "name": "현대글로비스"
+  },
+  {
+   "mrkt": "J",
+   "code": "086520",
+   "name": "에코프로"
+  },
+  {
+   "mrkt": "J",
+   "code": "086790",
+   "name": "하나금융지주"
+  },
+  {
+   "mrkt": "J",
+   "code": "088350",
+   "name": "한화생명"
+  },
+  {
+   "mrkt": "J",
+   "code": "090430",
+   "name": "아모레퍼시픽"
+  },
+  {
+   "mrkt": "J",
+   "code": "096770",
+   "name": "SK이노베이션"
+  },
+  {
+   "mrkt": "J",
+   "code": "097950",
+   "name": "CJ제일제당"
+  },
+  {
+   "mrkt": "J",
+   "code": "105560",
+   "name": "KB금융"
+  },
+  {
+   "mrkt": "J",
+   "code": "128940",
+   "name": "한미약품"
+  },
+  {
+   "mrkt": "J",
+   "code": "138040",
+   "name": "메리츠금융지주"
+  },
+  {
+   "mrkt": "J",
+   "code": "139480",
+   "name": "이마트"
+  },
+  {
+   "mrkt": "J",
+   "code": "161390",
+   "name": "한국타이어앤테크놀로지"
+  },
+  {
+   "mrkt": "J",
+   "code": "180640",
+   "name": "한진칼"
+  },
+  {
+   "mrkt": "J",
+   "code": "196170",
+   "name": "알테오젠"
+  },
+  {
+   "mrkt": "J",
+   "code": "207940",
+   "name": "삼성바이오로직스"
+  },
+  {
+   "mrkt": "J",
+   "code": "241560",
+   "name": "두산밥캣"
+  },
+  {
+   "mrkt": "J",
+   "code": "247540",
+   "name": "에코프로비엠"
+  },
+  {
+   "mrkt": "J",
+   "code": "251270",
+   "name": "넷마블"
+  },
+  {
+   "mrkt": "J",
+   "code": "259960",
+   "name": "크래프톤"
+  },
+  {
+   "mrkt": "J",
+   "code": "267250",
+   "name": "HD현대"
+  },
+  {
+   "mrkt": "J",
+   "code": "267260",
+   "name": "HD현대일렉트릭"
+  },
+  {
+   "mrkt": "J",
+   "code": "271560",
+   "name": "오리온"
+  },
+  {
+   "mrkt": "J",
+   "code": "282330",
+   "name": "BGF리테일"
+  },
+  {
+   "mrkt": "J",
+   "code": "298040",
+   "name": "효성중공업"
+  },
+  {
+   "mrkt": "J",
+   "code": "302440",
+   "name": "SK바이오사이언스"
+  },
+  {
+   "mrkt": "J",
+   "code": "316140",
+   "name": "우리금융지주"
+  },
+  {
+   "mrkt": "J",
+   "code": "323410",
+   "name": "카카오뱅크"
+  },
+  {
+   "mrkt": "J",
+   "code": "328130",
+   "name": "루닛"
+  },
+  {
+   "mrkt": "J",
+   "code": "329180",
+   "name": "HD현대중공업"
+  },
+  {
+   "mrkt": "J",
+   "code": "352820",
+   "name": "하이브"
+  },
+  {
+   "mrkt": "J",
+   "code": "373220",
+   "name": "LG에너지솔루션"
+  }
+ ],
+ "US": [
+  {
+   "mrkt": "NAS",
+   "code": "AAPL",
+   "name": "APPLE INC"
+  },
+  {
+   "mrkt": "NAS",
+   "code": "ABNB",
+   "name": "AIRBNB INC"
+  },
+  {
+   "mrkt": "NAS",
+   "code": "ADBE",
+   "name": "ADOBE INC"
+  },
+  {
+   "mrkt": "NAS",
+   "code": "ADP",
+   "name": "AUTOMATIC DATA PROCESSING INC"
+  },
+  {
+   "mrkt": "NAS",
+   "code": "AMAT",
+   "name": "APPLIED MATERIALS INC"
+  },
+  {
+   "mrkt": "NAS",
+   "code": "AMD",
+   "name": "ADVANCED MICRO DEVICES INC"
+  },
+  {
+   "mrkt": "NAS",
+   "code": "AMGN",
+   "name": "AMGEN INC"
+  },
+  {
+   "mrkt": "NAS",
+   "code": "AMZN",
+   "name": "AMAZON COM INC"
+  },
+  {
+   "mrkt": "NAS",
+   "code": "AVGO",
+   "name": "BROADCOM INC"
+  },
+  {
+   "mrkt": "NAS",
+   "code": "BKNG",
+   "name": "BOOKING HOLDINGS INC"
+  },
+  {
+   "mrkt": "NAS",
+   "code": "CDNS",
+   "name": "CADENCE DESIGN SYSTEMS INC"
+  },
+  {
+   "mrkt": "NAS",
+   "code": "CMCSA",
+   "name": "COMCAST CORP"
+  },
+  {
+   "mrkt": "NAS",
+   "code": "COST",
+   "name": "COSTCO WHOLESALE CORP"
+  },
+  {
+   "mrkt": "NAS",
+   "code": "CSCO",
+   "name": "CISCO SYSTEMS INC"
+  },
+  {
+   "mrkt": "NAS",
+   "code": "CSX",
+   "name": "CSX CORP"
+  },
+  {
+   "mrkt": "NAS",
+   "code": "CTAS",
+   "name": "CINTAS CORP"
+  },
+  {
+   "mrkt": "NAS",
+   "code": "GILD",
+   "name": "GILEAD SCIENCES INC"
+  },
+  {
+   "mrkt": "NAS",
+   "code": "GOOGL",
+   "name": "ALPHABET INC"
+  },
+  {
+   "mrkt": "NAS",
+   "code": "HON",
+   "name": "HONEYWELL INTERNATIONAL INC"
+  },
+  {
+   "mrkt": "NAS",
+   "code": "INTC",
+   "name": "INTEL CORP"
+  },
+  {
+   "mrkt": "NAS",
+   "code": "INTU",
+   "name": "INTUIT INC"
+  },
+  {
+   "mrkt": "NAS",
+   "code": "ISRG",
+   "name": "INTUITIVE SURGICAL INC"
+  },
+  {
+   "mrkt": "NAS",
+   "code": "KDP",
+   "name": "KEURIG DR PEPPER INC"
+  },
+  {
+   "mrkt": "NAS",
+   "code": "KLAC",
+   "name": "KLA CORPORATION"
+  },
+  {
+   "mrkt": "NAS",
+   "code": "LRCX",
+   "name": "LAM RESEARCH CORP"
+  },
+  {
+   "mrkt": "NAS",
+   "code": "MAR",
+   "name": "MARRIOTT INTERNATIONAL INC"
+  },
+  {
+   "mrkt": "NAS",
+   "code": "MDLZ",
+   "name": "MONDELEZ INTL INC"
+  },
+  {
+   "mrkt": "NAS",
+   "code": "META",
+   "name": "META PLATFORMS INC"
+  },
+  {
+   "mrkt": "NAS",
+   "code": "MNST",
+   "name": "MONSTER BEVERAGE CORP"
+  },
+  {
+   "mrkt": "NAS",
+   "code": "MRVL",
+   "name": "MARVELL TECHNOLOGY INC"
+  },
+  {
+   "mrkt": "NAS",
+   "code": "MSFT",
+   "name": "MICROSOFT CORP"
+  },
+  {
+   "mrkt": "NAS",
+   "code": "MU",
+   "name": "MICRON TECHNOLOGY INC"
+  },
+  {
+   "mrkt": "NAS",
+   "code": "NFLX",
+   "name": "NETFLIX INC"
+  },
+  {
+   "mrkt": "NAS",
+   "code": "NVDA",
+   "name": "NVIDIA CORP"
+  },
+  {
+   "mrkt": "NAS",
+   "code": "ORLY",
+   "name": "OREILLY AUTOMOTIVE INC NEW"
+  },
+  {
+   "mrkt": "NAS",
+   "code": "PANW",
+   "name": "PALO ALTO NETWORKS INC"
+  },
+  {
+   "mrkt": "NAS",
+   "code": "PCAR",
+   "name": "PACCAR INC"
+  },
+  {
+   "mrkt": "NAS",
+   "code": "PEP",
+   "name": "PEPSICO INC"
+  },
+  {
+   "mrkt": "NAS",
+   "code": "PGY",
+   "name": "PAGAYA TECHNOLOGIES LTD"
+  },
+  {
+   "mrkt": "NAS",
+   "code": "PYPL",
+   "name": "PAYPAL HOLDINGS INC"
+  },
+  {
+   "mrkt": "NAS",
+   "code": "QCOM",
+   "name": "QUALCOMM INC"
+  },
+  {
+   "mrkt": "NAS",
+   "code": "REGN",
+   "name": "REGENERON PHARMACEUTICALS INC"
+  },
+  {
+   "mrkt": "NAS",
+   "code": "ROST",
+   "name": "ROSS STORES INC"
+  },
+  {
+   "mrkt": "NAS",
+   "code": "SBUX",
+   "name": "STARBUCKS CORP"
+  },
+  {
+   "mrkt": "NAS",
+   "code": "SNDK",
+   "name": "SANDISK CORP"
+  },
+  {
+   "mrkt": "NAS",
+   "code": "SNPS",
+   "name": "SYNOPSYS INC"
+  },
+  {
+   "mrkt": "NAS",
+   "code": "TMUS",
+   "name": "T-MOBILE US INC"
+  },
+  {
+   "mrkt": "NAS",
+   "code": "TSLA",
+   "name": "TESLA INC"
+  },
+  {
+   "mrkt": "NAS",
+   "code": "TXN",
+   "name": "TEXAS INSTRUMENTS INC"
+  },
+  {
+   "mrkt": "NAS",
+   "code": "VRTX",
+   "name": "VERTEX PHARMACEUTICAL"
+  },
+  {
+   "mrkt": "NAS",
+   "code": "WMT",
+   "name": "WALMART INC"
+  },
+  {
+   "mrkt": "NYS",
+   "code": "ABBV",
+   "name": "ABBVIE INC"
+  },
+  {
+   "mrkt": "NYS",
+   "code": "ACN",
+   "name": "ACCENTURE PLC"
+  },
+  {
+   "mrkt": "NYS",
+   "code": "AXP",
+   "name": "AMERICAN EXPRESS CO"
+  },
+  {
+   "mrkt": "NYS",
+   "code": "BA",
+   "name": "BOEING CO"
+  },
+  {
+   "mrkt": "NYS",
+   "code": "BAC",
+   "name": "BANK OF AMERICA CORPORATION"
+  },
+  {
+   "mrkt": "NYS",
+   "code": "BLK",
+   "name": "BLACKROCK INC"
+  },
+  {
+   "mrkt": "NYS",
+   "code": "C",
+   "name": "CITIGROUP INC"
+  },
+  {
+   "mrkt": "NYS",
+   "code": "CAT",
+   "name": "CATERPILLAR INC"
+  },
+  {
+   "mrkt": "NYS",
+   "code": "CRM",
+   "name": "SALESFORCE INC"
+  },
+  {
+   "mrkt": "NYS",
+   "code": "CVX",
+   "name": "CHEVRON CORPORATION"
+  },
+  {
+   "mrkt": "NYS",
+   "code": "DE",
+   "name": "DEERE & CO"
+  },
+  {
+   "mrkt": "NYS",
+   "code": "DIS",
+   "name": "WALT DISNEY COMPANY (THE)"
+  },
+  {
+   "mrkt": "NYS",
+   "code": "DUK",
+   "name": "DUKE ENERGY CORP"
+  },
+  {
+   "mrkt": "NYS",
+   "code": "F",
+   "name": "FORD MOTOR CO"
+  },
+  {
+   "mrkt": "NYS",
+   "code": "FIG",
+   "name": "FIGMA INC"
+  },
+  {
+   "mrkt": "NYS",
+   "code": "GE",
+   "name": "GE AEROSPACE"
+  },
+  {
+   "mrkt": "NYS",
+   "code": "GM",
+   "name": "GENERAL MOTORS CO"
+  },
+  {
+   "mrkt": "NYS",
+   "code": "GS",
+   "name": "GOLDMAN SACHS GROUP INC"
+  },
+  {
+   "mrkt": "NYS",
+   "code": "HD",
+   "name": "HOME DEPOT INC"
+  },
+  {
+   "mrkt": "NYS",
+   "code": "IBM",
+   "name": "INTERNATIONAL BUS MACH CORP"
+  },
+  {
+   "mrkt": "NYS",
+   "code": "JNJ",
+   "name": "JOHNSON & JOHNSON"
+  },
+  {
+   "mrkt": "NYS",
+   "code": "JPM",
+   "name": "JPMORGAN CHASE & CO."
+  },
+  {
+   "mrkt": "NYS",
+   "code": "KO",
+   "name": "COCA-COLA CO"
+  },
+  {
+   "mrkt": "NYS",
+   "code": "LLY",
+   "name": "ELI LILLY AND COMPANY"
+  },
+  {
+   "mrkt": "NYS",
+   "code": "LMT",
+   "name": "LOCKHEED MARTIN CORP"
+  },
+  {
+   "mrkt": "NYS",
+   "code": "LOW",
+   "name": "LOWE S COMPANIES INC"
+  },
+  {
+   "mrkt": "NYS",
+   "code": "MA",
+   "name": "MASTERCARD INCORPORATED"
+  },
+  {
+   "mrkt": "NYS",
+   "code": "MCD",
+   "name": "MCDONALD S CORPORATION"
+  },
+  {
+   "mrkt": "NYS",
+   "code": "MMM",
+   "name": "3M COMPANY"
+  },
+  {
+   "mrkt": "NYS",
+   "code": "MRK",
+   "name": "MERCK & CO INC"
+  },
+  {
+   "mrkt": "NYS",
+   "code": "MS",
+   "name": "MORGAN STANLEY"
+  },
+  {
+   "mrkt": "NYS",
+   "code": "NEE",
+   "name": "NEXTERA ENERGY INC"
+  },
+  {
+   "mrkt": "NYS",
+   "code": "NKE",
+   "name": "NIKE INC"
+  },
+  {
+   "mrkt": "NYS",
+   "code": "ORCL",
+   "name": "ORACLE CORP"
+  },
+  {
+   "mrkt": "NYS",
+   "code": "PATH",
+   "name": "UIPATH INC"
+  },
+  {
+   "mrkt": "NYS",
+   "code": "PFE",
+   "name": "PFIZER INC"
+  },
+  {
+   "mrkt": "NYS",
+   "code": "PG",
+   "name": "PROCTER & GAMBLE CO"
+  },
+  {
+   "mrkt": "NYS",
+   "code": "PKX",
+   "name": "POSCO HOLDINGS INC ADR EACH REP 1/4 ORD KRW5000 (BNY)"
+  },
+  {
+   "mrkt": "NYS",
+   "code": "PWR",
+   "name": "QUANTA SERVICES"
+  },
+  {
+   "mrkt": "NYS",
+   "code": "RTX",
+   "name": "RTX CORPORATION"
+  },
+  {
+   "mrkt": "NYS",
+   "code": "SO",
+   "name": "SOUTHERN CO."
+  },
+  {
+   "mrkt": "NYS",
+   "code": "SPGI",
+   "name": "S&P GLOBAL INC"
+  },
+  {
+   "mrkt": "NYS",
+   "code": "T",
+   "name": "AT&T INC"
+  },
+  {
+   "mrkt": "NYS",
+   "code": "TGT",
+   "name": "TARGET CORP"
+  },
+  {
+   "mrkt": "NYS",
+   "code": "UNH",
+   "name": "UNITEDHEALTH GROUP INC"
+  },
+  {
+   "mrkt": "NYS",
+   "code": "UPS",
+   "name": "UNITED PARCEL SERVICE INC"
+  },
+  {
+   "mrkt": "NYS",
+   "code": "V",
+   "name": "VISA INC"
+  },
+  {
+   "mrkt": "NYS",
+   "code": "VRT",
+   "name": "VERTIV HOLDINGS CO"
+  },
+  {
+   "mrkt": "NYS",
+   "code": "VZ",
+   "name": "VERIZON COMMUNICATIONS"
+  },
+  {
+   "mrkt": "NYS",
+   "code": "WFC",
+   "name": "WELLS FARGO & COMPANY"
+  },
+  {
+   "mrkt": "NYS",
+   "code": "XOM",
+   "name": "EXXONMOBIL HOLDINGS CORPORATION"
+  }
+ ]
+}

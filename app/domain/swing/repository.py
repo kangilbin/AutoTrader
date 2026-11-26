@@ -84,7 +84,7 @@ class SwingRepository:
             "LEFT JOIN ACCOUNT A ON ST.ACCOUNT_NO = A.ACCOUNT_NO "
             "AND A.ACCOUNT_ID = (SELECT MAX(A2.ACCOUNT_ID) FROM ACCOUNT A2 WHERE A2.ACCOUNT_NO = ST.ACCOUNT_NO) "
             "LEFT JOIN AUTH_KEY U ON A.USER_ID = U.USER_ID AND A.AUTH_ID = U.AUTH_ID "
-            "WHERE ST.USE_YN = 'Y'"
+            "WHERE ST.USE_YN = 'Y' AND ST.SWING_TYPE <> 'M'"
         )
         result = await self.db.execute(query)
         return result.all()
@@ -97,7 +97,7 @@ class SwingRepository:
             "JOIN ACCOUNT A ON ST.ACCOUNT_NO = A.ACCOUNT_NO "
             "AND A.ACCOUNT_ID = (SELECT MAX(A2.ACCOUNT_ID) FROM ACCOUNT A2 WHERE A2.ACCOUNT_NO = ST.ACCOUNT_NO) "
             "JOIN AUTH_KEY U ON A.USER_ID = U.USER_ID AND A.AUTH_ID = U.AUTH_ID "
-            "WHERE ST.USE_YN = 'Y' AND ST.MRKT_CODE IN ('J', 'NX', 'UN')"
+            "WHERE ST.USE_YN = 'Y' AND ST.SWING_TYPE <> 'M' AND ST.MRKT_CODE IN ('J', 'NX', 'UN')"
         )
         result = await self.db.execute(query)
         return result.all()
@@ -110,7 +110,7 @@ class SwingRepository:
             "JOIN ACCOUNT A ON ST.ACCOUNT_NO = A.ACCOUNT_NO "
             "AND A.ACCOUNT_ID = (SELECT MAX(A2.ACCOUNT_ID) FROM ACCOUNT A2 WHERE A2.ACCOUNT_NO = ST.ACCOUNT_NO) "
             "JOIN AUTH_KEY U ON A.USER_ID = U.USER_ID AND A.AUTH_ID = U.AUTH_ID "
-            "WHERE ST.USE_YN = 'Y' AND ST.MRKT_CODE IN ('NYS', 'NAS', 'AMS')"
+            "WHERE ST.USE_YN = 'Y' AND ST.SWING_TYPE <> 'M' AND ST.MRKT_CODE IN ('NYS', 'NAS', 'AMS')"
         )
         result = await self.db.execute(query)
         return result.all()
@@ -184,7 +184,8 @@ class SwingRepository:
         """
         market = SwingTrade.MRKT_CODE.in_(US_MARKETS) if overseas else SwingTrade.MRKT_CODE.not_in(US_MARKETS)
         query = select(SwingTrade).filter(
-            SwingTrade.ACCOUNT_NO == account_no, SwingTrade.USE_YN == 'Y', market, SwingTrade.HOLD_QTY > 0
+            SwingTrade.ACCOUNT_NO == account_no, SwingTrade.USE_YN == 'Y', SwingTrade.SWING_TYPE != 'M', market,
+            SwingTrade.HOLD_QTY > 0
         )
         result = await self.db.execute(query)
         return list(result.scalars().all())
@@ -227,7 +228,7 @@ class SwingRepository:
         """
         query = (
             select(SwingTrade.MRKT_CODE, SwingTrade.ST_CODE)
-            .filter(SwingTrade.USE_YN == 'Y')
+            .filter(SwingTrade.USE_YN == 'Y', SwingTrade.SWING_TYPE != 'M')
             .distinct()
         )
         result = await self.db.execute(query)

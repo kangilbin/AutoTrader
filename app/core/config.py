@@ -79,6 +79,13 @@ class Settings(BaseSettings):
     # FRED 공식 API 키(선택). 있으면 JSON API 로, 없으면 키 없는 CSV 엔드포인트로 받는다. 무료 발급: fred.stlouisfed.org → My Account → API Keys
     FRED_API_KEY: Optional[str] = None
 
+    # 상대 모멘텀 월간 리밸런싱 (2026-11-26) — 시장별 6-1 모멘텀 상위 10종목을 월 1회 교체한다. 근거·한계는 domain/momentum/ranking.py 참고.
+    # 기본은 꺼짐이고, 켜도 MOMENTUM_ACCOUNT_NOS(쉼표 구분)에 적은 **모의투자 계좌**에서만 동작한다 — 실계좌(SIMULATION_YN='N')는 코드가 거부한다.
+    # 모의 서버는 직전 요청 직후의 주문을 유량초과로 거절하므로 주문 사이에 MOMENTUM_ORDER_SPACING_SEC 초를 쉰다.
+    MOMENTUM_ENABLED: bool = False
+    MOMENTUM_ACCOUNT_NOS: str = ""
+    MOMENTUM_ORDER_SPACING_SEC: float = 2.0
+
     # 해외 매매 배치 실행 주기 (ET 기준 cron). 기본값이 운영값이며,
     # 테스트로 더 자주/넓게 돌리려면 .env에서 덮어쓴다 (예: "*/1", "1-23")
     US_TRADE_CRON_MINUTE: str = "*/5"

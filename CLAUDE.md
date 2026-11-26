@@ -37,6 +37,8 @@ docker run -p 8000:auto-trader
 - `DART_API_KEY`: 국내 종목 재무 (DART OpenAPI, 무료·일 약 2만 건). **KIS 국내 재무 TR(손익·재무비율 등)은 2026-11-11 종료돼 404 로 막힌다.**
   없으면 국내 분석은 재무 없이(현재가 PER·EPS 로만) 진행된다. 운영 `.env` 에도 넣어야 한다
 - `FRED_API_KEY`: 하이일드 스프레드(신용 게이트) 조회용 공식 API 키 (선택). 없으면 키 없는 CSV 엔드포인트로 받는다
+- `MOMENTUM_ENABLED`(기본 false) / `MOMENTUM_ACCOUNT_NOS`(쉼표 구분 **모의투자 계좌번호**) / `MOMENTUM_ORDER_SPACING_SEC`(기본 2): 상대 모멘텀 월간 리밸런싱.
+  꺼져 있으면 아무것도 하지 않고, 켜도 `SIMULATION_YN='Y'` 계좌만 주문한다 (실계좌는 코드가 거부)
 
 ## 아키텍처
 
@@ -79,6 +81,7 @@ app/
 │   ├── health.py            # 헬스체크 로직
 │   ├── sentry.py            # Sentry 초기화
 │   ├── market_code.py       # 시장 코드 판별/변환 (국내 vs NYS/NAS/AMS)
+│   ├── bars.py              # 일봉 보정 (오류 봉·미보정 액면분할/병합 소급 보정) — 일목 캐시·모멘텀 순위가 쓴다
 │   ├── price.py             # 가격 정밀도·호가 단위 (국내 정수 / 해외 소수점)
 │   └── order.py             # 주문 파라미터 DTO + 주문번호 비교
 ├── external/                # 외부 API 통합
@@ -131,6 +134,12 @@ app/
 │   │   ├── summary.py       # KIS·DART 원본 → 프롬프트용 요약 (DART 재무→분기·연간·지표, 뉴스 필터)
 │   │   ├── prompt.py        # 시스템 지시문 (실전 전략 describe_all() 포함)
 │   │   └── service.py       # 백그라운드 분석 + Redis 상태 (DB 미사용)
+│   ├── momentum/            # 상대 모멘텀 월간 리밸런싱 (모의 전용 — 연구 근거 scripts/research/relative_momentum.py)
+│   │   ├── ranking.py       # 순수 함수: 6-1 모멘텀 순위·교체 계획·수량 + 일봉 분할·병합 보정 (연구와 패리티 테스트)
+│   │   ├── universe.json    # 순위 유니버스 고정 목록 (KR 102·US 102 — 연구와 같은 종목군)
+│   │   ├── rebalance_batch.py  # 월간 리밸런서(Broker 주입, 상태는 Redis) + 잡 진입점
+│   │   ├── kis_broker.py    # 실제 브로커: KIS 시세·잔고·주문(SwingOrderExecutor)·파킹 해제
+│   │   └── repository.py    # 유니버스 일봉·계좌 소유자(모의 여부)·SWING_TYPE='M' 행
 │   └── [domain]/            # user, account, auth, order, device,
 │                            # notification, oauth
 │       ├── entity.py        # 도메인 엔티티 (비즈니스 로직 포함)
@@ -368,6 +377,19 @@ async def create_swing(
   - **회복 재진입** (`recovery_reentry.py`, `RECOVERY_REENTRY_ENABLED`): 청산 60일 이내, 전일 종가 > SMA200(상승 중) · > EMA20 · ≥ 마지막 청산가이면
     신호·OBV 쿨다운(SIGNAL 3/4) 없이 마지막 배치에서 재매수. 마지막 청산가는 Redis `last_exit_price:{id}`, SMA200 은 지표 캐시
     `sma200`·`sma200_prev20`(**전략 캐시 로더 `get_cached_indicators` 의 통과 키**). 쿨다운은 체결 때만 풀린다(`_pool_buy`, `EntryCandidate.recovery`).
+
+- **상대 모멘텀 월간 리밸런싱** (`domain/momentum`, 2026-11-26, **모의 계좌 전용**): 시장별(KR/US) 고정 유니버스(`universe.json`)를 6-1 모멘텀
+  (종가(t−21봉) ÷ 종가(t−126봉) − 1)으로 순위 매겨 상위 10종목을 보유한다. 그 달 첫 실행이 계획을 만들고(전일까지 완성봉 기준 — 연구의 "월말 종가 판정, 다음 날 시가 체결"과 같은 의미),
+  이탈 종목만 전량 매도 → 신규 편입을 총자산 9.5%씩 매수한다 (현금이 모자라면 목표의 50% 이상일 때 살 수 있는 만큼, 거래대금 한도는 수량 축소, 영구히 못 사는 종목은 차순위로 대체).
+  **기본 꺼짐**(`MOMENTUM_ENABLED`), 켜도 `MOMENTUM_ACCOUNT_NOS` 의 `SIMULATION_YN='Y'` 계좌만 — 코드가 실계좌를 거부한다. 무손절·집중 보유라 백테스트 MDD 23~50%.
+  **근거와 한계**: 개발 2020~2026 M2 KR CAGR 45%·MDD 48% / US 24%·44%, 홀드아웃 2015~2019 KR 13.6%·40% / US 29.2%·23%. 유니버스가 DB 에 남은 종목이라 **생존 편향으로 절대 수치가 낙관적**이고,
+  사전 기준(양 시장 P1~P3)은 홀드아웃 KR 의 P3(상위 10 사이클 제외 후 양) 한 칸으로 **미합격**이었다 — 모의에서 전방 검증하려는 구현이다 (실계좌 적용은 별도 결정).
+  **구조**: 포지션은 `SWING_TRADE.SWING_TYPE='M'` 행이고 신호 기반 배치·풀 계산의 조회는 이 타입을 제외한다(`swing/repository.py` — **새 SWING_TRADE 조회를 만들면 같이 제외할 것**).
+  진실은 KIS 잔고라 매 실행이 DB 행을 잔고에 맞추고, 체결 미확인 주문은 월 완료 후에도 매 실행에서 정리한다. 월 상태는 Redis `momentum:state:{계좌}:{시장}:{YYYYMM}`
+  (일시적 실패는 최대 7일 재시도, 차순위 대체는 영구 실패에만). 모멘텀 종목은 EMA 풀 한도·열린 리스크에 들어가지 않으므로 같은 계좌·시장에서 EMA 풀과 함께 돌리지 말 것.
+  **순위용 일봉은 분할·병합 보정(`ranking.clean_bars`)이 필수** — DB 일봉에 미보정 분할이 있어 빼면 병합 종목이 가짜 1등이 된다.
+  유니버스 종목은 매일 수집돼야(`STOCK_INFO.DATA_YN='Y'`) 순위가 최신이다 → `scripts/momentum_seed_universe.py`(기본 점검만, `--apply` 로 플래그). 주문 없는 확인: `scripts/momentum_dry_run.py`.
+  백테스트 엔진 옵션 `SimParams.partial_fill_min_ratio`(현금 부족 시 부분 매수)·`exposure_scale` 은 기본값에서 기존 결과를 바꾸지 않는다(회귀 검증 `regime_exposure.py regress`).
 
 ### 외부 의존성
 - **KIS Open API**: 실시간 시세 및 주문 체결

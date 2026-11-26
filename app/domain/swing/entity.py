@@ -10,6 +10,9 @@ from app.core.price import to_price
 from app.exceptions import ValidationError
 
 VALID_MRKT_CODES = ('J', 'NX', 'UN', 'NYS', 'NAS', 'AMS')
+# 상대 모멘텀 포지션 기록 행 — 신호 기반 배치(trade_job)가 아니라 월간 리밸런싱(domain/momentum)이 다룬다.
+# 신호 기반 배치·풀 계산의 조회 쿼리(repository)는 이 타입을 제외한다.
+MOMENTUM_TYPE = 'M'
 
 
 class SwingTrade(Base):
@@ -45,10 +48,14 @@ class SwingTrade(Base):
             raise ValidationError(f"시장코드는 {VALID_MRKT_CODES} 중 하나여야 합니다")
         if not self.ST_CODE:
             raise ValidationError("종목코드는 필수입니다")
-        if self.SWING_TYPE not in ('S', 'A', 'B'):
-            raise ValidationError("스윙 타입은 [S,A,B]여야 합니다")
+        if self.SWING_TYPE not in ('S', 'A', 'B', MOMENTUM_TYPE):
+            raise ValidationError("스윙 타입은 [S,A,B,M]여야 합니다")
 
     # ==================== 상태 조회 ====================
+
+    def is_momentum(self) -> bool:
+        """상대 모멘텀 포지션 기록 행 여부 (월간 리밸런싱이 관리)"""
+        return self.SWING_TYPE == MOMENTUM_TYPE
 
     def is_waiting(self) -> bool:
         """매수 대기 상태 여부 (SIGNAL 0)"""
@@ -175,6 +182,35 @@ class SwingTrade(Base):
         실보유 대조(auto_swing_batch)는 MOD_DT 이후 체결을 '기록 누락 후보'로 본다. 상태 전이 메서드는 스스로
         MOD_DT 를 갱신하지만, 수량·신호가 바뀌지 않는 체결 반영(지연 부분 체결 등)은 이 메서드로 갱신해야 한다.
         """
+        self.MOD_DT = datetime.now()
+
+    # ==================== 상대 모멘텀 (SWING_TYPE='M') ====================
+    # 모멘텀은 청산선·부분익절·쿨다운이 없다. SIGNAL 은 0(미보유)/1(보유) 두 값만 쓰고, 보유 수량의 진실은 KIS 잔고다.
+
+    def enter_momentum(self, entry_price: float, hold_qty: int) -> None:
+        """모멘텀 보유 반영 (체결·실보유 대조 공통)"""
+        if hold_qty <= 0:
+            raise ValidationError("모멘텀 보유 수량은 1 이상이어야 합니다")
+        self.SIGNAL = 1
+        self.ENTRY_PRICE = to_price(entry_price)
+        self.HOLD_QTY = hold_qty
+        self.PEAK_PRICE = to_price(entry_price)
+        self.MOD_DT = datetime.now()
+
+    def reduce_momentum(self, remaining_qty: int) -> None:
+        """일부만 매도돼 남은 수량 반영 — 0 이하면 전량 청산으로 본다"""
+        if remaining_qty <= 0:
+            self.exit_momentum()
+            return
+        self.HOLD_QTY = remaining_qty
+        self.MOD_DT = datetime.now()
+
+    def exit_momentum(self) -> None:
+        """모멘텀 전량 청산 반영 (쿨다운 없음 — 다음 달 순위에 다시 들면 바로 살 수 있다)"""
+        self.SIGNAL = 0
+        self.HOLD_QTY = 0
+        self.ENTRY_PRICE = None
+        self.PEAK_PRICE = None
         self.MOD_DT = datetime.now()
 
     # ==================== 팩토리 메서드 ====================
