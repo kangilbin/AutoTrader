@@ -16,7 +16,7 @@
   미국 4.3%·25.6%·0.17 로 **두 시장 모두 플러스**였지만 같은 낙폭의 "지수 + 예금" 선에는 못 미쳤다 (사전 기준 미통과).
   추세가 없는 구간에서는 구름 근처를 오가며 휩쏘로 잃는다. 사용자가 모의에서 확인하겠다고 해 구현했다.
 """
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 import numpy as np
 import pandas as pd
@@ -72,3 +72,69 @@ class BaseIchimokuStrategy:
             "ichi_top": float(last["cloud_top"]), "ichi_bot": float(last["cloud_bot"]),
             "ichi_state": bool(last["state"]), "ichi_entry": bool(last["entry"]), "ichi_exit": bool(last["exit"]),
         }
+
+    # ==================== 차트 (TradingView 등) ====================
+
+    CHART_ROUND = 2
+
+    @classmethod
+    def chart_payload(cls, df: pd.DataFrame, start=None, end=None) -> Dict[str, List[Dict]]:
+        """차트에 그릴 일목균형표 — 모든 값은 **그 날짜에 그려지는 위치** 기준이다 (프론트가 날짜만 맞춰 선을 이으면 된다)
+
+        ichimoku_history: 날짜별 {STCK_BSOP_DATE(YYYYMMDD), tenkan, kijun, senkou_a, senkou_b, cloud_top, cloud_bot, chikou}
+          - senkou_a/b 는 표준대로 26봉 앞에 그려지는 값이라 그 날짜 칸에는 26봉 전에 계산한 값이 들어 있다 (두 선 사이가 구름,
+            senkou_a > senkou_b 면 양운)
+          - chikou 는 26봉 뒤의 종가를 그 날짜에 둔 후행스팬이다 (마지막 26봉은 아직 모르므로 None)
+          - 계산이 안 되는 앞쪽 구간(워밍업)은 None
+        ichimoku_future: 마지막 봉 뒤 26봉의 구름 (표준 차트의 오른쪽으로 뻗는 구름). **날짜는 영업일로 추정한 값**이라 휴장일이 있으면
+          실제 거래일과 어긋날 수 있다 — estimated=True. 한 칸당 {STCK_BSOP_DATE, senkou_a, senkou_b, cloud_top, cloud_bot, estimated}
+
+        df: STCK_BSOP_DATE(문자열 YYYYMMDD 또는 날짜형)·고가·저가·종가 컬럼의 일봉. start/end(YYYYMMDD 문자열 또는 date)는 history 의 범위
+        (지표 계산은 df 전체로 하므로 워밍업 데이터를 넉넉히 줄 것 — 구름은 78봉째부터 나온다). 미래 구름은 df 의 마지막 봉 기준이다.
+        """
+        d = df.sort_values("STCK_BSOP_DATE").reset_index(drop=True)
+        col = d["STCK_BSOP_DATE"]
+        dates = pd.to_datetime(col) if pd.api.types.is_datetime64_any_dtype(col) else pd.to_datetime(col.astype(str), format="%Y%m%d")
+        h, lo, c = (d[k].astype(float) for k in ("STCK_HGPR", "STCK_LWPR", "STCK_CLPR"))
+
+        tenkan = (h.rolling(cls.TENKAN_PERIOD).max() + lo.rolling(cls.TENKAN_PERIOD).min()) / 2
+        kijun = (h.rolling(cls.KIJUN_PERIOD).max() + lo.rolling(cls.KIJUN_PERIOD).min()) / 2
+        a_raw = (tenkan + kijun) / 2
+        b_raw = (h.rolling(cls.SENKOU_B_PERIOD).max() + lo.rolling(cls.SENKOU_B_PERIOD).min()) / 2
+        sa, sb = a_raw.shift(cls.SENKOU_SHIFT), b_raw.shift(cls.SENKOU_SHIFT)
+        chikou = c.shift(-cls.SENKOU_SHIFT)
+
+        def num(x):
+            return None if pd.isna(x) else round(float(x), cls.CHART_ROUND)
+
+        def day(ts):
+            return ts.strftime("%Y%m%d")
+
+        lo_bound = pd.Timestamp(start) if start is not None else None
+        hi_bound = pd.Timestamp(end) if end is not None else None
+        history = []
+        for i in range(len(d)):
+            if (lo_bound is not None and dates.iloc[i] < lo_bound) or (hi_bound is not None and dates.iloc[i] > hi_bound):
+                continue
+            a, b = num(sa.iloc[i]), num(sb.iloc[i])
+            history.append({
+                "STCK_BSOP_DATE": day(dates.iloc[i]), "tenkan": num(tenkan.iloc[i]), "kijun": num(kijun.iloc[i]),
+                "senkou_a": a, "senkou_b": b,
+                "cloud_top": None if a is None or b is None else max(a, b),
+                "cloud_bot": None if a is None or b is None else min(a, b),
+                "chikou": num(chikou.iloc[i]),
+            })
+
+        future = []
+        n = len(d)
+        # 미래 구름은 차트가 데이터의 마지막 봉까지 보여 줄 때만 의미가 있다 (과거 구간만 조회하면 오른쪽에 붙일 수 없다)
+        chart_reaches_last_bar = hi_bound is None or dates.iloc[-1] <= hi_bound
+        if chart_reaches_last_bar and n >= cls.SENKOU_SHIFT + cls.SENKOU_B_PERIOD:
+            fut_dates = pd.bdate_range(dates.iloc[-1] + pd.Timedelta(days=1), periods=cls.SENKOU_SHIFT)
+            for k, ts in enumerate(fut_dates):            # 미래 k+1 번째 칸의 구름은 마지막 26봉 중 k 번째 봉에서 계산된다
+                a, b = num(a_raw.iloc[n - cls.SENKOU_SHIFT + k]), num(b_raw.iloc[n - cls.SENKOU_SHIFT + k])
+                if a is None or b is None:
+                    continue
+                future.append({"STCK_BSOP_DATE": day(ts), "senkou_a": a, "senkou_b": b,
+                               "cloud_top": max(a, b), "cloud_bot": min(a, b), "estimated": True})
+        return {"ichimoku_history": history, "ichimoku_future": future}

@@ -110,8 +110,7 @@ def test_backtest_basic_invariants_and_chart_payload():
     assert all(a["action"] != b["action"] for a, b in zip(trades, trades[1:]))             # 매수·매도가 번갈아 나온다
     assert trades[-1]["action"] == "SELL"                                                    # 마지막은 청산(최종 평가 포함)
     assert result["parameters"]["SWING_TYPE"] == "I" and result["strategy_name"] == "일목균형표 전략"
-    assert result["ichimoku_history"] and set(result["ichimoku_history"][0]) == {
-        "STCK_BSOP_DATE", "tenkan", "kijun", "cloud_top", "cloud_bot"}
+    assert result["ichimoku_history"] and {"STCK_BSOP_DATE", "tenkan", "kijun", "cloud_top", "cloud_bot"} <= set(result["ichimoku_history"][0])
     assert result["price_history"][0]["STCK_BSOP_DATE"] == result["ichimoku_history"][0]["STCK_BSOP_DATE"]
 
 
@@ -139,3 +138,89 @@ def test_entity_accepts_ichimoku_type_and_rejects_unknown():
     assert s.SWING_TYPE == "I" and not s.is_momentum()
     with pytest.raises(Exception):
         SwingTrade.create("5020627801", "NAS", "AAPL", "Z")
+
+
+# ---------- 차트 페이로드 (TradingView) ----------
+
+def _raw_lines(df):
+    """차트 값을 규칙 모듈과 독립적으로 다시 계산 (표준 정의: 선행스팬은 26봉 앞에 그린다, 후행스팬은 26봉 뒤 종가를 지금 칸에 둔다)"""
+    h, lo, c = (df[k].astype(float).reset_index(drop=True) for k in ("STCK_HGPR", "STCK_LWPR", "STCK_CLPR"))
+    tenkan = (h.rolling(9).max() + lo.rolling(9).min()) / 2
+    kijun = (h.rolling(26).max() + lo.rolling(26).min()) / 2
+    a = (tenkan + kijun) / 2
+    b = (h.rolling(52).max() + lo.rolling(52).min()) / 2
+    return tenkan, kijun, a, b, c
+
+
+def test_chart_history_matches_standard_shifts_and_rule_frame():
+    df = _bars(400, seed=11)
+    payload = Base.chart_payload(df)
+    hist = payload["ichimoku_history"]
+    assert len(hist) == len(df) and hist[0]["STCK_BSOP_DATE"] == df["STCK_BSOP_DATE"].iloc[0]
+    tenkan, kijun, a, b, c = _raw_lines(df)
+    frame = Base.compute_frame(df)
+    for i in (0, 60, 77, 78, 150, 373, 374, 399):
+        row = hist[i]
+        exp_a = None if i < 26 or pd.isna(a[i - 26]) else round(float(a[i - 26]), 2)    # 26봉 전에 계산한 값이 이 칸에 그려진다
+        exp_b = None if i < 26 or pd.isna(b[i - 26]) else round(float(b[i - 26]), 2)
+        assert row["senkou_a"] == exp_a and row["senkou_b"] == exp_b, i
+        exp_chikou = None if i + 26 >= len(df) else round(float(c[i + 26]), 2)             # 26봉 뒤 종가를 이 칸에
+        assert row["chikou"] == exp_chikou, i
+        assert row["tenkan"] == (None if pd.isna(tenkan[i]) else round(float(tenkan[i]), 2))
+        # 규칙(신호)이 쓰는 구름과 차트의 구름이 같다 — 차트에 보이는 구름 = 매매 판정에 쓴 구름
+        if exp_a is not None and exp_b is not None:
+            assert row["cloud_top"] == pytest.approx(round(float(frame["cloud_top"][i]), 2), abs=0.011)
+            assert row["cloud_bot"] == pytest.approx(round(float(frame["cloud_bot"][i]), 2), abs=0.011)
+            assert row["cloud_top"] >= row["cloud_bot"]
+    assert all(r["chikou"] is None for r in hist[-26:]) and hist[-27]["chikou"] is not None
+    assert hist[0]["senkou_a"] is None and hist[0]["tenkan"] is None                      # 워밍업 구간은 None
+
+
+def test_chart_future_cloud_is_26_bars_continuing_the_shifted_cloud():
+    df = _bars(400, seed=11)
+    payload = Base.chart_payload(df)
+    fut = payload["ichimoku_future"]
+    assert len(fut) == 26 and all(f["estimated"] for f in fut)
+    days = pd.to_datetime([f["STCK_BSOP_DATE"] for f in fut], format="%Y%m%d")
+    assert (days > pd.Timestamp(df["STCK_BSOP_DATE"].iloc[-1])).all() and days.is_monotonic_increasing and (days.weekday < 5).all()
+    _, _, a, b, _ = _raw_lines(df)
+    n = len(df)
+    for k in (0, 5, 25):
+        # 미래 (k+1)번째 칸 = 전체 인덱스 n+k 칸 → 26봉 전(n+k-26)의 계산값이 그려진다
+        assert fut[k]["senkou_a"] == round(float(a[n + k - 26]), 2)
+        assert fut[k]["senkou_b"] == round(float(b[n + k - 26]), 2)
+    # 마지막 실제 칸(n-1) 구름과 첫 미래 칸(n) 구름은 연속된 시프트 규칙을 따른다
+    assert payload["ichimoku_history"][-1]["senkou_a"] == round(float(a[n - 1 - 26]), 2)
+
+
+def test_chart_range_filter_and_future_only_when_chart_reaches_last_bar():
+    df = _bars(400, seed=11)
+    dates = df["STCK_BSOP_DATE"]
+    ranged = Base.chart_payload(df, start=dates.iloc[200], end=dates.iloc[300])
+    assert ranged["ichimoku_history"][0]["STCK_BSOP_DATE"] == dates.iloc[200]
+    assert ranged["ichimoku_history"][-1]["STCK_BSOP_DATE"] == dates.iloc[300]
+    assert len(ranged["ichimoku_history"]) == 101
+    assert ranged["ichimoku_future"] == []                                                  # 과거 구간만 조회 → 미래 구름 없음
+    assert Base.chart_payload(df, start=dates.iloc[200], end=dates.iloc[-1])["ichimoku_future"] != []
+    # 범위 안의 값은 전체 계산의 값과 같다 (워밍업 데이터를 df 에 넉넉히 주면 자른 구간도 정확하다)
+    full = {r["STCK_BSOP_DATE"]: r for r in Base.chart_payload(df)["ichimoku_history"]}
+    assert all(full[r["STCK_BSOP_DATE"]] == r for r in ranged["ichimoku_history"])
+
+
+def test_chart_accepts_datetime_dates_and_too_short_history():
+    df = _bars(400, seed=11)
+    dt = df.copy()
+    dt["STCK_BSOP_DATE"] = pd.to_datetime(dt["STCK_BSOP_DATE"], format="%Y%m%d")
+    assert Base.chart_payload(dt) == Base.chart_payload(df)
+    short = Base.chart_payload(_bars(60, seed=1))
+    assert len(short["ichimoku_history"]) == 60 and short["ichimoku_future"] == []
+
+
+def test_backtest_response_carries_chart_payload_matching_helper():
+    df = _bars(1100, seed=3)
+    result = _run(df)
+    assert set(result["ichimoku_history"][0]) == {"STCK_BSOP_DATE", "tenkan", "kijun", "senkou_a", "senkou_b",
+                                                  "cloud_top", "cloud_bot", "chikou"}
+    assert len(result["ichimoku_future"]) == 26
+    first = result["price_history"][0]["STCK_BSOP_DATE"]
+    assert result["ichimoku_history"][0]["STCK_BSOP_DATE"] == first                       # 차트 날짜축이 캔들과 같다

@@ -5,7 +5,7 @@
 **청산:** 종가가 구름 하단 아래로 마감 → 다음 봉 시가 매도 (부분익절·쿨다운 없음)
 **수량:** 배정금(init_amount)의 95% (full_entry 면 100%) — 실전은 풀 사이징(손절선=구름 하단 기준 위험 비율)이 정하지만,
           이 백테스트는 종목 하나에 배정금을 거는 단일 종목 시뮬레이션이라 고정 비율로 본다.
-차트용으로 price_history 와 ichimoku_history(전환선·기준선·구름 상단/하단)를 함께 돌려준다.
+차트용으로 price_history 와 ichimoku_history(전환선·기준선·선행스팬 A/B·구름 상/하단·후행스팬) · ichimoku_future(미래 구름 26봉)를 함께 돌려준다.
 """
 from typing import Dict
 
@@ -66,12 +66,9 @@ class IchimokuBacktestStrategy(BacktestStrategy, BaseIchimokuStrategy):
         final_capital = self._liquidate_final_position(trades, eval_df, capital, mrkt_code=mrkt_code)
         result = self._format_result(prices_df, params, trades, final_capital, eval_df)
 
-        chart = eval_df.join(frame[["tenkan", "kijun", "cloud_top", "cloud_bot"]])
+        chart = eval_df.copy()
         chart["STCK_BSOP_DATE"] = chart["STCK_BSOP_DATE"].dt.strftime("%Y%m%d")
-        for col in ("tenkan", "kijun", "cloud_top", "cloud_bot"):
-            chart[col] = chart[col].round(2)
         result["price_history"] = records_without_nan(
             chart, ["STCK_BSOP_DATE", "STCK_OPRC", "STCK_HGPR", "STCK_LWPR", "STCK_CLPR", "ACML_VOL"])
-        result["ichimoku_history"] = records_without_nan(
-            chart, ["STCK_BSOP_DATE", "tenkan", "kijun", "cloud_top", "cloud_bot"])
+        result.update(self.chart_payload(df, start=eval_start))   # ichimoku_history · ichimoku_future (TradingView 용)
         return result

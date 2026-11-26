@@ -17,6 +17,7 @@ from dateutil.relativedelta import relativedelta
 from app.core.market_code import is_overseas
 from app.domain.trade_history.cycles import build_cycles, summarize_cycles
 from app.domain.trade_history.repository import TradeHistoryRepository
+from app.domain.swing.trading.strategies.base_ichimoku import BaseIchimokuStrategy
 from app.domain.trade_history.schemas import TradeHistoryResponse
 from app.exceptions import DatabaseError, NotFoundError, PermissionDeniedError
 
@@ -196,7 +197,7 @@ class TradeHistoryService:
         self, user_id: str, swing_id: int, start_date, end_date
     ) -> dict:
         """
-        매매 내역 + 주가 차트 + EMA20 데이터 통합 조회
+        매매 내역 + 주가 차트 + 전략별 오버레이(단일 EMA: ema20_history, 일목: ichimoku_history/ichimoku_future) 통합 조회
 
         Args:
             user_id: 사용자 ID (소유권 검증)
@@ -224,8 +225,10 @@ class TradeHistoryService:
                 TradeHistoryResponse.model_validate(t).model_dump() for t in trades
             ]
 
-            # 3. 주가 데이터 조회 (EMA20 워밍업을 위해 2개월 전부터)
-            warmup_start = datetime.combine(start_date, datetime.min.time()) - relativedelta(months=2)
+            # 3. 주가 데이터 조회 — 전략에 맞는 오버레이를 그리려고 워밍업을 둔다
+            #    단일 EMA 는 EMA20 워밍업 2개월, 일목균형표는 구름(52+26봉)이 나오려면 약 4개월이 필요해 9개월
+            is_ichimoku = swing.SWING_TYPE == 'I'
+            warmup_start = datetime.combine(start_date, datetime.min.time()) - relativedelta(months=9 if is_ichimoku else 2)
             stock_service = StockService(self.db)
             price_days = await stock_service.get_stock_history(
                 swing.MRKT_CODE, swing.ST_CODE, warmup_start
@@ -233,6 +236,7 @@ class TradeHistoryService:
 
             price_history = []
             ema20_history = []
+            ichimoku = {"ichimoku_history": [], "ichimoku_future": []}
 
             if price_days:
                 prices_df = pd.DataFrame(price_days)
@@ -254,13 +258,17 @@ class TradeHistoryService:
                 ]
                 price_history = price_df.where(price_df.notna(), None).to_dict(orient="records")
 
-                ema20_history = [
-                    {
-                        "STCK_BSOP_DATE": row.STCK_BSOP_DATE,
-                        "ema20": round(row.ema20, 2) if pd.notna(row.ema20) else None,
-                    }
-                    for row in period_df.itertuples(index=False)
-                ]
+                if is_ichimoku:
+                    # 일목 스윙은 EMA20 대신 일목 선을 그린다 (EMA20 은 비워 앱이 둘을 겹쳐 그리지 않게 한다)
+                    ichimoku = BaseIchimokuStrategy.chart_payload(prices_df, start=date_start, end=date_end)
+                else:
+                    ema20_history = [
+                        {
+                            "STCK_BSOP_DATE": row.STCK_BSOP_DATE,
+                            "ema20": round(row.ema20, 2) if pd.notna(row.ema20) else None,
+                        }
+                        for row in period_df.itertuples(index=False)
+                    ]
 
             return {
                 "swing_id": swing_id,
@@ -268,8 +276,10 @@ class TradeHistoryService:
                 "start_date": start_date.isoformat(),
                 "end_date": end_date.isoformat(),
                 "trades": trades_data,
+                "swing_type": swing.SWING_TYPE,          # 앱이 어떤 오버레이를 그릴지 정하는 기준 (S: EMA20, I: 일목)
                 "price_history": price_history,
                 "ema20_history": ema20_history,
+                **ichimoku,                              # ichimoku_history · ichimoku_future (일목 스윙만 값이 있다)
             }
 
         except (NotFoundError, PermissionDeniedError):

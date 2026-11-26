@@ -295,6 +295,10 @@ async def create_swing(
    AI 종목 분석은 등록된 모든 전략을 추천 후보로 삼으므로 `describe()` 에 이 한계를 적어 두었다 — 설명을 고칠 때 근거 없는 낙관을 넣지 말 것.
    **API**: `GET /swing/strategies` 가 선택 가능한 전략 목록(SWING_TYPE·설명·백테스트 가능 여부)을 준다. `PUT /swing/{id}/settings` 의 `SWING_TYPE` 변경은 실전 등록 타입만 허용하고,
    보유 중이거나 SIGNAL≠0 이면 거부한다(전략마다 사이클 상태가 달라 넘겨받을 수 없다). 같은 `SWING_TYPE` 으로 `POST /backtesting` 을 돌리면 그 전략의 규칙으로 백테스트된다.
+   **차트 (앱 TradingView)**: `GET /trade-history/{swing_id}` 는 `swing_type` 에 맞는 오버레이를 준다 — `S` 는 `ema20_history`, `I` 는 `ichimoku_history`(날짜별 전환선·기준선·선행스팬 A/B·구름 상/하단·후행스팬)와
+   `ichimoku_future`(마지막 봉 뒤 26봉 구름, **날짜는 영업일 추정**이라 `estimated=true`)이고 쓰지 않는 쪽은 빈 목록이다(일목 스윙의 `ema20_history` 는 비어 있다). 값은 모두 **그 날짜에 그려지는 위치** 기준이라
+   (선행스팬은 26봉 전 계산값, 후행스팬은 26봉 뒤 종가, 마지막 26봉의 후행스팬은 None) 프론트는 날짜만 맞춰 선을 이으면 된다. 일목은 구름 워밍업 때문에 조회 시작 9개월 전 일봉부터 계산한다.
+   백테스트 응답(`ichimoku_history`·`ichimoku_future`)도 같은 페이로드(`BaseIchimokuStrategy.chart_payload`)이고, 차트의 구름은 매매 판정에 쓰는 구름과 같다(테스트로 고정). 과거 구간만 조회하면 미래 구름은 비어 있다.
 
 5. **신호 흐름**: SWING_TRADE.SIGNAL 컬럼으로 상태 추적
 
